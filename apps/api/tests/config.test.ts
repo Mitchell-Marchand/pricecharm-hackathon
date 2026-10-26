@@ -27,6 +27,8 @@ const base: NodeJS.ProcessEnv = {
   STRIPE_METER_EVENT_NAME: 'quotient_fee_cents',
   SUPPORT_EMAIL: 'support@example.test',
   OPERATOR_NAME: 'Configuration test operator',
+  OPERATOR_ADDRESS: '1 Example Street, Austin, TX 78701',
+  GOVERNING_LAW: 'Texas',
   // Cloudflare's published always-pass test secret, which staging may use.
   TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
   DB_NAME: 'quotient_config_no_connection',
@@ -174,7 +176,12 @@ const rejected: { name: string; env: NodeJS.ProcessEnv; message: RegExp }[] = [
   {
     name: 'missing support identity',
     env: { SUPPORT_EMAIL: '', OPERATOR_NAME: '' },
-    message: /SUPPORT_EMAIL and OPERATOR_NAME/,
+    message: /SUPPORT_EMAIL, OPERATOR_NAME/,
+  },
+  {
+    name: 'missing legal details',
+    env: { OPERATOR_ADDRESS: '', GOVERNING_LAW: '' },
+    message: /OPERATOR_ADDRESS and GOVERNING_LAW/,
   },
 ];
 for (const scenario of rejected) {

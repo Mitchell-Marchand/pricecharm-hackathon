@@ -63,10 +63,12 @@ export function createApp() {
       throw new Error('Production requires explicit HTTPS APP_ORIGIN values.');
     if (
       !z.email().safeParse(process.env.SUPPORT_EMAIL).success ||
-      !process.env.OPERATOR_NAME?.trim()
+      !process.env.OPERATOR_NAME?.trim() ||
+      !process.env.OPERATOR_ADDRESS?.trim() ||
+      !process.env.GOVERNING_LAW?.trim()
     )
       throw new Error(
-        'Production requires SUPPORT_EMAIL and OPERATOR_NAME for public product support and policies.',
+        'Production requires SUPPORT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS and GOVERNING_LAW for public product support and policies.',
       );
   }
   app.use(
@@ -108,6 +110,9 @@ export function createApp() {
         name: 'Quotefolk',
         operatorName: process.env.OPERATOR_NAME || 'Quotefolk local development',
         supportEmail: process.env.SUPPORT_EMAIL || 'support@example.test',
+        // Shown in the privacy policy and terms: a postal address, and the US state whose laws apply.
+        operatorAddress: process.env.OPERATOR_ADDRESS?.trim() || '',
+        governingLaw: process.env.GOVERNING_LAW?.trim() || '',
       }),
     ),
   );

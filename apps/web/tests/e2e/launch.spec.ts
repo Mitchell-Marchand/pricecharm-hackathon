@@ -438,7 +438,11 @@ test('pricing and policy pages show the configured tariff and operator', async (
     `mailto:${site.supportEmail}`,
   );
   await page.goto('/terms');
-  await expect(page.getByRole('heading', { name: 'Platform fees', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^\d+\. Fees and payment$/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'pricing page', exact: true })).toHaveAttribute(
+    'href',
+    '/pricing',
+  );
   const tokenHeaders = await page.request.get('/reset-password');
   expect(tokenHeaders.headers()['referrer-policy']).toBe('no-referrer');
   await page.setViewportSize({ width: 390, height: 844 });

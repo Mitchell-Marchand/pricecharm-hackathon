@@ -74,6 +74,130 @@
   font-weight: 500;
   letter-spacing: -0.7px;
 }
+.legal-page .legal-updated {
+  margin: -12px 0 24px;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+.legal-page h3 {
+  margin: 24px 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.legal-page ul,
+.legal-page ol {
+  margin: 12px 0;
+  padding-left: 22px;
+}
+.legal-page li {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 6px 0;
+}
+.legal-page strong,
+.legal-page .legal-emphasis {
+  color: var(--color-foreground);
+  font-weight: 600;
+}
+.legal-page .legal-contents {
+  margin-top: 32px;
+  padding: 20px 24px;
+  border-radius: 10px;
+  background: var(--color-surface-subtle);
+}
+.legal-page .legal-contents h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.legal-page .legal-contents ol {
+  margin-bottom: 0;
+  columns: 2;
+  column-gap: 32px;
+}
+.legal-page .legal-contents li {
+  margin: 4px 0;
+  break-inside: avoid;
+}
+.legal-page section {
+  scroll-margin-top: 16px;
+}
+.legal-page .legal-table {
+  margin: 16px 0;
+  overflow-x: auto;
+}
+.legal-page table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #505650;
+}
+.legal-page th,
+.legal-page td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid #e2e5df;
+  text-align: left;
+  vertical-align: top;
+}
+.legal-page th {
+  font-weight: 600;
+  color: var(--color-foreground);
+}
+.legal-page td:first-child {
+  font-weight: 500;
+  color: var(--color-foreground);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .legal-page {
+    padding: 0 16px 48px;
+  }
+  .legal-page h1 {
+    font-size: 34px;
+    letter-spacing: -1px;
+  }
+  .legal-page h2 {
+    font-size: 21px;
+  }
+  .legal-page .legal-contents ol {
+    columns: 1;
+  }
+  .legal-page article h1 {
+    font-size: 34px;
+  }
+  /* Stack each row, labelling every cell with its column, instead of scrolling sideways. */
+  .legal-page table,
+  .legal-page tbody,
+  .legal-page tr,
+  .legal-page td {
+    display: block;
+  }
+  .legal-page thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .legal-page tr {
+    padding: 12px 0;
+    border-bottom: 1px solid #e2e5df;
+  }
+  .legal-page td {
+    padding: 2px 0;
+    border: 0;
+  }
+  .legal-page td:not(:first-child)::before {
+    content: attr(data-label) ': ';
+    font-weight: 600;
+    color: var(--color-foreground);
+  }
+}
 .legal-page article > footer {
   margin-top: 40px;
   padding: 26px 27px;

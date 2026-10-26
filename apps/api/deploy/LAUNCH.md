@@ -34,7 +34,7 @@ Copy `env.production.example` to `/srv/quotient-api/shared/.env` and `migrate.en
 - Guest previews use a domain-separated HMAC with that stable key for private IP allowance buckets. Optional `GUEST_PREVIEW_DAILY_APP_LIMIT=50` and `GUEST_PREVIEW_DAILY_IP_LIMIT=3` bound anonymous preview attempts per UTC day within the existing application AI allowance. Failed attempts count; preview reloads and account claims make no provider call. Local development can use its stable `DB_PASS` as the fallback hashing secret; previews fail visibly if neither secret is available.
 - `BILLING_PROVIDER=stripe`, Stripe secret, webhook signing secret, meter event name and metered price ID, using the exact setup in [COMMERCE.md](COMMERCE.md).
 - `S3_BUCKET` from the stack output, `S3_PREFIX=quotient/`, AWS region. AWS credentials come from the EC2 role.
-- Real `OPERATOR_NAME` and `SUPPORT_EMAIL`; these appear on the public support/privacy/terms pages.
+- Real `OPERATOR_NAME` (the legal entity), `OPERATOR_ADDRESS` (its postal address), `GOVERNING_LAW` (the US state whose laws govern the terms, such as `Texas`) and `SUPPORT_EMAIL`. All four appear in the privacy policy and terms of service, and production refuses to start without them.
 - `TURNSTILE_SECRET_KEY` from a Cloudflare Turnstile widget (free, and the domain doesn't need to be on Cloudflare). Add the product domain to the widget's hostnames and choose the Managed mode. Signup, the landing-page preview and new customer chats require a passing check. The widget's site key goes in a GitHub variable (section 4). Staging can use Cloudflare's published test keys; production refuses them.
 - `SENTRY_DSN` from a Sentry project for the API and worker. Production refuses to start without it. Reports carry the error, its stack and the request ID, never request bodies, headers, emails or AI prompts. Set an alert rule in Sentry so a new error emails you.
 - The customer chat budgets (`AI_DAILY_CUSTOMER_APP_LIMIT`, `AI_DAILY_BUSINESS_CUSTOMER_LIMIT`, `AI_DAILY_CUSTOMER_IP_LIMIT`). The defaults are in the [AI keys guide](../../../docs/ops/ai-keys.md).
@@ -45,7 +45,7 @@ Production rejects demo AI, local email/payments, missing required provider conf
 
 Point the product domain's DNS A record at the EIP. Use your existing certificate process or ACME/Certbot with the HTTP challenge directory `/var/www/acme`. First enable the HTTP server from `nginx-site.conf.example`; issue a certificate, then enable the TLS server with the actual domain/certificate paths. Install it under `/etc/nginx/conf.d/quotient.conf`, run `sudo nginx -t`, reload Nginx, and enable certificate auto-renewal. The application proxy locations are also available in `nginx.conf.example` if you use an existing TLS server configuration.
 
-The complete example logs `$uri`, excluding query strings containing password-reset or inquiry link tokens. Keep debug/body logging off. The API logs request IDs and error codes without customer transcripts or provider payloads. Rotate PM2/Nginx logs and forward operational errors to your normal monitoring destination.
+The complete example logs `$uri`, excluding query strings containing password-reset or inquiry link tokens. Keep debug/body logging off. The API logs request IDs and error codes without customer transcripts or provider payloads. Rotate PM2/Nginx logs and keep them no longer than 30 days, which is what the privacy policy promises; Nginx logs include IP addresses. Forward operational errors to your normal monitoring destination.
 
 ## 4. Configure the GitHub repository
 
@@ -69,7 +69,7 @@ Use Stripe test mode first with a separate test-mode meter/price/webhook. Exerci
 
 ## 6. Backups and daily operations
 
-Run `python3 /srv/quotient-api/current/apps/api/deploy/ops/backup.py` as `quotient` nightly. RDS also keeps automated backups. it writes a compressed, mode600 snapshot of the dedicated DB using a temporary private client option file. For another layout pass `--env` and `--output`. Copy snapshots to your encrypted off-host backup destination, retain according to your published data policy, and monitor failures. Back up the stable mail encryption key securely. S3 holds photos separately; local storage deployments also need a backup of `shared/uploads`.
+Run `python3 /srv/quotient-api/current/apps/api/deploy/ops/backup.py` as `quotient` nightly. RDS also keeps automated backups. it writes a compressed, mode600 snapshot of the dedicated DB using a temporary private client option file. For another layout pass `--env` and `--output`. Copy snapshots to your encrypted off-host backup destination, keep them no longer than 30 days (the privacy policy says deleted data leaves backups within 30 days, so keep `DbBackupRetentionDays` at 30 or less too), and monitor failures. Back up the stable mail encryption key securely. S3 holds photos separately; local storage deployments also need a backup of `shared/uploads`.
 
 Test restoration into a **different, isolated** `quotient_restore_…` database, or restore an RDS snapshot to a new instance. Never restore over the live database. Verify migrations, table counts and private file access before using a restored database. Backups may temporarily retain deleted data; do not silently reintroduce deleted accounts when restoring.
 

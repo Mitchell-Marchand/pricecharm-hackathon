@@ -722,11 +722,11 @@ export function PublicQuoteForm({
           </label>
           <p className="request-legal-links">
             <a href="/terms" target="_blank" rel="noreferrer">
-              Service terms
+              Terms of Service
             </a>{' '}
             ·{' '}
             <a href="/privacy" target="_blank" rel="noreferrer">
-              Privacy notice
+              Privacy Policy
             </a>
           </p>
         </>
