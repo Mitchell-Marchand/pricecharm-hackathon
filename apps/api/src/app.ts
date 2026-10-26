@@ -31,6 +31,7 @@ import { validateRuntimeConfiguration } from './config.js';
 import { requireHuman } from './human-check.js';
 import { onboardingRouter } from './onboarding.js';
 import { pastJobsRouter } from './past-jobs.js';
+import { practiceRouter } from './practice/router.js';
 
 export function createApp() {
   validateRuntimeConfiguration();
@@ -120,7 +121,7 @@ export function createApp() {
   );
   app.use('/api/v1', csrfProtection);
   app.use('/api/v1', guestPreviewRouter);
-  app.use('/api/v1', onboardingRouter, pastJobsRouter);
+  app.use('/api/v1', onboardingRouter, pastJobsRouter, practiceRouter);
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);

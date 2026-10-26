@@ -29,6 +29,7 @@ import {
   type PastJob,
 } from '@/lib/jobs';
 import { useOnboarding } from '@/lib/onboarding';
+import { preparePractice } from '@/lib/practice';
 import { TRADES_BY_ID } from '@/lib/trades';
 import { cx, money, moneyInput, parseMoney } from '@/lib/util';
 
@@ -124,6 +125,16 @@ export default function JobsStep() {
       .then(setJobs)
       .catch((error) => setLoadError(errorMessage(error)));
   }, []);
+
+  // Once there's a job to go on, start writing the practice customers so step 3 opens quickly.
+  const preparing = useRef(false);
+  useEffect(() => {
+    if (preparing.current || !jobs?.length) return;
+    preparing.current = true;
+    void preparePractice().catch(() => {
+      preparing.current = false;
+    });
+  }, [jobs]);
 
   if (!state) return <SetupLoading />;
   const services = state.business.services.length ? state.business.services : ['General'];

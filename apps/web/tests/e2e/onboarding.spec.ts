@@ -134,3 +134,59 @@ test('an uploaded invoice fills in a job for the owner to check', async ({ page 
     '$20 off, repeat customer',
   );
 });
+
+test('step 3 runs three practice customers and learns from each one', async ({ page }) => {
+  await finishStepOne(page, 'Moss & Stone Exterior Care');
+  const created = await page.request.post('/api/v1/onboarding/jobs', {
+    headers: { Origin: new URL(page.url()).origin },
+    data: {
+      serviceName: 'Driveways',
+      description: 'Back patio and walkway, about 600 sq ft.',
+      priceCents: 27500,
+      size: '600 sq ft',
+    },
+  });
+  expect(created.status()).toBe(201);
+  await page.reload();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/practice$/);
+
+  const quote = async (label: string, price: string) => {
+    await page.getByRole('button', { name: 'Create quote' }).click();
+    const builder = page.getByRole('dialog', { name: /^Quote for / });
+    await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill(label);
+    await builder.getByRole('textbox', { name: 'Price for item 1' }).fill(price);
+    await builder.getByRole('button', { name: 'Send quote' }).click();
+    await expect(page.getByRole('heading', { name: /Here.s what your AI picked up/ })).toBeVisible({
+      timeout: 15_000,
+    });
+  };
+
+  await expect(page.getByText('Dana R. · Eastgate')).toBeVisible({ timeout: 15_000 });
+  const reply = page.getByLabel('Reply to Dana');
+  await reply.fill('How big is the patio?');
+  await reply.press('Enter');
+  await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible();
+  await quote('Patio wash, about 550 sq ft', '280');
+  await expect(page.getByText('Asks about size')).toBeVisible();
+  await expect(page.getByText(/Before you sent yours, it guessed \$/)).toBeVisible();
+  await page.getByRole('button', { name: 'Fix' }).first().click();
+  await page.getByLabel('Correct this').fill('Asks about size and stains');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Asks about size and stains')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Next practice request' }).click();
+  await expect(page.getByText('Marcus T. · North Hills')).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: /I.d need to see it first|Visit first/ }).click();
+  const visit = page.getByRole('dialog', { name: 'Ask for a site visit' });
+  await visit.getByLabel('What do you need to check?').fill('How green it is by the planters.');
+  await visit.getByRole('button', { name: 'Send to Marcus' }).click();
+  await expect(page.getByText(/Asks to see jobs like this first/)).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole('button', { name: 'Next practice request' }).click();
+  await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });
+  await quote('Flagstone wash, about 350 sq ft', '175');
+  await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
+  await page.getByRole('button', { name: 'See what your AI learned' }).click();
+  await expect(page).toHaveURL(/\/start\/ready$/);
+});
