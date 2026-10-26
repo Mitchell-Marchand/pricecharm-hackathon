@@ -88,24 +88,6 @@ export async function transaction<T>(fn: (connection: PoolConnection) => Promise
   }
 }
 
-/** A short, nonlocking snapshot for related reads; characteristics apply to this transaction only. */
-export async function readOnlySnapshot<T>(
-  fn: (connection: PoolConnection) => Promise<T>,
-): Promise<T> {
-  const connection = await getPool().getConnection();
-  try {
-    await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
-    await connection.beginTransaction();
-    const result = await fn(connection);
-    await connection.commit();
-    return result;
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
 export async function closeDatabase(): Promise<void> {
   if (pool) {
     const active = pool;

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import type { RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
 import { validateRuntimeConfiguration } from './config.js';
-import { closeDatabase, mutate, rows, transaction, type Sql } from './db.js';
+import { closeDatabase, mutate, rows, transaction } from './db.js';
 import { deleteBusinessAccount } from './accounts.js';
 import {
   billingProvider,
@@ -16,7 +16,6 @@ import {
 } from './billing.js';
 import { deliverEmail, validateEmailConfiguration } from './integrations/email.js';
 import { json } from './models.js';
-import { processTrainingPhotos } from './training-photos.js';
 import { flushErrorReports, reportError, startErrorReporting } from './error-reporting.js';
 import { scheduleExpiredDraftDeletion } from './workspace.js';
 import { cleanupUnattachedJobPhotos } from './past-jobs.js';
@@ -60,29 +59,10 @@ async function claimJob(jobId?: string): Promise<Job | undefined> {
     return { ...job, attempts: job.attempts + 1 };
   });
 }
-export async function cleanupGuestPreviews(connection: Sql): Promise<void> {
-  // Match guest creation/claim: lock the proof parent before its preview children.
-  await mutate(
-    'DELETE FROM guest_preview_sessions WHERE expires_at<UTC_TIMESTAMP(3)',
-    [],
-    connection,
-  );
-  await mutate(
-    "DELETE FROM guest_previews WHERE expires_at<UTC_TIMESTAMP(3) AND status<>'claimed'",
-    [],
-    connection,
-  );
-}
 async function maintenance(): Promise<void> {
   await transaction(async (connection) => {
-    await cleanupGuestPreviews(connection);
     await scheduleExpiredDraftDeletion(connection);
     await mutate('DELETE FROM owner_sessions WHERE expires_at<UTC_TIMESTAMP(3)', [], connection);
-    await mutate(
-      "UPDATE public_sessions SET status='expired' WHERE expires_at<UTC_TIMESTAMP(3) AND status='active'",
-      [],
-      connection,
-    );
     await mutate(
       'DELETE FROM identity_tokens WHERE expires_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 7 DAY)',
       [],
@@ -142,13 +122,6 @@ async function maintenance(): Promise<void> {
 async function processJob(job: Job): Promise<void> {
   const payload = z.record(z.string(), z.unknown()).parse(json(job.payload_json, {}));
   switch (job.type) {
-    case 'training_photos':
-      await processTrainingPhotos(
-        z.string().uuid().parse(job.business_id),
-        z.string().uuid().parse(payload.requestId),
-        job.id,
-      );
-      break;
     case 'send_email':
       await deliverEmail(z.string().uuid().parse(payload.emailId));
       break;

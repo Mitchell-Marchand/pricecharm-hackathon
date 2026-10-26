@@ -7,19 +7,12 @@ import { createApp } from '../src/app.js';
 import { closeDatabase, mutate, rows, transaction } from '../src/db.js';
 import { hashToken } from '../src/auth.js';
 import {
-  requestContactVerification,
-  verifyContactVerification,
-  isContactVerified,
-} from '../src/verification.js';
-import {
-  assertBillingAccess,
   dispatchMeterEvent,
   ensureBillingAccount,
-  getBilling,
   reconcileStripeCustomer,
   stripeClient,
 } from '../src/billing.js';
-import { recordQuoteDelivery } from '../src/integrations/billing.js';
+import { liveBillingAccess, liveBillingSummary, recordLiveDelivery } from '../src/live/billing.js';
 import {
   decryptEmail,
   deliverEmail,
@@ -33,7 +26,7 @@ import { getPhoto, putPhoto } from '../src/storage.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
 test(
-  'identity, scoped contact codes, durable mail, tariff ledger, signed Stripe events and tenant deletion',
+  'identity, customer email codes, durable mail, the fee ledger, signed Stripe events and tenant deletion',
   { skip: !enabled },
   async () => {
     assert.equal(process.env.AI_PROVIDER, 'demo');
@@ -53,46 +46,49 @@ test(
     const password = 'commerce test password123',
       newPassword = 'new commerce password456';
     let businessId = '',
-      serviceId = '',
       slug = '';
-    async function session(email = 'customer@example.test') {
+    /** A customer chat on business A's quote link, asking for a code at this email. */
+    async function chatWithCode(email = 'Customer@Example.Test') {
       const started = await guest
-        .post(`/api/v1/public/${slug}/sessions`)
-        .send({ serviceId })
+        .post(`/api/v1/chat/${slug}/start`)
+        .set('Origin', origin)
+        .send({})
         .expect(201);
-      const id = started.body.data.session.id;
+      const token = started.body.data.token as string;
+      const base = `/api/v1/chat/${slug}/${started.body.data.chat.id}`;
+      const call = (suffix: string, body: object, at = base) =>
+        guest
+          .post(`${at}${suffix}`)
+          .set('Origin', origin)
+          .set('Authorization', `Bearer ${token}`)
+          .send(body);
+      const contact = await call('/contact', { name: 'Test Customer', email });
+      assert.equal(contact.status, 200, JSON.stringify(contact.body));
       return {
-        id,
-        email,
-        ...(await requestContactVerification({
-          businessId,
-          sessionId: id,
-          email,
-          exposeCode: true,
-        })),
+        id: String(started.body.data.chat.id),
+        call,
+        verificationId: String(contact.body.data.verificationId),
+        devCode: String(contact.body.data.devCode),
       };
     }
-    async function makeQuote(value = 10000) {
-      const id = randomUUID();
-      await mutate(
-        `INSERT INTO quotes(id,business_id,service_id,service_version,customer_name,customer_email,status,description,quantity,total_cents,currency,assumptions_json,line_items_json,calculation_json,source,verified_contact)
-      VALUES (?,?,?,1,'Test customer','customer@example.test','issued','Test quote',1,?,'USD','[]','[]','{}','live',TRUE)`,
-        [id, businessId, serviceId, value],
-      );
-      return id;
-    }
-    async function record(quoteId: string, value = 10000) {
-      return transaction((connection) =>
-        recordQuoteDelivery(connection, {
-          businessId,
-          quoteId,
-          totalCents: value,
-          currency: 'USD',
-          source: 'automatic',
-          verifiedContact: true,
-        }),
+    /** A quote a customer received, recorded in the fee ledger once. */
+    async function record(quoteId: string, totalCents = 10000) {
+      return transaction(
+        async (connection) =>
+          (
+            await recordLiveDelivery(connection, {
+              businessId,
+              quoteId,
+              totalCents,
+              sentBy: 'auto',
+            })
+          ).recorded,
       );
     }
+    const canSend = (totalCents = 10000) =>
+      transaction(
+        async (connection) => (await liveBillingAccess(businessId, connection, totalCents)).canSend,
+      );
     try {
       const registered = await a
         .post('/api/v1/auth/register')
@@ -190,99 +186,59 @@ test(
         .expect(200);
       assert.deepEqual(unknown.body.data, { ok: true });
 
-      const service = await a
-        .post('/api/v1/services')
-        .set('Origin', origin)
-        .send({
-          name: 'Commerce service',
-          description: 'A repeatable service',
-          unitLabel: 'unit',
-          unitPriceCents: 10000,
-          requiredInputs: ['quantity'],
-        })
-        .expect(201);
-      serviceId = service.body.data.id;
-      await mutate('UPDATE services SET published_at=UTC_TIMESTAMP(3) WHERE id=?', [serviceId]);
-      const contact = await session('Customer@Example.Test');
-      assert.equal(contact.delivery, 'local');
-      assert.match(contact.devCode!, /^\d{6}$/);
-      await assert.rejects(
-        requestContactVerification({ businessId, sessionId: contact.id, email: contact.email }),
-        /wait/i,
-      );
-      await assert.rejects(
-        verifyContactVerification({
-          businessId: businesses[1],
-          sessionId: contact.id,
-          verificationId: contact.verificationId,
-          code: contact.devCode!,
-        }),
-        /incorrect/,
-      );
-      await assert.rejects(
-        verifyContactVerification({
-          businessId,
-          sessionId: contact.id,
-          verificationId: contact.verificationId,
-          code: 'wrong',
-        }),
-        /incorrect/,
-      );
-      const verified = await verifyContactVerification({
-        businessId,
-        sessionId: contact.id,
-        verificationId: contact.verificationId,
-        code: contact.devCode!,
+      // Customer email codes: one at a time, for this chat only, five tries, ten minutes.
+      const contact = await chatWithCode();
+      assert.match(contact.devCode, /^\d{6}$/);
+      const again = await contact.call('/contact', {
+        name: 'Test Customer',
+        email: 'customer@example.test',
       });
-      assert.equal(verified.email, 'customer@example.test');
-      assert.equal(await isContactVerified(businessId, contact.id, 'CUSTOMER@example.test'), true);
-      assert.equal(
-        await isContactVerified(businessId, contact.id, 'different@example.test'),
-        false,
+      assert.equal(again.body.error.code, 'CODE_RATE_LIMIT');
+      const otherSlug = String(other.body.data.business.slug);
+      const elsewhere = await contact.call(
+        '/verify',
+        { verificationId: contact.verificationId, code: contact.devCode },
+        `/api/v1/chat/${otherSlug}/${contact.id}`,
       );
-      await assert.rejects(
-        verifyContactVerification({
-          businessId,
-          sessionId: contact.id,
-          verificationId: contact.verificationId,
-          code: contact.devCode!,
-        }),
-        /already used/,
-      );
-      const exhausted = await session('other@example.test');
+      assert.equal(elsewhere.status, 404, 'A chat token only works on its own business');
+      const wrong = await contact.call('/verify', {
+        verificationId: contact.verificationId,
+        code: contact.devCode === '000000' ? '111111' : '000000',
+      });
+      assert.equal(wrong.body.error.code, 'CODE_INVALID');
+      const verified = await contact.call('/verify', {
+        verificationId: contact.verificationId,
+        code: contact.devCode,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      assert.equal(verified.body.data.contact.email, 'customer@example.test');
+      assert.equal(verified.body.data.contact.verified, true);
+      const reused = await contact.call('/verify', {
+        verificationId: contact.verificationId,
+        code: contact.devCode,
+      });
+      assert.equal(reused.status, 400, 'A code works once');
+      const exhausted = await chatWithCode('other@example.test');
       for (let i = 0; i < 5; i++)
-        await assert.rejects(
-          verifyContactVerification({
-            businessId,
-            sessionId: exhausted.id,
-            verificationId: exhausted.verificationId,
-            code: 'invalid',
-          }),
-          /incorrect/,
-        );
-      await assert.rejects(
-        verifyContactVerification({
-          businessId,
-          sessionId: exhausted.id,
+        await exhausted.call('/verify', {
           verificationId: exhausted.verificationId,
-          code: exhausted.devCode!,
-        }),
-        /incorrect/,
-      );
-      const stale = await session('stale@example.test');
+          code: exhausted.devCode === '000000' ? '111111' : '000000',
+        });
+      const tooLate = await exhausted.call('/verify', {
+        verificationId: exhausted.verificationId,
+        code: exhausted.devCode,
+      });
+      assert.equal(tooLate.status, 400, 'Five wrong tries use the code up');
+      const stale = await chatWithCode('stale@example.test');
       await mutate(
         'UPDATE contact_verifications SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
         [stale.verificationId],
       );
-      await assert.rejects(
-        verifyContactVerification({
-          businessId,
-          sessionId: stale.id,
-          verificationId: stale.verificationId,
-          code: stale.devCode!,
-        }),
-        /expired/,
-      );
+      const expiredCode = await stale.call('/verify', {
+        verificationId: stale.verificationId,
+        code: stale.devCode,
+      });
+      assert.equal(expiredCode.status, 400, 'Codes expire');
 
       const payload = {
         to: 'customer@example.test',
@@ -320,14 +276,14 @@ test(
         process.env.MAIL_PROVIDER = 'local';
       }
 
-      assert.equal((await assertBillingAccess(businessId)).canIssue, true);
-      const first = await makeQuote();
+      // The first quotes are free; after that each one has a fee, up to the monthly cap.
+      assert.equal(await canSend(), true);
+      const first = randomUUID();
       assert.equal(await record(first), true);
-      assert.equal(await record(first), false);
-      const second = await makeQuote();
-      await record(second);
-      assert.equal((await getBilling(businessId)).trial.remainingQuotes, 0);
-      assert.equal((await assertBillingAccess(businessId)).canIssue, false);
+      assert.equal(await record(first), false, 'A quote is billed once');
+      await record(randomUUID());
+      assert.equal((await liveBillingSummary(businessId)).trial.remainingQuotes, 0);
+      assert.equal(await canSend(), false, 'No payment method after the free quotes');
       const checkout = await a
         .post('/api/v1/billing/checkout')
         .set('Origin', origin)
@@ -339,12 +295,11 @@ test(
         .set('Origin', origin)
         .send({ spendingCapCents: 200 })
         .expect(200);
-      const paid = await makeQuote();
+      const paid = randomUUID();
       await record(paid);
-      const paidAgain = await makeQuote();
-      await record(paidAgain);
-      assert.equal((await getBilling(businessId)).usage.feesCents, 200);
-      assert.equal((await assertBillingAccess(businessId, undefined, 10000)).canIssue, false);
+      await record(randomUUID());
+      assert.equal((await liveBillingSummary(businessId)).usage.feesCents, 200);
+      assert.equal(await canSend(), false, 'The monthly cap stops the next quote');
       const [fee] = await rows('SELECT * FROM quote_usage WHERE quote_id=?', [paid]);
       assert.equal(Number(fee.fee_cents), 100);
       assert.equal(fee.tariff_version, 'quote-percentage-v1');
@@ -623,11 +578,16 @@ test(
         )[0].subscription_status,
         'past_due',
       );
-      await mutate(
-        'UPDATE billing_accounts SET trial_ends_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 DAY) WHERE business_id=?',
-        [businessId],
+      await mutate('UPDATE billing_accounts SET trial_quote_limit=0 WHERE business_id=?', [
+        businessId,
+      ]);
+      assert.equal(
+        await transaction(
+          async (connection) => (await liveBillingAccess(businessId, connection, 10000)).canSend,
+        ),
+        false,
+        'A past-due subscription stops quotes once the free ones are used',
       );
-      assert.equal((await assertBillingAccess(businessId)).canIssue, false);
       stripe.prices.retrieve = (async () => ({
         active: true,
         currency: 'usd',

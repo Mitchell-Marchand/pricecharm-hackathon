@@ -77,7 +77,8 @@ test(
         )
       )[0].id,
     );
-    const hidden = await request(app).get(`/api/v1/public/draft-${draftId}`);
+    const [draft] = await rows('SELECT slug FROM businesses WHERE id=?', [draftId]);
+    const hidden = await request(app).get(`/api/v1/chat/${draft.slug}`);
     assert.equal(hidden.status, 404, 'Drafts have no public page');
 
     // "Email me a link": the link moves the setup to another browser and retires the first one.

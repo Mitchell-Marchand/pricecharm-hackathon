@@ -65,9 +65,9 @@ For a deliberate rollback, select a known compatible release and restore its sym
 
 ## Product operation and launch
 
-Read [LAUNCH.md](LAUNCH.md) for the complete EC2/CloudFormation/bootstrap, DNS/TLS, environment, backup/restore and acceptance runbook. Read [COMMERCE.md](COMMERCE.md) for SES, verified contacts, Stripe meter/price/webhook setup, trial limits, spending caps and reconciliation.
+Read [LAUNCH.md](LAUNCH.md) for the complete EC2/CloudFormation/bootstrap, DNS/TLS, environment, backup/restore and acceptance runbook. Read [COMMERCE.md](COMMERCE.md) for SES, verified contacts, Stripe meter/price/webhook setup, free quotes, spending caps and reconciliation.
 
-The production API rejects local email/payments and demo AI. A service can publish in review mode after configuration checks. Automatic mode additionally requires verified owner email, separate owner-labelled passing test cases, explicit approval of the current pricing version, verified customer contact and per-request eligibility checks. Pricing changes invalidate automatic approval and publication. Missing details, excluded work, policy changes or billing limits send requests to the owner. Training, tests and owner-issued quotes are nonbillable.
+The production API rejects local email and payments and demo AI. Quotes go out on their own only when the owner allows it, the customer confirmed their email, and the server's checks pass: priced from the owner's own jobs, under their limit, for a listed service, in their area, and close to similar past jobs. Everything else waits for the owner. Practice and the owner's own test chats are never billed.
 
 Use `node dist/ops.js --http` for read-only application/schema/queue readiness checks. Investigate failed jobs, uncertain email outcomes and delayed usage dispatch before invoice finalization. Keep customer content/provider payloads out of logs and use the query-free access log example in `nginx-site.conf.example`.
 

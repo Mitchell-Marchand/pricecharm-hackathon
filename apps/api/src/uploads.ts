@@ -4,10 +4,9 @@ import { Router, type Request, type RequestHandler } from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { z } from 'zod';
-import { owner, requireOwner, csrfProtection } from './auth.js';
+import { owner, requireOwner } from './auth.js';
 import { mutate, rows, transaction } from './db.js';
-import { ApiError, ok, rateLimit } from './http.js';
-import { publicAccess } from './public.js';
+import { ApiError } from './http.js';
 import { putPhoto, getPhoto, deletePhoto } from './storage.js';
 
 const maxImages = 3;
@@ -66,15 +65,13 @@ function publicAttachment(row: Record<string, any>) {
 /** Where an uploaded photo belongs. Past-job photos upload first and attach when the job saves. */
 export type PhotoTarget = {
   conversationId?: string | null;
-  exampleId?: string | null;
   purpose?: 'past_job';
 };
 // A setup that never becomes an account shouldn't be able to fill storage.
 const DRAFT_PHOTO_LIMIT = 60;
 
 export async function saveImage(req: Request, businessId: string, target: PhotoTarget = {}) {
-  const conversationId = target.conversationId ?? null,
-    exampleId = target.exampleId ?? null;
+  const conversationId = target.conversationId ?? null;
   if (!req.file) throw new ApiError(400, 'FILE_REQUIRED', 'Choose a photo to upload.');
   const bytes = req.file.buffer;
   const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -165,12 +162,11 @@ export async function saveImage(req: Request, businessId: string, target: PhotoT
           );
       }
       await mutate(
-        'INSERT INTO attachments (id,business_id,conversation_id,example_id,purpose,filename,mime_type,storage_key,width,height,byte_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO attachments (id,business_id,conversation_id,purpose,filename,mime_type,storage_key,width,height,byte_size) VALUES (?,?,?,?,?,?,?,?,?,?)',
         [
           id,
           businessId,
           conversationId,
-          exampleId,
           target.purpose ?? null,
           filename,
           'image/jpeg',
@@ -196,54 +192,9 @@ export async function saveImage(req: Request, businessId: string, target: PhotoT
   };
 }
 
-export async function loadConversationImages(
-  businessId: string,
-  conversationId: string,
-): Promise<{ mimeType: string; dataBase64: string }[]> {
-  const items = await rows(
-    'SELECT storage_key FROM attachments WHERE business_id = ? AND conversation_id = ? ORDER BY created_at LIMIT 3',
-    [businessId, conversationId],
-  );
-  return Promise.all(
-    items.map(async (item) => ({
-      mimeType: 'image/jpeg',
-      dataBase64: (await getPhoto(item.storage_key)).toString('base64'),
-    })),
-  );
-}
+/** Owners open their customers' photos here, from a quote's conversation. */
 export function createUploadRouter() {
   const router = Router();
-  router.post(
-    '/uploads',
-    requireOwner,
-    csrfProtection,
-    rateLimit(20, 60_000),
-    uploadSlot,
-    imageUpload,
-    async (req, res) => {
-      const businessId = owner(req).businessId;
-      const exampleId = req.body.exampleId ? z.string().uuid().parse(req.body.exampleId) : null;
-      if (
-        exampleId &&
-        !(
-          await rows('SELECT id FROM examples WHERE business_id = ? AND id = ?', [
-            businessId,
-            exampleId,
-          ])
-        ).length
-      )
-        throw new ApiError(404, 'NOT_FOUND', 'Project example not found.');
-      res.status(201).json(ok(await saveImage(req, businessId, { exampleId })));
-    },
-  );
-  router.get('/uploads', requireOwner, async (req, res) => {
-    const exampleId = req.query.exampleId ? z.string().uuid().parse(req.query.exampleId) : null;
-    const items = await rows(
-      `SELECT * FROM attachments WHERE business_id = ? ${exampleId ? 'AND example_id = ?' : ''} ORDER BY created_at DESC LIMIT 100`,
-      exampleId ? [owner(req).businessId, exampleId] : [owner(req).businessId],
-    );
-    res.json(ok(items.map(publicAttachment)));
-  });
   router.get('/uploads/:attachmentId', requireOwner, async (req, res) => {
     const [item] = await rows('SELECT * FROM attachments WHERE id = ? AND business_id = ?', [
       z.string().uuid().parse(req.params.attachmentId),
@@ -251,101 +202,6 @@ export function createUploadRouter() {
     ]);
     if (!item) throw new ApiError(404, 'NOT_FOUND', 'Photo not found.');
     res.type('image/jpeg').send(await getPhoto(item.storage_key));
-  });
-  router.delete('/uploads/:attachmentId', requireOwner, csrfProtection, async (req, res) => {
-    const [item] = await rows('SELECT * FROM attachments WHERE id = ? AND business_id = ?', [
-      z.string().uuid().parse(req.params.attachmentId),
-      owner(req).businessId,
-    ]);
-    if (!item) throw new ApiError(404, 'NOT_FOUND', 'Photo not found.');
-    await mutate('DELETE FROM attachments WHERE id = ? AND business_id = ?', [
-      item.id,
-      owner(req).businessId,
-    ]);
-    await deletePhoto(item.storage_key).catch(() => {});
-    res.json(ok({ ok: true }));
-  });
-  router.get('/quotes/:quoteId/photos', requireOwner, async (req, res) => {
-    const businessId = owner(req).businessId;
-    const [quote] = await rows(
-      'SELECT public_session_id FROM quotes WHERE id = ? AND business_id = ?',
-      [z.string().uuid().parse(req.params.quoteId), businessId],
-    );
-    if (!quote) throw new ApiError(404, 'NOT_FOUND', 'Quote not found.');
-    const photos = quote.public_session_id
-      ? await rows(
-          'SELECT * FROM attachments WHERE business_id = ? AND conversation_id = ? ORDER BY created_at LIMIT 3',
-          [businessId, quote.public_session_id],
-        )
-      : [];
-    res.json(
-      ok(photos.map((item) => ({ ...publicAttachment(item), url: `/api/v1/uploads/${item.id}` }))),
-    );
-  });
-  router.get('/quotes/:quoteId/conversation', requireOwner, async (req, res) => {
-    const businessId = owner(req).businessId;
-    const [quote] = await rows(
-      'SELECT public_session_id FROM quotes WHERE id = ? AND business_id = ?',
-      [z.string().uuid().parse(req.params.quoteId), businessId],
-    );
-    if (!quote) throw new ApiError(404, 'NOT_FOUND', 'Quote not found.');
-    const messages = quote.public_session_id
-      ? await rows(
-          "SELECT id,role,content,created_at,owner_authored FROM messages WHERE business_id = ? AND conversation_id = ? AND conversation_type = 'public' ORDER BY position",
-          [businessId, quote.public_session_id],
-        )
-      : [];
-    res.json(
-      ok(
-        messages.map((item) => ({
-          id: item.id,
-          role: item.role,
-          content: item.content,
-          createdAt: new Date(item.created_at).toISOString(),
-          author: item.owner_authored ? 'owner' : item.role === 'user' ? 'customer' : 'ai',
-        })),
-      ),
-    );
-  });
-  router.post(
-    '/public/:slug/sessions/:id/uploads',
-    rateLimit(10, 60_000),
-    async (req, _res, next) => {
-      await publicAccess(req);
-      next();
-    },
-    uploadSlot,
-    imageUpload,
-    async (req, res) => {
-      const access = await publicAccess(req);
-      if (!['active', 'submitted'].includes(access.session.status))
-        throw new ApiError(
-          409,
-          'SESSION_CLOSED',
-          'This request is complete. Start a new inquiry to attach photos.',
-        );
-      res
-        .status(201)
-        .json(
-          ok(
-            await saveImage(req, access.business.id, { conversationId: String(access.session.id) }),
-          ),
-        );
-    },
-  );
-  router.get('/public/:slug/sessions/:id/uploads', async (req, res) => {
-    const access = await publicAccess(req);
-    const items = await rows(
-      'SELECT * FROM attachments WHERE business_id = ? AND conversation_id = ? ORDER BY created_at LIMIT 3',
-      [access.business.id, access.session.id],
-    );
-    const photos = await Promise.all(
-      items.map(async (item) => ({
-        ...publicAttachment(item),
-        previewDataUrl: `data:image/jpeg;base64,${(await getPhoto(item.storage_key)).toString('base64')}`,
-      })),
-    );
-    res.json(ok(photos));
   });
   return router;
 }

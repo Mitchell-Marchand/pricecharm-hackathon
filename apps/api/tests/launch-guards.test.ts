@@ -5,7 +5,6 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { verifyHuman } from '../src/human-check.js';
 import { isDisposableEmail } from '../src/email-domains.js';
-import { requestContactVerification } from '../src/verification.js';
 import { reportable, scrubEvent } from '../src/error-reporting.js';
 
 const origin = 'http://localhost:3100';
@@ -119,14 +118,13 @@ test('owners and customers must use an inbox they keep', async () => {
     });
   assert.equal(response.status, 422);
   assert.equal(response.body.error.code, 'DISPOSABLE_EMAIL');
-  await assert.rejects(
-    requestContactVerification({
-      businessId: '00000000-0000-4000-8000-000000000001',
-      sessionId: '00000000-0000-4000-8000-000000000002',
-      email: 'customer@mailinator.com',
-    }),
-    { code: 'DISPOSABLE_EMAIL' },
-  );
+  // A customer is turned away before anything about their chat is looked up.
+  const customer = await request(createApp())
+    .post('/api/v1/chat/any-business/00000000-0000-4000-8000-000000000002/contact')
+    .set('Origin', origin)
+    .send({ name: 'Sam', email: 'customer@mailinator.com' });
+  assert.equal(customer.status, 422);
+  assert.equal(customer.body.error.code, 'DISPOSABLE_EMAIL');
 });
 
 test('error reports keep the error and drop what people typed', () => {

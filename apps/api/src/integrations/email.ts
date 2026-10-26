@@ -9,16 +9,6 @@ const emailSchema = z.object({
   to: z.email().max(254),
   subject: z.string().min(1).max(180),
   text: z.string().min(1).max(30000),
-  requestAccess: z
-    .object({
-      quoteId: z.string().uuid(),
-      sessionId: z.string().uuid(),
-      tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
-      expiresAt: z.iso.datetime(),
-      event: z.enum(['issued', 'owner_message']),
-    })
-    .strict()
-    .optional(),
 });
 export type TransactionalEmail = z.infer<typeof emailSchema>;
 export function mailProvider(): 'local' | 'ses' {
@@ -97,54 +87,6 @@ export async function queueEmail(
   return connection ? write(connection) : transaction(write);
 }
 
-async function requestEmailSkipReason(
-  item: { business_id: string | null; dedupe_key: string },
-  payload: TransactionalEmail,
-  connection: Sql,
-) {
-  const access = payload.requestAccess;
-  if (!access)
-    return /^quote:[a-f0-9-]{36}:(?:issued|owner-message:[a-f0-9-]{36})$/i.test(item.dedupe_key)
-      ? 'Legacy request notification has no verifiable access grant.'
-      : null;
-  if (!item.business_id) return 'Request is unavailable for customer email.';
-  const [request] = await rows(
-    `SELECT s.email_token_hash,s.email_token_expires_at,s.status AS session_status,s.source AS session_source,
-      s.verified_email,s.contact_verified_at,s.contact_consent_at,q.customer_email,q.status AS quote_status,q.source AS quote_source,b.deletion_requested_at
-      FROM public_sessions s JOIN quotes q ON q.public_session_id=s.id AND q.business_id=s.business_id
-      JOIN businesses b ON b.id=s.business_id WHERE s.id=? AND q.id=? AND s.business_id=?`,
-    [access.sessionId, access.quoteId, item.business_id],
-    connection,
-  );
-  if (
-    !request ||
-    request.deletion_requested_at ||
-    request.quote_source !== 'live' ||
-    request.session_source !== 'live' ||
-    !['review', 'issued'].includes(request.quote_status) ||
-    !['submitted', 'issued'].includes(request.session_status) ||
-    (access.event === 'issued' && request.quote_status !== 'issued')
-  )
-    return 'Request is unavailable for customer email.';
-  if (
-    !request.contact_verified_at ||
-    !request.contact_consent_at ||
-    String(request.verified_email).toLowerCase() !== payload.to.toLowerCase() ||
-    String(request.customer_email).toLowerCase() !== payload.to.toLowerCase()
-  )
-    return 'Recipient is no longer the verified inquiry contact.';
-  if (request.email_token_hash !== access.tokenHash)
-    return 'Request link was replaced before email delivery.';
-  if (
-    new Date(access.expiresAt).getTime() <= Date.now() ||
-    !request.email_token_expires_at ||
-    new Date(request.email_token_expires_at).getTime() <= Date.now() ||
-    new Date(request.email_token_expires_at).getTime() !== new Date(access.expiresAt).getTime()
-  )
-    return 'Request link expired before email delivery.';
-  return null;
-}
-
 export async function deliverEmail(emailId: string): Promise<void> {
   const claimed = await transaction(async (connection) => {
     // Match account deletion and owner updates: business first, then its outbox row.
@@ -172,20 +114,7 @@ export async function deliverEmail(emailId: string): Promise<void> {
         'Email delivery has an uncertain outcome; inspect provider logs before retrying.',
       );
     }
-    const payload = decryptEmail(String(item.payload_encrypted)),
-      skipReason = await requestEmailSkipReason(
-        item as { business_id: string | null; dedupe_key: string },
-        payload,
-        connection,
-      );
-    if (skipReason) {
-      await mutate(
-        "UPDATE email_outbox SET status='skipped',last_error=?,sent_at=NULL,provider_message_id=NULL WHERE id=?",
-        [skipReason, emailId],
-        connection,
-      );
-      return null;
-    }
+    const payload = decryptEmail(String(item.payload_encrypted));
     await mutate(
       "UPDATE email_outbox SET status='sending',last_error=NULL WHERE id=?",
       [emailId],

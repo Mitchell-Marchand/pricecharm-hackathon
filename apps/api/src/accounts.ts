@@ -43,20 +43,11 @@ accountRouter.get('/account/export', async (req, res) => {
       ).map((record) =>
         Object.fromEntries(
           Object.entries(record).filter(
-            ([key]) =>
-              (!key.endsWith('_hash') ||
-                (table === 'import_drafts' &&
-                  ['source_hash', 'confirmation_hash'].includes(key))) &&
-              key !== 'payload_encrypted',
+            ([key]) => !key.endsWith('_hash') && key !== 'payload_encrypted',
           ),
         ),
       );
     }
-    records.guest_previews = await rows(
-      'SELECT id,version,status,claimed_service_id,claimed_setup_id,claimed_proposal_id,claim_receipt_json,reservation_day,created_at,updated_at FROM guest_previews WHERE claimed_business_id=? AND status=?',
-      [businessId, 'claimed'],
-      connection,
-    );
     return { exportedAt: new Date().toISOString(), business, records };
   });
   res.setHeader('Content-Disposition', 'attachment; filename="quotient-account-export.json"');
@@ -97,12 +88,7 @@ accountRouter.delete('/account', async (req, res) => {
       connection,
     );
     await mutate(
-      'UPDATE businesses SET deletion_requested_at=UTC_TIMESTAMP(3),auto_quote_enabled=FALSE WHERE id=?',
-      [context.businessId],
-      connection,
-    );
-    await mutate(
-      'UPDATE services SET published_at=NULL WHERE business_id=?',
+      'UPDATE businesses SET deletion_requested_at=UTC_TIMESTAMP(3),auto_send=FALSE WHERE id=?',
       [context.businessId],
       connection,
     );

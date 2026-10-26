@@ -3,7 +3,7 @@ import { Router, type RequestHandler } from 'express';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { owner } from './auth.js';
-import { getPool, mutate, rows, transaction, type Sql } from './db.js';
+import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok } from './http.js';
 import { iso } from './models.js';
 import type { RowDataPacket } from 'mysql2/promise';
@@ -30,7 +30,6 @@ export function publicPricing() {
     minimumFeeCents: setting('BILLING_MINIMUM_FEE_CENTS', 100, 100000),
     maximumFeeCents: setting('BILLING_MAXIMUM_FEE_CENTS', 2500, 100000),
     trialQuotes: setting('BILLING_TRIAL_QUOTES', 10, 100, 1),
-    trialDays: setting('BILLING_TRIAL_DAYS', 14, 30, 1),
     tariffVersion: process.env.BILLING_TARIFF_VERSION || 'quote-percentage-v1',
   };
 }
@@ -91,7 +90,8 @@ export async function ensureBillingAccount(businessId: string, connection: Sql) 
     VALUES (?,?,?,?,?,?,?)`,
     [
       businessId,
-      new Date(new Date(business.created_at).getTime() + pricing.trialDays * 86400000),
+      // Free quotes don't expire; the old flow's trial end date stays far off.
+      new Date('2100-01-01T00:00:00Z'),
       pricing.trialQuotes,
       pricing.feeBasisPoints,
       pricing.minimumFeeCents,
@@ -123,7 +123,6 @@ export function feeForQuote(
 export async function billingCounts(businessId: string, connection: Sql) {
   const [usage] = await rows(
     `SELECT COUNT(*) delivered,
-    COALESCE(SUM(source='automatic' AND verified_contact=TRUE),0) automatic,
     COALESCE(SUM(fee_cents>0 AND created_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) billable,
     COALESCE(SUM(CASE WHEN created_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01') THEN fee_cents ELSE 0 END),0) fees
     FROM quote_usage WHERE business_id=?`,
@@ -132,73 +131,20 @@ export async function billingCounts(businessId: string, connection: Sql) {
   );
   return {
     delivered: Number(usage.delivered),
-    automatic: Number(usage.automatic),
     billable: Number(usage.billable),
     fees: Number(usage.fees),
   };
-}
-export async function assertBillingAccess(
-  businessId: string,
-  connection?: Sql,
-  nextQuoteCents?: number,
-): Promise<{ canIssue: boolean; reason?: string }> {
-  const check = async (sql: Sql) => {
-    const account = await ensureBillingAccount(businessId, sql),
-      usage = await billingCounts(businessId, sql);
-    if (
-      new Date(account.trial_ends_at).getTime() > Date.now() &&
-      usage.automatic < Number(account.trial_quote_limit)
-    )
-      return { canIssue: true };
-    if (
-      account.subscription_status !== 'active' ||
-      (billingProvider() === 'stripe' && !stripeConfigured())
-    )
-      return {
-        canIssue: false,
-        reason: 'The free trial is complete. Activate billing to issue more automatic quotes.',
-      };
-    if (
-      billingProvider() === 'stripe' &&
-      (!account.last_reconciled_at ||
-        new Date(account.last_reconciled_at).getTime() < Date.now() - 86400000)
-    )
-      return {
-        canIssue: false,
-        reason: 'Billing status is being refreshed. Requests can still be reviewed by the owner.',
-      };
-    const fee = nextQuoteCents === undefined ? 1 : feeForQuote(nextQuoteCents, account);
-    if (usage.fees + fee > Number(account.spending_cap_cents))
-      return {
-        canIssue: false,
-        reason:
-          'This workspace reached its monthly fee spending cap. The owner can review this request or raise the cap.',
-      };
-    return { canIssue: true };
-  };
-  return connection ? check(connection) : transaction(check);
 }
 export async function getBilling(businessId: string) {
   return transaction(async (connection) => {
     const account = await ensureBillingAccount(businessId, connection),
       usage = await billingCounts(businessId, connection);
-    const access = await assertBillingAccess(businessId, connection);
     const provider = billingProvider(),
       configured = provider === 'local' || stripeConfigured();
-    const trialRemaining =
-      new Date(account.trial_ends_at).getTime() > Date.now()
-        ? Math.max(0, Number(account.trial_quote_limit) - usage.automatic)
-        : 0;
     return {
       provider,
       configured,
       status: String(account.subscription_status),
-      ...access,
-      trial: {
-        remainingQuotes: trialRemaining,
-        quoteLimit: Number(account.trial_quote_limit),
-        endsAt: iso(account.trial_ends_at),
-      },
       usage: {
         deliveredQuotes: usage.delivered,
         billableQuotes: usage.billable,

@@ -4,13 +4,8 @@ import { z } from 'zod';
 import { getPool } from './db.js';
 import { csrfProtection, login, logout, me, register, requireOwner } from './auth.js';
 import { ApiError, errorHandler, ok, rateLimit, requestId, securityHeaders } from './http.js';
-import { ownerRouter } from './owner.js';
-import { publicRouter } from './public.js';
-import { trainingRouter } from './training.js';
 import { createUploadRouter } from './uploads.js';
 import { aiMode, aiProvider } from './ai/index.js';
-import { importRouter } from './imports.js';
-import { knowledgeRouter } from './knowledge.js';
 import {
   forgotPassword,
   resetPassword,
@@ -25,8 +20,6 @@ import {
 } from './billing.js';
 import { validateEmailConfiguration } from './integrations/email.js';
 import { accountRouter } from './accounts.js';
-import { serviceSetupRouter } from './service-setup.js';
-import { guestPreviewRouter } from './guest-preview.js';
 import { validateRuntimeConfiguration } from './config.js';
 import { requireHuman } from './human-check.js';
 import { onboardingRouter } from './onboarding.js';
@@ -109,7 +102,6 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/v1', rateLimit(300, 60_000));
   app.use('/api/v1', createUploadRouter());
-  app.use('/api/v1/public', publicRouter);
   app.get('/api/v1/pricing', pricingHandler);
   app.get('/api/v1/site', (_req, res) =>
     res.json(
@@ -124,7 +116,6 @@ export function createApp() {
     ),
   );
   app.use('/api/v1', csrfProtection);
-  app.use('/api/v1', guestPreviewRouter);
   app.use('/api/v1', onboardingRouter, pastJobsRouter, practiceRouter, profileRouter, chatRouter);
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
@@ -134,19 +125,7 @@ export function createApp() {
   app.post('/api/v1/auth/reset-password', rateLimit(15, 15 * 60_000), resetPassword);
   app.post('/api/v1/auth/request-verification', requireOwner, requestOwnerVerification);
   app.post('/api/v1/auth/verify-email', rateLimit(30, 15 * 60_000), verifyOwnerEmail);
-  app.use(
-    '/api/v1',
-    requireOwner,
-    ownerRouter,
-    trainingRouter,
-    importRouter,
-    knowledgeRouter,
-    billingRouter,
-    accountRouter,
-    serviceSetupRouter,
-    shareRouter,
-    ownerQuotesRouter,
-  );
+  app.use('/api/v1', requireOwner, billingRouter, accountRouter, shareRouter, ownerQuotesRouter);
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
   app.use(errorHandler);
   return app;
