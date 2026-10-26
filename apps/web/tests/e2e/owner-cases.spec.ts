@@ -425,6 +425,9 @@ test('an unknown-hours job leads to explicit price teaching, confirmed learning 
   expect(requests.apply).toEqual([{}, {}]);
   await page.getByText('Your saved jobs', { exact: true }).click();
   await approved.getByRole('button', { name: 'Price a practice job', exact: true }).click();
+  // Starting a practice puts its id in the URL, which remounts the practice panel. Wait for that
+  // before typing, or a slow runner can type into the panel that is about to be replaced.
+  await expect(page).toHaveURL(new RegExp(`practice=${ids.practice}`));
   const reply = page.getByLabel('Your reply to the practice customer', { exact: true });
   await expect(reply).toBeVisible();
   await expect(page.getByRole('button', { name: 'Price a practice job', exact: true })).toHaveCount(
@@ -534,6 +537,9 @@ test('a measured practice restores its applied lesson after a later configuratio
   );
   await page.goto(`/dashboard?service=${ids.service}&step=teach`);
   await page.getByRole('button', { name: 'Price a practice job', exact: true }).click();
+  // Starting a practice puts its id in the URL, which remounts the practice panel. Wait for that
+  // before typing, or a slow runner can type into the panel that is about to be replaced.
+  await expect(page).toHaveURL(new RegExp(`practice=${ids.practice}`));
   const reply = page.getByLabel('Your reply to the practice customer', { exact: true });
   await reply.fill('I would charge $180.');
   await page.getByRole('button', { name: 'Send practice reply', exact: true }).click();
