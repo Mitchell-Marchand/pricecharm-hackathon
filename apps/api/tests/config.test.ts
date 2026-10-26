@@ -8,6 +8,8 @@ const base: NodeJS.ProcessEnv = {
   PATH: process.env.PATH,
   DOTENV_CONFIG_PATH: '/dev/null',
   NODE_ENV: 'production',
+  APP_ENV: 'staging',
+  TRUST_PROXY: '1',
   AI_PROVIDER: 'openai',
   OPENAI_API_KEY: 'test-openai-config-only-never-send',
   OPENAI_MODEL: 'gpt-4.1-mini',
@@ -56,14 +58,60 @@ function inspect(overrides: NodeJS.ProcessEnv = {}) {
   });
 }
 
+// Built at runtime so no live-looking key appears in the source.
+const liveStripeKey = ['sk', 'live', 'config_only_never_charge'].join('_');
+
 for (const provider of ['openai', 'anthropic']) {
-  test(`fully configured production initializes with ${provider} without any network action`, () => {
+  test(`fully configured staging initializes with ${provider} without any network action`, () => {
     const result = inspect({ AI_PROVIDER: provider });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, 'CONFIG_OK');
   });
 }
+test('fully configured production initializes with a live Stripe key', () => {
+  const result = inspect({ APP_ENV: 'production', STRIPE_SECRET_KEY: liveStripeKey });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'CONFIG_OK');
+});
 const rejected: { name: string; env: NodeJS.ProcessEnv; message: RegExp }[] = [
+  {
+    name: 'a test Stripe key in production',
+    env: { APP_ENV: 'production' },
+    message: /live Stripe key/,
+  },
+  {
+    name: 'a live Stripe key in staging',
+    env: { STRIPE_SECRET_KEY: liveStripeKey },
+    message: /Stripe test key/,
+  },
+  {
+    name: 'a public origin without APP_ENV',
+    env: { APP_ENV: '', NODE_ENV: 'development' },
+    message: /set APP_ENV to staging or production/,
+  },
+  { name: 'development mode', env: { NODE_ENV: 'development' }, message: /NODE_ENV=production/ },
+  { name: 'dev tokens', env: { EXPOSE_DEV_TOKENS: '1' }, message: /EXPOSE_DEV_TOKENS/ },
+  {
+    name: 'an implicit mail provider',
+    env: { MAIL_PROVIDER: '' },
+    message: /Set MAIL_PROVIDER explicitly/,
+  },
+  {
+    name: 'an implicit proxy setting',
+    env: { TRUST_PROXY: '' },
+    message: /Set TRUST_PROXY explicitly/,
+  },
+  {
+    name: 'an unknown proxy setting',
+    env: { TRUST_PROXY: 'true' },
+    message: /TRUST_PROXY must be 0/,
+  },
+  {
+    name: 'an unencrypted remote database',
+    env: { DB_HOST: 'db.internal.example.test' },
+    message: /DB_SSL=1/,
+  },
+  { name: 'an unknown APP_ENV', env: { APP_ENV: 'prod' }, message: /APP_ENV must be/ },
   { name: 'demo AI', env: { AI_PROVIDER: 'demo' }, message: /demo AI/ },
   { name: 'local mail', env: { MAIL_PROVIDER: 'local' }, message: /local email/ },
   { name: 'local payments', env: { BILLING_PROVIDER: 'local' }, message: /local payments/ },
@@ -107,7 +155,7 @@ const rejected: { name: string; env: NodeJS.ProcessEnv; message: RegExp }[] = [
   },
 ];
 for (const scenario of rejected) {
-  test(`production rejects ${scenario.name}`, () => {
+  test(`deployed server rejects ${scenario.name}`, () => {
     const result = inspect(scenario.env);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, scenario.message);

@@ -1,13 +1,13 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Quotient dedicated EC2 web/API host, private photos, restricted SES role and host alarms.",
+  "Description": "Quotefolk dedicated EC2 web/API host, its own private RDS MariaDB database, private photos, restricted SES role and alarms. Shares nothing with other applications.",
   "Parameters": {
     "VpcId": {
       "Type": "AWS::EC2::VPC::Id"
     },
     "SubnetId": {
       "Type": "AWS::EC2::Subnet::Id",
-      "Description": "Public subnet in the same VPC as the existing database; outbound internet required."
+      "Description": "Public subnet for the application host; outbound internet required."
     },
     "KeyName": {
       "Type": "AWS::EC2::KeyPair::KeyName"
@@ -37,11 +37,73 @@
       "AllowedPattern": "arn:aws[a-z-]*:ses:[a-z0-9-]+:\\d{12}:identity/.+",
       "Description": "Verified SES sending domain identity ARN in this AWS region."
     },
+    "DatabaseMode": {
+      "Type": "String",
+      "Default": "dedicated",
+      "AllowedValues": [
+        "dedicated",
+        "existing"
+      ],
+      "Description": "dedicated creates a private RDS MariaDB instance for Quotefolk only (recommended). existing keeps the older option of reaching a database you already run."
+    },
+    "DbSubnetIds": {
+      "Type": "CommaDelimitedList",
+      "Default": "",
+      "Description": "Dedicated database only: two or more private subnets in different Availability Zones, comma separated."
+    },
+    "DbInstanceClass": {
+      "Type": "String",
+      "Default": "db.t4g.small",
+      "AllowedValues": [
+        "db.t4g.micro",
+        "db.t4g.small",
+        "db.t4g.medium",
+        "db.t4g.large",
+        "db.m7g.large"
+      ]
+    },
+    "DbAllocatedStorage": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 20,
+      "MaxValue": 1000,
+      "Description": "Initial storage in GiB."
+    },
+    "DbMaxAllocatedStorage": {
+      "Type": "Number",
+      "Default": 100,
+      "MinValue": 21,
+      "MaxValue": 2000,
+      "Description": "Storage autoscaling ceiling in GiB. Must be larger than DbAllocatedStorage."
+    },
+    "DbEngineVersion": {
+      "Type": "String",
+      "Default": "11.4",
+      "AllowedValues": [
+        "11.4"
+      ],
+      "Description": "MariaDB major version. The parameter group family follows it."
+    },
+    "DbMultiAz": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": [
+        "false",
+        "true"
+      ],
+      "Description": "true keeps a standby in a second Availability Zone (about double the cost)."
+    },
+    "DbBackupRetentionDays": {
+      "Type": "Number",
+      "Default": 14,
+      "MinValue": 1,
+      "MaxValue": 35
+    },
     "ExistingDbSecurityGroupId": {
       "Type": "String",
       "Default": "",
       "AllowedPattern": "(^$|sg-[a-f0-9]+)",
-      "Description": "Optional: add only TCP3306 from the new application SG to this existing DB SG. Leave empty to manage database ingress yourself."
+      "Description": "Only used when DatabaseMode is existing: adds TCP 3306 from the app host to this database security group. Not recommended; see docs/ops/database.md."
     },
     "AlarmTopicArn": {
       "Type": "String",
@@ -51,13 +113,24 @@
   },
   "Conditions": {
     "HasDbGroup": {
-      "Fn::Not": [
+      "Fn::And": [
         {
-          "Fn::Equals": [
+          "Fn::Not": [
             {
-              "Ref": "ExistingDbSecurityGroupId"
-            },
-            ""
+              "Condition": "CreateDatabase"
+            }
+          ]
+        },
+        {
+          "Fn::Not": [
+            {
+              "Fn::Equals": [
+                {
+                  "Ref": "ExistingDbSecurityGroupId"
+                },
+                ""
+              ]
+            }
           ]
         }
       ]
@@ -72,6 +145,22 @@
             ""
           ]
         }
+      ]
+    },
+    "CreateDatabase": {
+      "Fn::Equals": [
+        {
+          "Ref": "DatabaseMode"
+        },
+        "dedicated"
+      ]
+    },
+    "DbMultiAzEnabled": {
+      "Fn::Equals": [
+        {
+          "Ref": "DbMultiAz"
+        },
+        "true"
       ]
     }
   },
@@ -126,7 +215,7 @@
         "SourceSecurityGroupId": {
           "Ref": "AppSecurityGroup"
         },
-        "Description": "Dedicated Quotient application access to existing MySQL infrastructure"
+        "Description": "Quotefolk application access to an existing database (DatabaseMode existing)"
       }
     },
     "PhotoBucket": {
@@ -299,7 +388,7 @@
           }
         ],
         "UserData": {
-          "Fn::Base64": "#!/usr/bin/env bash\n# Amazon Linux 2023, dedicated new Quotient instance. Run as root.\nset -euo pipefail\n[[ $(id -u) == 0 ]] || { echo 'Run on a new EC2 instance as root.' >&2; exit 1; }\nsource /etc/os-release\n[[ \"$ID\" == amzn && \"$VERSION_ID\" == 2023 ]] || { echo 'This bootstrap requires Amazon Linux 2023.' >&2; exit 1; }\ndnf install -y nodejs24 nodejs24-npm nginx rsync jq mariadb105 gzip python3 amazon-cloudwatch-agent\nalternatives --set node /usr/bin/node-24\n[[ $(node -p 'process.versions.node.split(\".\")[0]') == 24 ]]\nnpm install --global pm2@6\nid quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient\ninstall -d -m 700 -o quotient -g quotient /home/quotient/.ssh\ninstall -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases\ninstall -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups\n# Copy only the provisioned instance admin public key to the unprivileged deployment user.\nif [[ -s /home/ec2-user/.ssh/authorized_keys && ! -e /home/quotient/.ssh/authorized_keys ]]; then\n  install -m 600 -o quotient -g quotient /home/ec2-user/.ssh/authorized_keys /home/quotient/.ssh/authorized_keys\nfi\npm2 startup systemd -u quotient --hp /home/quotient\ncat > /etc/logrotate.d/quotient <<'ROTATE'\n/home/quotient/.pm2/logs/*.log {\n    daily\n    rotate 14\n    compress\n    missingok\n    notifempty\n    copytruncate\n    su quotient quotient\n}\nROTATE\nsystemctl enable --now nginx amazon-ssm-agent\nprintf '%s\\n' 'Bootstrap complete. Configure shared/.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'\n"
+          "Fn::Base64": "#!/usr/bin/env bash\n# Amazon Linux 2023, dedicated new Quotient instance. Run as root.\nset -euo pipefail\n[[ $(id -u) == 0 ]] || { echo 'Run on a new EC2 instance as root.' >&2; exit 1; }\nsource /etc/os-release\n[[ \"$ID\" == amzn && \"$VERSION_ID\" == 2023 ]] || { echo 'This bootstrap requires Amazon Linux 2023.' >&2; exit 1; }\ndnf install -y nodejs24 nodejs24-npm nginx rsync jq mariadb105 gzip python3 amazon-cloudwatch-agent\nalternatives --set node /usr/bin/node-24\n[[ $(node -p 'process.versions.node.split(\".\")[0]') == 24 ]]\nnpm install --global pm2@6\nid quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient\ninstall -d -m 700 -o quotient -g quotient /home/quotient/.ssh\ninstall -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases\ninstall -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups\n# Copy only the provisioned instance admin public key to the unprivileged deployment user.\nif [[ -s /home/ec2-user/.ssh/authorized_keys && ! -e /home/quotient/.ssh/authorized_keys ]]; then\n  install -m 600 -o quotient -g quotient /home/ec2-user/.ssh/authorized_keys /home/quotient/.ssh/authorized_keys\nfi\npm2 startup systemd -u quotient --hp /home/quotient\ncat > /etc/logrotate.d/quotient <<'ROTATE'\n/home/quotient/.pm2/logs/*.log {\n    daily\n    rotate 14\n    compress\n    missingok\n    notifempty\n    copytruncate\n    su quotient quotient\n}\nROTATE\n# Certificate bundle for verified TLS to RDS (DB_SSL=1, DB_SSL_CA_FILE).\ninstall -d -m 755 /etc/pki/rds\ncurl --fail --silent --show-error --output /etc/pki/rds/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem\nsystemctl enable --now nginx amazon-ssm-agent\nprintf '%s\\n' 'Bootstrap complete. Configure shared/.env, shared/migrate.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'\n"
         },
         "Tags": [
           {
@@ -391,6 +480,238 @@
           ]
         }
       }
+    },
+    "DbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "GroupDescription": "Quotefolk database: MariaDB from the Quotefolk application host only",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 3306,
+            "ToPort": 3306,
+            "SourceSecurityGroupId": {
+              "Ref": "AppSecurityGroup"
+            },
+            "Description": "Quotefolk API and worker"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "DbSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private subnets for the Quotefolk database",
+        "SubnetIds": {
+          "Ref": "DbSubnetIds"
+        },
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "DbParameterGroup": {
+      "Type": "AWS::RDS::DBParameterGroup",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "Description": "Quotefolk MariaDB: TLS required, utf8mb4",
+        "Family": {
+          "Fn::Sub": "mariadb${DbEngineVersion}"
+        },
+        "Parameters": {
+          "require_secure_transport": "ON",
+          "character_set_server": "utf8mb4",
+          "collation_server": "utf8mb4_unicode_ci"
+        },
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "Database": {
+      "Type": "AWS::RDS::DBInstance",
+      "Condition": "CreateDatabase",
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot",
+      "Properties": {
+        "Engine": "mariadb",
+        "EngineVersion": {
+          "Ref": "DbEngineVersion"
+        },
+        "DBInstanceClass": {
+          "Ref": "DbInstanceClass"
+        },
+        "AllocatedStorage": {
+          "Ref": "DbAllocatedStorage"
+        },
+        "MaxAllocatedStorage": {
+          "Ref": "DbMaxAllocatedStorage"
+        },
+        "StorageType": "gp3",
+        "StorageEncrypted": true,
+        "MultiAZ": {
+          "Fn::If": [
+            "DbMultiAzEnabled",
+            true,
+            false
+          ]
+        },
+        "DBName": "quotient_production",
+        "MasterUsername": "quotefolk_admin",
+        "ManageMasterUserPassword": true,
+        "DBSubnetGroupName": {
+          "Ref": "DbSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Ref": "DbSecurityGroup"
+          }
+        ],
+        "DBParameterGroupName": {
+          "Ref": "DbParameterGroup"
+        },
+        "PubliclyAccessible": false,
+        "BackupRetentionPeriod": {
+          "Ref": "DbBackupRetentionDays"
+        },
+        "DeletionProtection": true,
+        "CopyTagsToSnapshot": true,
+        "AutoMinorVersionUpgrade": true,
+        "EnableCloudwatchLogsExports": [
+          "error"
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "DbCpuAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "AlarmDescription": "Quotefolk database CPU has stayed high",
+        "Namespace": "AWS/RDS",
+        "MetricName": "CPUUtilization",
+        "Dimensions": [
+          {
+            "Name": "DBInstanceIdentifier",
+            "Value": {
+              "Ref": "Database"
+            }
+          }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 3,
+        "Threshold": 80,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    },
+    "DbStorageAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "AlarmDescription": "Quotefolk database has less than 2 GiB of free storage",
+        "Namespace": "AWS/RDS",
+        "MetricName": "FreeStorageSpace",
+        "Dimensions": [
+          {
+            "Name": "DBInstanceIdentifier",
+            "Value": {
+              "Ref": "Database"
+            }
+          }
+        ],
+        "Statistic": "Minimum",
+        "Period": 300,
+        "EvaluationPeriods": 1,
+        "Threshold": 2147483648,
+        "ComparisonOperator": "LessThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    },
+    "DbConnectionsAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Condition": "CreateDatabase",
+      "Properties": {
+        "AlarmDescription": "Quotefolk database connections are close to the app and migration limits",
+        "Namespace": "AWS/RDS",
+        "MetricName": "DatabaseConnections",
+        "Dimensions": [
+          {
+            "Name": "DBInstanceIdentifier",
+            "Value": {
+              "Ref": "Database"
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 18,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
     }
   },
   "Outputs": {
@@ -416,6 +737,35 @@
     },
     "DeployUser": {
       "Value": "quotient"
+    },
+    "DatabaseEndpoint": {
+      "Condition": "CreateDatabase",
+      "Description": "DB_HOST for the API",
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "Endpoint.Address"
+        ]
+      }
+    },
+    "DatabasePort": {
+      "Condition": "CreateDatabase",
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "Endpoint.Port"
+        ]
+      }
+    },
+    "DatabaseAdminSecretArn": {
+      "Condition": "CreateDatabase",
+      "Description": "Secrets Manager secret holding the admin password. Use it only to create the app and migration users.",
+      "Value": {
+        "Fn::GetAtt": [
+          "Database",
+          "MasterUserSecret.SecretArn"
+        ]
+      }
     }
   }
 }

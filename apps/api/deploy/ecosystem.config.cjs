@@ -1,7 +1,9 @@
 const path = require('node:path');
-const cwd = path.resolve(__dirname, '..');
-const uploadDirectory = path.resolve(cwd, '..', '..', 'shared', 'uploads');
-const release = path.basename(cwd);
+// Inside a release this file is <app root>/releases/<id>/apps/api/deploy/.
+const releaseRoot = path.resolve(__dirname, '..', '..', '..');
+const cwd = path.join(releaseRoot, 'apps', 'api');
+const uploadDirectory = path.resolve(releaseRoot, '..', '..', 'shared', 'uploads');
+const release = path.basename(releaseRoot);
 
 module.exports = {
   apps: [

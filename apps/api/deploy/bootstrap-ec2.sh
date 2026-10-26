@@ -28,5 +28,8 @@ cat > /etc/logrotate.d/quotient <<'ROTATE'
     su quotient quotient
 }
 ROTATE
+# Certificate bundle for verified TLS to RDS (DB_SSL=1, DB_SSL_CA_FILE).
+install -d -m 755 /etc/pki/rds
+curl --fail --silent --show-error --output /etc/pki/rds/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
 systemctl enable --now nginx amazon-ssm-agent
-printf '%s\n' 'Bootstrap complete. Configure shared/.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'
+printf '%s\n' 'Bootstrap complete. Configure shared/.env, shared/migrate.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'

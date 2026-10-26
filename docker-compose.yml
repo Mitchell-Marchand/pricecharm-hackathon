@@ -1,0 +1,25 @@
+# Quotefolk's own local MariaDB, separate from any other app's database server.
+# Local-only credentials, published on 127.0.0.1 only. Start it with `npm run db:start`.
+services:
+  db:
+    image: mariadb:11.4
+    container_name: quotefolk-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: local-root-only
+      MARIADB_DATABASE: quoting_engine
+      MARIADB_USER: quoting_engine
+      MARIADB_PASSWORD: local-dev-only
+    ports:
+      - '127.0.0.1:3307:3306'
+    volumes:
+      - quotefolk-db:/var/lib/mysql
+      - ./scripts/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  quotefolk-db:

@@ -1,7 +1,10 @@
+import path from 'node:path';
 import type { NextConfig } from 'next';
 
 const config: NextConfig = {
   output: 'standalone',
+  // Dependencies are installed once at the monorepo root, so trace from there.
+  outputFileTracingRoot: path.join(__dirname, '../..'),
   poweredByHeader: false,
   async headers() {
     return [

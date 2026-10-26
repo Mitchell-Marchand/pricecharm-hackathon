@@ -1,16 +1,21 @@
-name: Check and deploy web
+name: Deploy web
 
 on:
-  pull_request:
   push:
     branches: [main]
+    paths:
+      - apps/web/**
+      - package.json
+      - package-lock.json
+      - .nvmrc
+      - .github/workflows/deploy-web.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: web-${{ github.ref }}
+  group: deploy-web
   cancel-in-progress: false
 
 jobs:
@@ -18,50 +23,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '24'
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run format:check
-      - run: npm run typecheck
-      - run: npm run build
+      - run: npm run format:check --workspace @quotefolk/web
+      - run: npm run typecheck --workspace @quotefolk/web
+      - run: npm run build --workspace @quotefolk/web
         env:
           API_BASE_URL: http://127.0.0.1:4100
-      - name: Package immutable application release
+      - name: Package an immutable release
+        # Standalone output mirrors the monorepo, so the server lives at apps/web/server.js inside it.
         run: |
-          mkdir -p release
           mkdir -p release/.next
-          cp -R .next/standalone release/.next/standalone
-          mkdir -p release/.next/standalone/.next
-          cp -R .next/static release/.next/standalone/.next/static
-          if [[ -d public ]]; then cp -R public release/.next/standalone/public; fi
-          cp -R deploy release/deploy
-          tar -C release -czf quotient-web.tar.gz .
-      - uses: actions/upload-artifact@v4
+          cp -R apps/web/.next/standalone release/.next/standalone
+          cp -R apps/web/.next/static release/.next/standalone/apps/web/.next/static
+          if [[ -d apps/web/public ]]; then cp -R apps/web/public release/.next/standalone/apps/web/public; fi
+          cp -R apps/web/deploy release/deploy
+          tar -C release -czf quotefolk-web.tar.gz .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: quotient-web
-          path: quotient-web.tar.gz
+          name: quotefolk-web
+          path: quotefolk-web.tar.gz
           retention-days: 7
 
   deploy:
     needs: check
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+    if: github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: quotient-web
+          name: quotefolk-web
       - name: Upload release and health-check PM2 process
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USER: ${{ secrets.EC2_USER }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
-          DEPLOY_ROOT: ${{ vars.EC2_DEPLOY_ROOT || '/srv/quotient-web' }}
+          DEPLOY_ROOT: ${{ vars.EC2_WEB_DEPLOY_ROOT || '/srv/quotient-web' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -71,8 +75,8 @@ jobs:
           test -n "$EC2_SSH_KEY"
           test -n "$EC2_KNOWN_HOSTS"
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          key_path="$RUNNER_TEMP/quotient_web_key"
-          known_hosts_path="$RUNNER_TEMP/quotient_web_known_hosts"
+          key_path="$RUNNER_TEMP/quotefolk_web_key"
+          known_hosts_path="$RUNNER_TEMP/quotefolk_web_known_hosts"
           trap 'rm -f "$key_path" "$known_hosts_path"' EXIT
           umask 077
           printf '%s\n' "$EC2_SSH_KEY" > "$key_path"
@@ -83,7 +87,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$1/releases/$2"
           REMOTE
-          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" quotient-web.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
+          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" quotefolk-web.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
           ssh "${ssh_args[@]}" "$remote" bash -s -- "$DEPLOY_ROOT" "$release_id" <<'REMOTE'
           set -euo pipefail
           tar -xzf "$1/releases/$2/release.tar.gz" -C "$1/releases/$2"

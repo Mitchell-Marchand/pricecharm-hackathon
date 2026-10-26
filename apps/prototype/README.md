@@ -5,14 +5,13 @@ A clickable prototype of the new flow: landing page, the three setup steps (busi
 ## Run it
 
 ```sh
-cd prototype
-npm install
-npm run dev
+npm ci
+npm run dev --workspace @quotefolk/prototype
 ```
 
-Then open http://127.0.0.1:3200. It needs Node 20 or newer (the repo's `.nvmrc` files use 24).
+Run these from the repository root, then open http://127.0.0.1:3200. It needs Node 24 (see `.nvmrc`).
 
-`npm run build` typechecks, builds one self-contained HTML file in `dist/index.html`, and writes `dist/quotefolk-onboarding.html`, the same page in the fragment format used for publishing it as a shareable Artifact.
+`npm run build --workspace @quotefolk/prototype` typechecks, builds one self-contained HTML file in `dist/index.html`, and writes `dist/quotefolk-onboarding.html`, the same page in the fragment format used for publishing it as a shareable Artifact.
 
 ## What's real and what's mocked
 

@@ -27,8 +27,10 @@ import { validateEmailConfiguration } from './integrations/email.js';
 import { accountRouter } from './accounts.js';
 import { serviceSetupRouter } from './service-setup.js';
 import { guestPreviewRouter } from './guest-preview.js';
+import { validateRuntimeConfiguration } from './config.js';
 
 export function createApp() {
+  validateRuntimeConfiguration();
   const app = express();
   app.disable('x-powered-by');
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);

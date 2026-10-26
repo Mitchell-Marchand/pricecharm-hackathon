@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeDatabase, getPool } from './db.js';
+import { applyMigrationCredentials, validateRuntimeConfiguration } from './config.js';
 
 export async function migrate(): Promise<void> {
   const database = process.env.DB_NAME || '';
@@ -112,7 +113,12 @@ export async function migrate(): Promise<void> {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  migrate()
+  Promise.resolve()
+    .then(() => {
+      validateRuntimeConfiguration();
+      applyMigrationCredentials();
+      return migrate();
+    })
     .then(() => closeDatabase())
     .catch(async (error) => {
       console.error('Migration failed:', error.message);

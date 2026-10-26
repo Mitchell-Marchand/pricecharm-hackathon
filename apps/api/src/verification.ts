@@ -1,6 +1,7 @@
 import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
+import { devTokensAllowed } from './config.js';
 import { hashPassword, hashToken, newToken, owner } from './auth.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok, rateLimit } from './http.js';
@@ -128,7 +129,12 @@ export const forgotPassword: RequestHandler = async (req, res) => {
         purpose: 'reset_password',
       })
     : undefined;
-  res.json(ok({ ok: true, ...(mailProvider() === 'local' && token ? { devToken: token } : {}) }));
+  res.json(
+    ok({
+      ok: true,
+      ...(mailProvider() === 'local' && token && devTokensAllowed(req) ? { devToken: token } : {}),
+    }),
+  );
 };
 export const requestOwnerVerification: RequestHandler = async (req, res) => {
   const context = owner(req);
@@ -151,7 +157,7 @@ export const requestOwnerVerification: RequestHandler = async (req, res) => {
     ok({
       ok: true,
       delivery: mailProvider() === 'local' ? 'local' : 'email',
-      ...(mailProvider() === 'local' ? { devToken: token } : {}),
+      ...(mailProvider() === 'local' && devTokensAllowed(req) ? { devToken: token } : {}),
     }),
   );
 };
@@ -240,6 +246,8 @@ export async function requestContactVerification(input: {
   sessionId: string;
   email: string;
   ip?: string;
+  /** Only for local runs: return the code so the flow works without an inbox. */
+  exposeCode?: boolean;
 }): Promise<{ verificationId: string; delivery: 'email' | 'local'; devCode?: string }> {
   const email = emailSchema.parse(input.email),
     verificationId = randomUUID();
@@ -305,7 +313,7 @@ export async function requestContactVerification(input: {
   return {
     verificationId,
     delivery: mailProvider() === 'local' ? 'local' : 'email',
-    ...(mailProvider() === 'local' ? { devCode: code } : {}),
+    ...(mailProvider() === 'local' && input.exposeCode ? { devCode: code } : {}),
   };
 }
 export async function verifyContactVerification(input: {

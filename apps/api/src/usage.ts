@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { PoolConnection } from 'mysql2/promise';
+import { isDeployed } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { runWithAiUsage, aiMode, type AiUsage } from './ai/index.js';
 import { ApiError } from './http.js';
@@ -16,7 +17,7 @@ function dailyLimit(key: string, fallback: number) {
 export function guestIpBudgetKey(ip: string, day: string): string {
   const key =
     process.env.MAIL_ENCRYPTION_KEY ||
-    (process.env.NODE_ENV !== 'production' ? process.env.DB_PASS : undefined);
+    (process.env.NODE_ENV !== 'production' && !isDeployed() ? process.env.DB_PASS : undefined);
   if (!key)
     throw new ApiError(
       503,

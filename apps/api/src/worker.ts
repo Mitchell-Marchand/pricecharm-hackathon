@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RowDataPacket } from 'mysql2/promise';
 import { z } from 'zod';
+import { validateRuntimeConfiguration } from './config.js';
 import { closeDatabase, mutate, rows, transaction, type Sql } from './db.js';
 import { deleteBusinessAccount } from './accounts.js';
 import {
@@ -230,6 +231,7 @@ async function pause(milliseconds: number): Promise<void> {
   });
 }
 export async function startWorker(): Promise<void> {
+  validateRuntimeConfiguration();
   validateEmailConfiguration();
   validateBillingConfiguration();
   const stop = () => {
@@ -251,8 +253,11 @@ export async function startWorker(): Promise<void> {
   await closeDatabase();
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startWorker().catch(async () => {
-    console.error('Worker startup failed. Check configuration and database availability.');
+  startWorker().catch(async (error: unknown) => {
+    console.error(
+      'Worker startup failed. Check configuration and database availability.',
+      error instanceof Error ? error.message : '',
+    );
     await closeDatabase();
     process.exitCode = 1;
   });

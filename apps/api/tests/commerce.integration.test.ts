@@ -64,7 +64,12 @@ test(
       return {
         id,
         email,
-        ...(await requestContactVerification({ businessId, sessionId: id, email })),
+        ...(await requestContactVerification({
+          businessId,
+          sessionId: id,
+          email,
+          exposeCode: true,
+        })),
       };
     }
     async function makeQuote(value = 10000) {

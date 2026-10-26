@@ -12,7 +12,8 @@ fi
 [[ $(node -p 'process.versions.node.split(".")[0]') == 24 ]] || { echo 'Node 24 LTS is required.' >&2; exit 1; }
 command -v pm2 >/dev/null
 command -v curl >/dev/null
-[[ -f "$release_dir/.next/standalone/server.js" ]]
+# Standalone output mirrors the monorepo, so the server is at apps/web/server.js inside it.
+[[ -f "$release_dir/.next/standalone/apps/web/server.js" ]]
 
 previous_release=$(readlink -f "$app_root/current" 2>/dev/null || true)
 rollback() {
@@ -36,4 +37,4 @@ pm2 startOrReload "$release_dir/deploy/ecosystem.config.cjs" --update-env
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused --retry-all-errors --max-time 5 http://127.0.0.1:3100/ >/dev/null
 pm2 save
 trap - ERR
-echo 'Quotient web deployment is healthy.'
+echo 'Quotefolk web deployment is healthy.'

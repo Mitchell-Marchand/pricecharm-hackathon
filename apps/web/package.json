@@ -1,5 +1,5 @@
 {
-  "name": "quotient-web",
+  "name": "@quotefolk/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,8 +8,8 @@
     "start": "next start --port 3100 --hostname 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/embed.js \"deploy/*.cjs\" \".github/workflows/*.{yml,yaml}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/embed.js \"deploy/*.cjs\" \".github/workflows/*.{yml,yaml}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/embed.js \"deploy/*.cjs\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/embed.js \"deploy/*.cjs\""
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
+import { devTokensAllowed } from './config.js';
 import { hashToken, newToken } from './auth.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import {
@@ -308,6 +309,7 @@ publicRouter.post(
           sessionId: access.session.id,
           email,
           ip: req.ip,
+          exposeCode: devTokensAllowed(req),
         }),
       ),
     );

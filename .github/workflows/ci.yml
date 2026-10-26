@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Third-party actions are pinned to full commit SHAs. The tag is in the trailing comment.
+jobs:
+  api:
+    name: API
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: quoting_ci
+          MARIADB_USER: quoting_ci
+          MARIADB_PASSWORD: quoting-ci-test-password
+          MARIADB_ROOT_PASSWORD: quoting-ci-root-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      NODE_ENV: test
+      APP_ENV: test
+      AI_PROVIDER: demo
+      MAIL_PROVIDER: local
+      BILLING_PROVIDER: local
+      RUN_DB_TESTS: '1'
+      APP_ORIGIN: http://localhost:3100
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_NAME: quoting_ci
+      DB_USER: quoting_ci
+      DB_PASS: quoting-ci-test-password
+      DB_CONNECTION_LIMIT: '5'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run format:check --workspace @quotefolk/api
+      - run: npm run typecheck --workspace @quotefolk/api
+      - name: Migrate the CI database
+        run: npm run migrate --workspace @quotefolk/api
+      - run: npm test --workspace @quotefolk/api
+      - run: npm run build --workspace @quotefolk/api
+
+  web:
+    name: Web and end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: quoting_e2e
+          MARIADB_USER: quoting_e2e
+          MARIADB_PASSWORD: quoting-e2e-test-password
+          MARIADB_ROOT_PASSWORD: quoting-e2e-root-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run format:check --workspace @quotefolk/web
+      - run: npm run typecheck --workspace @quotefolk/web
+      - name: Install the Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Build and run the end-to-end suite
+        run: bash scripts/e2e.sh
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_NAME: quoting_e2e
+          DB_USER: quoting_e2e
+          DB_PASS: quoting-e2e-test-password
+          E2E_LOG_DIR: ${{ runner.temp }}/e2e-logs
+      - name: Keep traces and server logs from a failed run
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results
+          path: |
+            apps/web/test-results
+            ${{ runner.temp }}/e2e-logs
+          retention-days: 7
+
+  prototype:
+    name: Prototype
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck and build
+        run: npm run build --workspace @quotefolk/prototype
+      - name: Check formatting of workflow and compose files
+        run: npx prettier --check ".github/workflows/*.yml" docker-compose.yml

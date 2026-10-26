@@ -5,7 +5,7 @@ module.exports = {
     {
       name: 'quotient-web',
       cwd: path.resolve(__dirname, '..'),
-      script: '.next/standalone/server.js',
+      script: '.next/standalone/apps/web/server.js',
       instances: 1,
       exec_mode: 'fork',
       env: { NODE_ENV: 'production', PORT: '3100', HOSTNAME: '127.0.0.1' },

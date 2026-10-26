@@ -3,6 +3,7 @@ import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError } from '../http.js';
+import { isDeployed } from '../config.js';
 
 const emailSchema = z.object({
   to: z.email().max(254),
@@ -250,7 +251,7 @@ export async function deliverEmail(emailId: string): Promise<void> {
 }
 
 export async function localOutbox(businessId: string) {
-  if (mailProvider() !== 'local' || process.env.NODE_ENV === 'production')
+  if (mailProvider() !== 'local' || process.env.NODE_ENV === 'production' || isDeployed())
     throw new ApiError(404, 'NOT_FOUND', 'Local outbox is unavailable.');
   return (
     await rows(
