@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+.DS_Store
+var/
+__pycache__/
+*.py[cod]
+quotient-parameters*.json
+deploy/infra/*.parameters.json
+*.sql.gz
+*.pem
+*.key

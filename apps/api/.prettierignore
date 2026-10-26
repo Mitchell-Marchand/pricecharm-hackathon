@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.next/
+var/
+test-results/
+playwright-report/
+.env
+.env.*
+*.tsbuildinfo
+package-lock.json
+next-env.d.ts

@@ -1,0 +1,914 @@
+/* Launch, learning, account, and delivery workflows. */
+.sidebar {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.sidebar nav {
+  flex-shrink: 0;
+}
+.account-commerce-grid.account-only {
+  grid-template-columns: 1fr;
+}
+.footer-links,
+.auth-legal-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  font-size: 14px;
+  color: #505650;
+}
+.auth-legal-links {
+  margin-top: 22px;
+  font-size: 14px;
+}
+.request-legal-links {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 16px 0;
+}
+.request-legal-links a,
+.legal-page article a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.legal-page {
+  max-width: 1120px;
+  margin: auto;
+  padding: 0 30px 70px;
+}
+.legal-page > header {
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.legal-page > article {
+  max-width: 740px;
+  margin: 45px auto 0;
+}
+.legal-page h1 {
+  font-size: 48px;
+  font-weight: 500;
+  letter-spacing: -2px;
+  line-height: 1.12;
+  margin: 20px 0 27px;
+}
+.legal-page p {
+  font-size: 14px;
+  line-height: 1.95;
+  color: #505650;
+  margin: 16px 0;
+}
+.legal-page .legal-lead {
+  font-size: 17px;
+}
+.legal-page section {
+  margin-top: 37px;
+  padding-top: 28px;
+  border-top: 1px solid #e2e5df;
+}
+.legal-page h2 {
+  font-size: 25px;
+  font-weight: 500;
+  letter-spacing: -0.7px;
+}
+.legal-page article > footer {
+  margin-top: 40px;
+  padding: 26px 27px;
+  border-radius: 10px;
+  background: #e9f3df;
+}
+.legal-page article > footer > a {
+  font-size: 14px;
+}
+.private-chat-preview {
+  max-width: 650px;
+  margin: 0 auto;
+  border: 1px solid #e2e5df;
+  border-radius: 13px;
+  overflow: hidden;
+}
+.private-chat-preview .embedded .public-layout {
+  height: 800px;
+}
+.private-chat-preview .embedded .public-chat-card {
+  min-height: 800px;
+  max-height: 800px;
+}
+.private-chat-preview .public-chat-card > .notice {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 14px;
+}
+.automation-control {
+  padding: 25px 27px;
+  margin-bottom: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  background: #ffffff;
+}
+.automation-control h3 {
+  margin: 13px 0 10px;
+  font-size: 23px;
+  font-weight: 500;
+}
+.automation-control p {
+  max-width: 650px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+}
+.automation-control > .button {
+  flex-shrink: 0;
+}
+.mode-button {
+  width: 100%;
+  text-align: left;
+  background: #ffffff;
+}
+.mode-button:not(.selected) {
+  border-color: #e2e5df;
+  background: #fff;
+}
+.mode-button.selected {
+  border-color: #e2e5df;
+  background: #ffffff;
+}
+.mode-button p {
+  line-height: 1.8;
+}
+.launch-help {
+  margin: 17px 0 0 !important;
+}
+.independent-case-list {
+  margin: 22px 0 20px;
+}
+.independent-case-list > article {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 15px 0;
+  border-top: 1px solid #e2e5df;
+}
+.independent-case-list > article > div {
+  flex: 1;
+  min-width: 0;
+}
+.independent-case-list strong {
+  font-size: 14px;
+  font-weight: 550;
+  display: block;
+}
+.independent-case-list p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #687168;
+  margin-top: 5px;
+}
+.test-case-icon {
+  width: 33px;
+  height: 33px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e9f3df;
+  color: #505650;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.facts-fieldset {
+  padding: 17px 18px 0;
+  margin: 20px 0;
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  min-width: 0;
+}
+.facts-fieldset > legend {
+  padding: 0 7px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #505650;
+}
+.facts-fieldset > p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 0 0 18px;
+}
+.evaluation-case-row {
+  padding: 14px;
+  border-top: 1px solid #e2e5df;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.evaluation-case-row strong {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 550;
+}
+.evaluation-case-row > span:not(.badge) {
+  font-size: 14px;
+  color: #505650;
+  flex: 1;
+}
+.evaluation-coverage {
+  padding: 16px;
+  background: #ffffff;
+  border-top: 1px solid #e2e5df;
+}
+.evaluation-coverage strong {
+  font-size: 14px;
+}
+.evaluation-coverage p {
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 7px;
+  color: #687168;
+}
+.evaluation-results > .notice {
+  margin: 10px;
+  font-size: 14px;
+}
+.rules-editor {
+  margin: 26px 0;
+  border-top: 1px solid #e2e5df;
+  padding-top: 22px;
+}
+.rules-heading {
+  margin-bottom: 17px;
+}
+.rules-heading h3 {
+  font-size: 20px;
+  font-weight: 500;
+}
+.rules-heading p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 9px 0 15px;
+}
+.rules-heading .button {
+  font-size: 14px;
+  min-height: 35px;
+}
+.rule-editor-row,
+.import-project {
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  padding: 15px 17px 0;
+  background: #ffffff;
+  margin-top: 16px;
+}
+.rule-row-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 13px;
+}
+.rule-row-heading > span {
+  font-size: 14px;
+  letter-spacing: 0.9px;
+  color: #505650;
+}
+.heading-buttons {
+  flex-wrap: wrap;
+}
+.heading-buttons .button {
+  min-height: 38px;
+}
+.learn-proposals {
+  margin-top: 24px;
+}
+.learn-proposal {
+  border: 1px solid #e2e5df;
+  border-radius: 9px;
+  padding: 20px;
+  background: #ffffff;
+  margin-bottom: 18px;
+}
+.learn-proposal h3 {
+  font-size: 24px;
+  font-weight: 500;
+  margin: 13px 0;
+}
+.learn-proposal > p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #505650;
+}
+.learn-proposal > small {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  display: block;
+  margin: 16px 0;
+}
+.proposal-details {
+  padding-top: 17px;
+  border-top: 1px solid #e2e5df;
+}
+.proposal-details > strong {
+  font-size: 14px;
+}
+.proposal-details p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 5px 0 14px;
+}
+.import-source {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 19px;
+  border-bottom: 1px solid #e2e5df;
+}
+.import-source strong {
+  flex: 1;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.resume-drafts {
+  margin-top: 26px;
+  padding-top: 23px;
+  border-top: 1px solid #e2e5df;
+}
+.resume-drafts h3 {
+  font-size: 19px;
+  font-weight: 500;
+  margin-bottom: 17px;
+}
+.resume-drafts > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #e2e5df;
+  background: #ffffff;
+  border-radius: 7px;
+  margin-top: 9px;
+  text-align: left;
+  color: #505650;
+}
+.resume-drafts > button > span {
+  flex: 1;
+  font-size: 14px;
+}
+.resume-drafts small {
+  display: block;
+  font-size: 14px;
+  color: #687168;
+  margin-top: 4px;
+}
+.owner-reply-form {
+  background: #ffffff;
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  padding: 17px;
+  margin-top: 21px;
+}
+.owner-reply-form .field {
+  margin-bottom: 10px;
+}
+.owner-reply-form > p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #687168;
+  margin-bottom: 17px;
+}
+.owner-reply-form > .button {
+  font-size: 14px;
+}
+.contact-verification {
+  padding: 17px;
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  background: #fff;
+  margin: 0 0 23px;
+}
+.contact-verification > p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 16px 0;
+}
+.contact-verification .field {
+  margin-top: 19px;
+}
+.verification-hint {
+  font-size: 14px;
+  color: #505650;
+  line-height: 1.85;
+  margin: 18px 0;
+}
+.quote-decision-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 23px 0;
+}
+.quote-decision-actions > .button {
+  font-size: 14px;
+}
+.account-commerce-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 25px;
+  margin-top: 27px;
+}
+.commerce-panel .panel-heading {
+  align-items: flex-start;
+}
+.commerce-panel .panel-heading > svg {
+  color: #687168;
+}
+.commerce-body {
+  padding: 3px 24px 25px;
+}
+.billing-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 13px;
+  flex-wrap: wrap;
+}
+.billing-status > span:not(.badge) {
+  font-size: 14px;
+  color: #505650;
+}
+.billing-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px 15px;
+  margin: 26px 0;
+}
+.billing-metrics > div > span {
+  font-size: 14px;
+  color: #505650;
+}
+.billing-metrics strong {
+  display: block;
+  font-size: 29px;
+  font-weight: 500;
+  letter-spacing: -0.8px;
+  margin-top: 5px;
+}
+.billing-metrics strong small {
+  font-size: 14px;
+  color: #687168;
+}
+.billing-metrics p {
+  font-size: 14px;
+  color: #687168;
+  margin-top: 7px;
+}
+.spending-cap-form {
+  margin: 24px 0;
+}
+.spending-cap-form .button,
+.billing-actions .button {
+  font-size: 14px;
+}
+.billing-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.account-small {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #687168;
+  margin-top: 19px;
+}
+.identity-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 0 0 22px;
+}
+.identity-status strong {
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.identity-status p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #505650;
+  margin-top: 8px;
+}
+.account-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  margin: 26px 0;
+}
+.account-actions .button {
+  font-size: 14px;
+  justify-content: flex-start;
+}
+.danger-zone {
+  border-top: 1px solid #eaded4;
+  padding-top: 23px;
+  margin-top: 26px;
+}
+.danger-zone strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.danger-zone p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #687168;
+  margin: 10px 0 14px;
+}
+.danger-zone .button {
+  font-size: 14px;
+  color: #a4705c;
+  padding-left: 0;
+}
+.forgot-password-link {
+  display: block;
+  font-size: 14px;
+  color: #505650;
+  text-align: right;
+  margin: 18px 0;
+}
+.account-access {
+  max-width: 1150px;
+  min-height: 100dvh;
+  margin: auto;
+  padding: 0 30px 70px;
+}
+.account-access > header {
+  height: 115px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.access-card {
+  max-width: 510px;
+  padding: 35px;
+  margin: 35px auto 0;
+}
+.access-card > .section-icon {
+  margin-bottom: 25px;
+}
+.access-card h1 {
+  font-size: 34px;
+  font-weight: 500;
+  line-height: 1.15;
+  margin: 15px 0 23px;
+}
+.access-card form > p {
+  font-size: 14px;
+  line-height: 1.85;
+  color: #505650;
+  margin-bottom: 25px;
+}
+.access-card > .button {
+  margin-top: 16px;
+}
+.pricing-page {
+  min-height: 100dvh;
+  background: #ffffff;
+}
+.pricing-intro {
+  text-align: center;
+  padding: 74px 25px 45px;
+}
+.pricing-intro h1 {
+  font-size: 62px;
+  font-weight: 500;
+  letter-spacing: -3px;
+  line-height: 1.1;
+  margin: 24px 0;
+}
+.pricing-intro h1 em {
+  color: #505650;
+}
+.pricing-intro > p {
+  font-size: 15px;
+  color: #505650;
+  line-height: 1.9;
+  max-width: 570px;
+  margin: auto;
+}
+.pricing-cards {
+  max-width: 1000px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 25px;
+  padding: 20px 25px 50px;
+  margin: auto;
+}
+.pricing-plan {
+  padding: 36px;
+}
+.pricing-plan.paid {
+  background: #e9f3df;
+  border-color: #e2e5df;
+}
+.pricing-plan h2 {
+  font-size: 29px;
+  font-weight: 500;
+  margin: 17px 0 27px;
+}
+.pricing-large {
+  display: block;
+  font-size: 60px;
+  line-height: 1;
+  letter-spacing: -3px;
+  font-weight: 500;
+}
+.pricing-large small {
+  display: block;
+  font-size: 14px;
+  letter-spacing: 0;
+  color: #687168;
+  font-weight: 400;
+  margin-top: 15px;
+}
+.pricing-plan > p {
+  font-size: 14px;
+  line-height: 1.9;
+  color: #505650;
+  margin-top: 27px;
+}
+.pricing-plan ul {
+  list-style: none;
+  padding: 22px 0;
+  margin: 0;
+}
+.pricing-plan li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: #505650;
+  margin: 13px 0;
+}
+.pricing-plan li > svg {
+  margin-top: 4px;
+  color: #687168;
+}
+.pricing-plan > .button {
+  width: 100%;
+  margin-top: 5px;
+  font-size: 14px;
+}
+.pricing-fineprint {
+  max-width: 950px;
+  padding: 0 25px 65px;
+  display: flex;
+  align-items: flex-start;
+  gap: 17px;
+  margin: auto;
+  color: #687168;
+}
+.pricing-fineprint h3 {
+  font-size: 22px;
+  font-weight: 500;
+}
+.pricing-fineprint p {
+  font-size: 14px;
+  color: #505650;
+  line-height: 1.9;
+  margin-top: 13px;
+}
+.pricing-error,
+.pricing-loading {
+  max-width: 850px;
+  margin: 25px auto 60px;
+  padding: 0 25px;
+}
+@media (max-width: 1000px) {
+  .account-commerce-grid {
+    grid-template-columns: 1fr;
+  }
+  .automation-control {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .heading-buttons {
+    gap: 7px;
+  }
+}
+@media (max-width: 760px) {
+  .automation-control {
+    padding: 23px;
+  }
+  .automation-control h3 {
+    font-size: 25px;
+    line-height: 1.25;
+  }
+  .automation-control p,
+  .rules-heading p,
+  .learn-proposal > p {
+    font-size: 14px;
+  }
+  .automation-control > .button {
+    width: 100%;
+    font-size: 14px;
+    min-height: 45px;
+  }
+  .independent-case-list strong {
+    font-size: 14px;
+  }
+  .independent-case-list p {
+    font-size: 14px;
+  }
+  .facts-fieldset > legend {
+    font-size: 14px;
+  }
+  .facts-fieldset > p {
+    font-size: 14px;
+  }
+  .evaluation-coverage p {
+    font-size: 14px;
+  }
+  .evaluation-case-row strong,
+  .evaluation-coverage strong {
+    font-size: 14px;
+  }
+  .evaluation-case-row > span:not(.badge) {
+    font-size: 14px;
+  }
+  .rules-heading .button {
+    font-size: 14px;
+    min-height: 41px;
+  }
+  .rule-row-heading > span {
+    font-size: 14px;
+  }
+  .rule-editor-row {
+    padding: 13px 15px 0;
+  }
+  .rule-editor-row .form-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .learn-proposal {
+    padding: 19px;
+  }
+  .learn-proposal > small,
+  .proposal-details > strong {
+    font-size: 14px;
+  }
+  .proposal-details p {
+    font-size: 14px;
+  }
+  .import-source strong {
+    font-size: 14px;
+  }
+  .import-source .badge {
+    font-size: 14px;
+  }
+  .resume-drafts > button > span {
+    font-size: 14px;
+  }
+  .resume-drafts small {
+    font-size: 14px;
+  }
+  .owner-reply-form > p {
+    font-size: 14px;
+  }
+  .contact-verification > p,
+  .verification-hint {
+    font-size: 14px;
+  }
+  .contact-verification .button {
+    min-height: 42px;
+    font-size: 14px;
+  }
+  .public-request-form .facts-fieldset {
+    padding-left: 13px;
+    padding-right: 13px;
+  }
+  .quote-decision-actions {
+    flex-wrap: wrap;
+  }
+  .quote-decision-actions > .button {
+    font-size: 14px;
+    min-height: 44px;
+  }
+  .commerce-body {
+    padding: 3px 21px 24px;
+  }
+  .commerce-panel .eyebrow {
+    font-size: 14px;
+  }
+  .commerce-panel .panel-heading h3 {
+    font-size: 23px;
+  }
+  .commerce-panel .panel-heading p {
+    font-size: 14px;
+  }
+  .billing-status > span:not(.badge) {
+    font-size: 14px;
+  }
+  .billing-metrics > div > span,
+  .billing-metrics p {
+    font-size: 14px;
+  }
+  .billing-actions > .button,
+  .account-actions > .button {
+    font-size: 14px;
+    min-height: 44px;
+  }
+  .identity-status {
+    flex-wrap: wrap;
+  }
+  .identity-status strong {
+    font-size: 15px;
+  }
+  .identity-status p,
+  .danger-zone p {
+    font-size: 14px;
+  }
+  .account-small,
+  .danger-zone .button {
+    font-size: 14px;
+  }
+  .account-access {
+    padding: 0 22px 45px;
+  }
+  .account-access > header {
+    height: 90px;
+  }
+  .access-card {
+    margin-top: 20px;
+    padding: 27px 23px;
+  }
+  .access-card h1 {
+    font-size: 31px;
+  }
+  .access-card input {
+    font-size: 16px;
+  }
+  .access-card .field > span {
+    font-size: 14px;
+  }
+  .access-card .button {
+    min-height: 46px;
+    font-size: 14px;
+  }
+  .access-card .notice {
+    font-size: 14px;
+  }
+  .pricing-intro {
+    padding: 49px 24px 27px;
+  }
+  .pricing-intro h1 {
+    font-size: 43px;
+    letter-spacing: -2px;
+  }
+  .pricing-intro > p {
+    font-size: 14px;
+  }
+  .pricing-cards {
+    grid-template-columns: 1fr;
+    gap: 21px;
+    padding: 20px 22px 35px;
+  }
+  .pricing-plan {
+    padding: 30px 25px;
+  }
+  .pricing-plan .eyebrow {
+    font-size: 14px;
+  }
+  .pricing-plan > p,
+  .pricing-plan li {
+    font-size: 14px;
+  }
+  .pricing-plan > .button {
+    min-height: 46px;
+    font-size: 14px;
+  }
+  .pricing-fineprint {
+    padding: 0 24px 45px;
+  }
+  .pricing-fineprint h3 {
+    font-size: 23px;
+    line-height: 1.3;
+  }
+  .pricing-fineprint p {
+    font-size: 14px;
+  }
+}

@@ -1,0 +1,113 @@
+name: Check and deploy API
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: quoting_ci
+          MARIADB_USER: quoting_ci
+          MARIADB_PASSWORD: quoting-ci-test-password
+          MARIADB_ROOT_PASSWORD: quoting-ci-root-test-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      NODE_ENV: test
+      AI_PROVIDER: demo
+      RUN_DB_TESTS: '1'
+      APP_ORIGIN: http://localhost:3100
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_NAME: quoting_ci
+      DB_USER: quoting_ci
+      DB_PASS: quoting-ci-test-password
+      DB_CONNECTION_LIMIT: '5'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run format:check
+      - run: npm run typecheck
+      - name: Migrate isolated CI database
+        run: npm run migrate
+      - run: npm test
+      - run: npm run build
+      - name: Package immutable application release
+        run: |
+          mkdir -p release
+          cp -R dist migrations deploy docs package.json package-lock.json release/
+          tar -C release -czf quotient-api.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quotient-api
+          path: quotient-api.tar.gz
+          retention-days: 7
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: quotient-api
+      - name: Upload release and health-check PM2 processes
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_KNOWN_HOSTS: ${{ secrets.EC2_KNOWN_HOSTS }}
+          DEPLOY_ROOT: ${{ vars.EC2_DEPLOY_ROOT || '/srv/quotient-api' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EC2_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$EC2_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[A-Za-z0-9_./-]+$ && "$DEPLOY_ROOT" != / && "$DEPLOY_ROOT" != *..* ]]
+          test -n "$EC2_SSH_KEY"
+          test -n "$EC2_KNOWN_HOSTS"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          key_path="$RUNNER_TEMP/quotient_api_key"
+          known_hosts_path="$RUNNER_TEMP/quotient_api_known_hosts"
+          trap 'rm -f "$key_path" "$known_hosts_path"' EXIT
+          umask 077
+          printf '%s\n' "$EC2_SSH_KEY" > "$key_path"
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$known_hosts_path"
+          remote="${EC2_USER}@${EC2_HOST}"
+          ssh_args=(-i "$key_path" -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts_path")
+          ssh "${ssh_args[@]}" "$remote" bash -s -- "$DEPLOY_ROOT" "$release_id" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p "$1/releases/$2"
+          REMOTE
+          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" quotient-api.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
+          ssh "${ssh_args[@]}" "$remote" bash -s -- "$DEPLOY_ROOT" "$release_id" <<'REMOTE'
+          set -euo pipefail
+          tar -xzf "$1/releases/$2/release.tar.gz" -C "$1/releases/$2"
+          bash "$1/releases/$2/deploy/deploy-remote.sh" "$1"
+          REMOTE

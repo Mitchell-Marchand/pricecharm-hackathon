@@ -1,0 +1,159 @@
+.form {
+  min-width: 0;
+}
+.form h3 {
+  margin: 0 0 20px;
+}
+.contacts {
+  display: grid;
+  gap: 0;
+}
+.summary {
+  padding: 16px 0;
+  border-top: 1px solid #e2e5df;
+  border-bottom: 1px solid #e2e5df;
+}
+.summary h4 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.summary > p {
+  margin: 0 0 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.summary dl {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.summary dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+.summary dt {
+  color: #565e58;
+}
+.summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.summary .measurement,
+.summary .missing {
+  font-size: 14px;
+  color: #565e58;
+}
+.summary button {
+  padding: 4px 0;
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.editor {
+  padding: 18px 0 0;
+}
+.facts {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.facts legend {
+  margin-bottom: 14px;
+  font-weight: 600;
+}
+.fact {
+  padding-bottom: 12px;
+}
+.fact :global(.checkbox-field) {
+  margin: 8px 0;
+}
+.updates,
+.verification {
+  margin: 18px 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.updates > summary {
+  cursor: pointer;
+  padding: 6px 0;
+}
+.updates > summary span {
+  color: #565e58;
+}
+.updates p,
+.verification p {
+  margin: 10px 0;
+}
+.form :global(.checkbox-field) input {
+  width: 18px;
+  height: 18px;
+  accent-color: #174f3b;
+}
+.form :global(.form-actions) {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.form :global(.form-actions) > button {
+  max-width: 100%;
+}
+
+.description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+
+.receipt {
+  min-width: 0;
+  margin: 20px 0;
+  text-align: left;
+  font-size: 16px;
+  line-height: 1.55;
+}
+.receipt h4 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.receipt dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.receipt dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+.receipt dt {
+  color: #565e58;
+  overflow-wrap: anywhere;
+}
+.receipt dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+.unknowns {
+  margin-top: 20px;
+}
+.unknowns ul {
+  padding-left: 20px;
+  margin: 0;
+}
+.customerWords {
+  margin-top: 20px;
+}
+.customerWords summary {
+  cursor: pointer;
+}
+.customerWords p {
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}

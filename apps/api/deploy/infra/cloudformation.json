@@ -1,0 +1,421 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Quotient dedicated EC2 web/API host, private photos, restricted SES role and host alarms.",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "SubnetId": {
+      "Type": "AWS::EC2::Subnet::Id",
+      "Description": "Public subnet in the same VPC as the existing database; outbound internet required."
+    },
+    "KeyName": {
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "SshCidr": {
+      "Type": "String",
+      "Default": "127.0.0.1/32",
+      "AllowedPattern": "\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}",
+      "Description": "Trusted SSH administration/CI source CIDR. Set intentionally; default denies remote access. Use a runner with a stable address."
+    },
+    "InstanceType": {
+      "Type": "String",
+      "Default": "t3.medium",
+      "AllowedValues": [
+        "t3.small",
+        "t3.medium",
+        "t3.large",
+        "m6i.large"
+      ]
+    },
+    "AmiId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>",
+      "Default": "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    },
+    "SesIdentityArn": {
+      "Type": "String",
+      "AllowedPattern": "arn:aws[a-z-]*:ses:[a-z0-9-]+:\\d{12}:identity/.+",
+      "Description": "Verified SES sending domain identity ARN in this AWS region."
+    },
+    "ExistingDbSecurityGroupId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "(^$|sg-[a-f0-9]+)",
+      "Description": "Optional: add only TCP3306 from the new application SG to this existing DB SG. Leave empty to manage database ingress yourself."
+    },
+    "AlarmTopicArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Optional existing SNS topic ARN for host alarms."
+    }
+  },
+  "Conditions": {
+    "HasDbGroup": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ExistingDbSecurityGroupId"
+            },
+            ""
+          ]
+        }
+      ]
+    },
+    "HasAlarmTopic": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "AlarmTopicArn"
+            },
+            ""
+          ]
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "AppSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Quotient HTTPS plus restricted SSH; app ports remain loopback only",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 80,
+            "ToPort": 80,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443,
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "CidrIp": {
+              "Ref": "SshCidr"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "DbIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "HasDbGroup",
+      "Properties": {
+        "GroupId": {
+          "Ref": "ExistingDbSecurityGroupId"
+        },
+        "IpProtocol": "tcp",
+        "FromPort": 3306,
+        "ToPort": 3306,
+        "SourceSecurityGroupId": {
+          "Ref": "AppSecurityGroup"
+        },
+        "Description": "Dedicated Quotient application access to existing MySQL infrastructure"
+      }
+    },
+    "PhotoBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "PhotoBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "PhotoBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "PhotoBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${PhotoBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "AppRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          }
+        ],
+        "Policies": [
+          {
+            "PolicyName": "quotient-runtime",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:DeleteObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${PhotoBucket.Arn}/quotient/*"
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ses:SendEmail"
+                  ],
+                  "Resource": {
+                    "Ref": "SesIdentityArn"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "AppRole"
+          }
+        ]
+      }
+    },
+    "AppInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": {
+          "Ref": "AmiId"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SubnetId": {
+          "Ref": "SubnetId"
+        },
+        "SecurityGroupIds": [
+          {
+            "Ref": "AppSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "InstanceProfile"
+        },
+        "MetadataOptions": {
+          "HttpTokens": "required",
+          "HttpEndpoint": "enabled",
+          "HttpPutResponseHopLimit": 1
+        },
+        "Monitoring": true,
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "VolumeSize": 30,
+              "VolumeType": "gp3",
+              "Encrypted": true,
+              "DeleteOnTermination": false
+            }
+          }
+        ],
+        "UserData": {
+          "Fn::Base64": "#!/usr/bin/env bash\n# Amazon Linux 2023, dedicated new Quotient instance. Run as root.\nset -euo pipefail\n[[ $(id -u) == 0 ]] || { echo 'Run on a new EC2 instance as root.' >&2; exit 1; }\nsource /etc/os-release\n[[ \"$ID\" == amzn && \"$VERSION_ID\" == 2023 ]] || { echo 'This bootstrap requires Amazon Linux 2023.' >&2; exit 1; }\ndnf install -y nodejs24 nodejs24-npm nginx rsync jq mariadb105 gzip python3 amazon-cloudwatch-agent\nalternatives --set node /usr/bin/node-24\n[[ $(node -p 'process.versions.node.split(\".\")[0]') == 24 ]]\nnpm install --global pm2@6\nid quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient\ninstall -d -m 700 -o quotient -g quotient /home/quotient/.ssh\ninstall -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases\ninstall -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups\n# Copy only the provisioned instance admin public key to the unprivileged deployment user.\nif [[ -s /home/ec2-user/.ssh/authorized_keys && ! -e /home/quotient/.ssh/authorized_keys ]]; then\n  install -m 600 -o quotient -g quotient /home/ec2-user/.ssh/authorized_keys /home/quotient/.ssh/authorized_keys\nfi\npm2 startup systemd -u quotient --hp /home/quotient\ncat > /etc/logrotate.d/quotient <<'ROTATE'\n/home/quotient/.pm2/logs/*.log {\n    daily\n    rotate 14\n    compress\n    missingok\n    notifempty\n    copytruncate\n    su quotient quotient\n}\nROTATE\nsystemctl enable --now nginx amazon-ssm-agent\nprintf '%s\\n' 'Bootstrap complete. Configure shared/.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'\n"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "quotient"
+          },
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "ElasticIp": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc",
+        "InstanceId": {
+          "Ref": "AppInstance"
+        }
+      }
+    },
+    "CpuAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Quotient host requires operator attention",
+        "Namespace": "AWS/EC2",
+        "MetricName": "CPUUtilization",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "AppInstance"
+            }
+          }
+        ],
+        "Statistic": "Average",
+        "Period": 300,
+        "EvaluationPeriods": 3,
+        "Threshold": 85,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    },
+    "InstanceStatusAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Quotient host requires operator attention",
+        "Namespace": "AWS/EC2",
+        "MetricName": "StatusCheckFailed",
+        "Dimensions": [
+          {
+            "Name": "InstanceId",
+            "Value": {
+              "Ref": "AppInstance"
+            }
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 300,
+        "EvaluationPeriods": 2,
+        "Threshold": 0,
+        "ComparisonOperator": "GreaterThanThreshold",
+        "TreatMissingData": "missing",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "AlarmTopicArn"
+              }
+            ],
+            {
+              "Ref": "AWS::NoValue"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "InstanceId": {
+      "Value": {
+        "Ref": "AppInstance"
+      }
+    },
+    "PublicIp": {
+      "Value": {
+        "Ref": "ElasticIp"
+      }
+    },
+    "SecurityGroupId": {
+      "Value": {
+        "Ref": "AppSecurityGroup"
+      }
+    },
+    "PhotoBucket": {
+      "Value": {
+        "Ref": "PhotoBucket"
+      }
+    },
+    "DeployUser": {
+      "Value": "quotient"
+    }
+  }
+}

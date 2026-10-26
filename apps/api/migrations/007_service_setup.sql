@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS service_setup_sessions (
+  id CHAR(36) PRIMARY KEY,
+  business_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'active',
+  version INT NOT NULL DEFAULT 1,
+  messages_json JSON NOT NULL,
+  draft_json JSON NOT NULL,
+  evidence_json JSON NOT NULL,
+  service_id CHAR(36) NULL,
+  example_id CHAR(36) NULL,
+  processing_token CHAR(36) NULL,
+  processing_until DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  FOREIGN KEY (business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL,
+  FOREIGN KEY (example_id) REFERENCES examples(id) ON DELETE SET NULL,
+  INDEX setup_owner (business_id,user_id,status,updated_at)
+) ENGINE=InnoDB;

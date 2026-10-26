@@ -1,0 +1,507 @@
+@import 'tailwindcss';
+
+/*
+  Layout: white working sheets on a cool concrete ground. A quote is a carbon-copy
+  estimate form (white original over canary and pink copies, red form number).
+  Color roles: ink = primary actions and text, carbon blue = selection and links,
+  canary = quotes and money only.
+*/
+:root {
+  --bg: #f1f3f7;
+  --surface: #ffffff;
+  --surface-2: #f6f7fb;
+  --line: #dce1ea;
+  --line-strong: #c3cad8;
+  --ink: #101633;
+  --ink-2: #39415f;
+  --muted: #5e6684;
+  --on-ink: #ffffff;
+  --accent: #2d4bef;
+  --on-accent: #ffffff;
+  --accent-soft: #e7ecff;
+  --canary: #ffd43b;
+  --on-canary: #101633;
+  --canary-soft: #fff4c7;
+  --go: #11804d;
+  --go-soft: #dcf3e6;
+  --stop: #c0262d;
+  --stop-soft: #fde8e9;
+  --scrim: rgb(10 15 36 / 0.45);
+  --sh-1: 0 1px 2px rgb(16 22 51 / 0.06), 0 2px 8px rgb(16 22 51 / 0.05);
+  --sh-2: 0 2px 6px rgb(16 22 51 / 0.08), 0 22px 44px -16px rgb(16 22 51 / 0.24);
+
+  /* Paper is a physical object: it keeps the same colors in both themes. */
+  --paper: #ffffff;
+  --paper-ink: #101633;
+  --paper-muted: #5e6684;
+  --paper-rule: #d9e1f2;
+  --paper-canary: #ffe680;
+  --paper-pink: #ffc4d2;
+  --paper-hover: #f4f6fb;
+  --form-red: #d21f3c;
+  --stamp-blue: #2d4bef;
+  --stamp-green: #11804d;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0a0f24;
+    --surface: #121a36;
+    --surface-2: #172045;
+    --line: #283463;
+    --line-strong: #3a4880;
+    --ink: #eef1fa;
+    --ink-2: #c3c9de;
+    --muted: #98a1bf;
+    --on-ink: #0a0f24;
+    --accent: #8ea2ff;
+    --on-accent: #0a0f24;
+    --accent-soft: #1d2a62;
+    --canary: #ffd43b;
+    --on-canary: #101633;
+    --canary-soft: #3b3416;
+    --go: #4cc98a;
+    --go-soft: #123a28;
+    --stop: #ff7a7f;
+    --stop-soft: #3d1418;
+    --scrim: rgb(0 0 0 / 0.6);
+    --sh-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px rgb(0 0 0 / 0.25);
+    --sh-2: 0 2px 6px rgb(0 0 0 / 0.35), 0 22px 44px -16px rgb(0 0 0 / 0.6);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0a0f24;
+  --surface: #121a36;
+  --surface-2: #172045;
+  --line: #283463;
+  --line-strong: #3a4880;
+  --ink: #eef1fa;
+  --ink-2: #c3c9de;
+  --muted: #98a1bf;
+  --on-ink: #0a0f24;
+  --accent: #8ea2ff;
+  --on-accent: #0a0f24;
+  --accent-soft: #1d2a62;
+  --canary: #ffd43b;
+  --on-canary: #101633;
+  --canary-soft: #3b3416;
+  --go: #4cc98a;
+  --go-soft: #123a28;
+  --stop: #ff7a7f;
+  --stop-soft: #3d1418;
+  --scrim: rgb(0 0 0 / 0.6);
+  --sh-1: 0 1px 2px rgb(0 0 0 / 0.3), 0 2px 8px rgb(0 0 0 / 0.25);
+  --sh-2: 0 2px 6px rgb(0 0 0 / 0.35), 0 22px 44px -16px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --font-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-on-ink: var(--on-ink);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-canary: var(--canary);
+  --color-on-canary: var(--on-canary);
+  --color-canary-soft: var(--canary-soft);
+  --color-go: var(--go);
+  --color-go-soft: var(--go-soft);
+  --color-stop: var(--stop);
+  --color-stop-soft: var(--stop-soft);
+  --color-paper: var(--paper);
+  --color-paper-ink: var(--paper-ink);
+  --color-paper-muted: var(--paper-muted);
+  --color-paper-rule: var(--paper-rule);
+  --color-form-red: var(--form-red);
+
+  --font-display: 'Archivo', 'Arial Narrow', system-ui, sans-serif;
+  --font-sans: 'Public Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 26px;
+  --text-xl: 22px;
+  --text-xl--line-height: 28px;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-full: 9999px;
+
+  --shadow-1: var(--sh-1);
+  --shadow-2: var(--sh-2);
+}
+
+@utility gutter {
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    height: env(safe-area-inset-top, 0px);
+    z-index: 70;
+    background: var(--bg);
+  }
+  body:has(dialog[open]) {
+    overflow: hidden;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--canary);
+    color: var(--on-canary);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted);
+    opacity: 0.8;
+  }
+}
+
+/* Type scale: hero, h1, h2, h3, body, small, label. */
+@layer components {
+  .t-hero {
+    font-family: var(--font-display);
+    font-weight: 820;
+    font-stretch: 112%;
+    font-size: clamp(40px, 5.4vw, 64px);
+    line-height: 0.98;
+    letter-spacing: -0.025em;
+  }
+  .t-h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-stretch: 108%;
+    font-size: clamp(30px, 4.2vw, 42px);
+    line-height: 1.04;
+    letter-spacing: -0.02em;
+  }
+  .t-h2 {
+    font-family: var(--font-display);
+    font-weight: 760;
+    font-stretch: 106%;
+    font-size: clamp(22px, 2.6vw, 28px);
+    line-height: 1.12;
+    letter-spacing: -0.012em;
+  }
+  .t-h3 {
+    font-weight: 680;
+    font-size: 18px;
+    line-height: 24px;
+  }
+  .t-label {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11.5px;
+    line-height: 16px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+}
+
+/* The quote form: a sheet torn from an estimate pad, over its carbon copies. */
+.qf-stack {
+  --qf-mask: radial-gradient(5px at 50% 0, #0000 98%, #000) 50% 0 / 16px 100%;
+  position: relative;
+  filter: drop-shadow(0 1px 1px rgb(16 22 51 / 0.1)) drop-shadow(0 14px 22px rgb(16 22 51 / 0.16));
+}
+.qf-copy {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  -webkit-mask: var(--qf-mask);
+  mask: var(--qf-mask);
+}
+.qf-copy.is-pink {
+  background: var(--paper-pink);
+  transform: translate(12px, 11px) rotate(2deg);
+}
+.qf-copy.is-canary {
+  background: var(--paper-canary);
+  transform: translate(6px, 5px) rotate(1deg);
+}
+.qf {
+  position: relative;
+  background: var(--paper);
+  color: var(--paper-ink);
+  border-radius: 3px;
+  -webkit-mask: var(--qf-mask);
+  mask: var(--qf-mask);
+}
+.qf-no {
+  font-family: var(--font-mono);
+  color: var(--form-red);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.qf-rule {
+  border-bottom: 1px solid var(--paper-rule);
+}
+.qf-total {
+  font-family: var(--font-display);
+  font-weight: 820;
+  font-stretch: 108%;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.hl {
+  background: linear-gradient(transparent 30%, var(--paper-canary) 30%, var(--paper-canary) 92%, transparent 92%);
+  padding: 0 0.1em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.qf-stamp {
+  display: inline-block;
+  transform: rotate(-9deg);
+  border: 2px solid currentColor;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: 600 12px/1.4 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.qf-stamp.is-practice {
+  color: var(--stamp-blue);
+}
+.qf-stamp.is-sent {
+  color: var(--paper-ink);
+}
+.qf-stamp.is-accepted {
+  color: var(--stamp-green);
+}
+.qf-stamp.is-animated {
+  animation: stamp 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) 0.45s both;
+}
+
+@keyframes stamp {
+  from {
+    transform: rotate(-9deg) scale(1.9);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-9deg) scale(1);
+    opacity: 0.85;
+  }
+}
+@keyframes quote-in {
+  from {
+    transform: translateY(30px) rotate(-1.5deg) scale(0.97);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(-3px) rotate(0.3deg) scale(1.005);
+    opacity: 1;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.quote-in {
+  animation: quote-in 0.7s var(--ease-out) both;
+}
+@keyframes rise {
+  from {
+    transform: translateY(14px);
+  }
+  to {
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.6s var(--ease-out) both;
+}
+@keyframes fade-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.fade-up {
+  animation: fade-up 0.35s var(--ease-out) both;
+}
+@keyframes blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+  display: inline-block;
+  animation: blink 1.2s infinite both;
+}
+.typing span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(255 212 59 / 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgb(255 212 59 / 0);
+  }
+}
+.pulse {
+  animation: pulse-ring 1.2s var(--ease-out) 3;
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Sheets: bottom sheet on phones, side panel on larger screens. */
+dialog.sheet {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  max-width: none;
+  max-height: none;
+  background: var(--surface);
+  color: var(--ink);
+  overflow: hidden;
+}
+dialog.sheet[open] {
+  display: flex;
+  flex-direction: column;
+}
+dialog.sheet::backdrop {
+  background: var(--scrim);
+}
+@media (max-width: 767px) {
+  dialog.sheet {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 18px 18px 0 0;
+  }
+  dialog.sheet[open] {
+    animation: sheet-up 0.3s var(--ease-out);
+  }
+}
+@media (min-width: 768px) {
+  dialog.sheet {
+    position: fixed;
+    inset: 0 0 0 auto;
+    height: 100dvh;
+    width: min(540px, 100vw);
+  }
+  dialog.sheet[open] {
+    animation: sheet-in 0.3s var(--ease-out);
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.4;
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(40px);
+    opacity: 0.4;
+  }
+}
+dialog.panel {
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+dialog.panel::backdrop {
+  background: var(--scrim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

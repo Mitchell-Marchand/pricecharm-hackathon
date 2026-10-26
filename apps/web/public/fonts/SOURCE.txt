@@ -1,0 +1,3 @@
+DM Sans variable, optical size and weight axes
+Source: https://github.com/google/fonts/tree/5b35b7208dd4100571326fdf37f030b32a524232/ofl/dmsans
+License: SIL Open Font License 1.1 (DMSans-OFL.txt)

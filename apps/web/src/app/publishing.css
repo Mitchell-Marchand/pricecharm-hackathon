@@ -1,0 +1,698 @@
+.automation-flow {
+  max-width: 760px;
+  margin: 0 auto;
+  color: #151a17;
+}
+
+.automation-flow.is-contextual {
+  max-width: none;
+  margin: 0;
+}
+
+.automation-heading {
+  margin-bottom: 33px;
+}
+
+.automation-heading > h1 {
+  margin: 0 0 12px;
+  color: #151a17;
+  font-size: 30px;
+  line-height: 1.2;
+  letter-spacing: -1px;
+  font-weight: 550;
+}
+
+.automation-heading > p,
+.automation-section-heading p,
+.automation-review-link p,
+.automation-task > p,
+.automation-case-heading > p {
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-flow > .notice {
+  margin-bottom: 23px;
+}
+
+.automation-flow > .field {
+  max-width: 430px;
+  margin-bottom: 29px;
+}
+
+.automation-review-link {
+  padding: 0 0 33px;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #e2e5df;
+}
+
+.automation-review-link h2,
+.automation-section-heading h2 {
+  margin-bottom: 9px;
+  color: #151a17;
+  font-size: 21px;
+  font-weight: 550;
+  letter-spacing: -0.5px;
+  line-height: 1.4;
+}
+
+.automation-review-link > .button {
+  margin-top: 18px;
+}
+
+.automation-share-tabs {
+  display: flex;
+  gap: 19px;
+  margin: 23px 0 13px;
+}
+
+.automation-share-tabs > button {
+  padding: 0 0 7px;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-share-tabs > button.active {
+  border-bottom-color: #e2e5df;
+  color: #151a17;
+}
+
+.automation-review-link > textarea {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 15px;
+  padding: 11px 12px;
+  border: 1px solid #e2e5df;
+  border-radius: 6px;
+  background: #fff;
+  color: #505650;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.automation-section-heading {
+  margin: 0 0 24px;
+}
+
+.automation-task {
+  margin: 21px 0;
+  padding: 22px 23px;
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.automation-task-label {
+  display: block;
+  margin-bottom: 10px;
+  color: #687168;
+  font-size: 14px;
+}
+
+.automation-task > h3,
+.automation-blocker > h3 {
+  margin-bottom: 9px;
+  color: #151a17;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+  line-height: 1.5;
+}
+
+.automation-action-link {
+  display: inline-block;
+  margin-top: 15px;
+  color: #151a17;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.automation-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.automation-inline-actions > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-live {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 22px;
+  margin: 23px 0;
+  padding: 19px 0;
+  border-top: 1px solid #e2e5df;
+  border-bottom: 1px solid #e2e5df;
+}
+
+.automation-live strong {
+  color: #151a17;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.automation-live p {
+  margin-top: 5px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-live > .button {
+  flex-shrink: 0;
+}
+
+.automation-approved {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin: 27px 0 5px;
+}
+
+.automation-approved > svg {
+  margin-top: 3px;
+  color: #151a17;
+}
+
+.automation-approved > div {
+  flex: 1;
+}
+
+.automation-approved strong {
+  color: #151a17;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.automation-approved p {
+  margin-top: 7px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-approved > .text-button {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.automation-limit > .field {
+  max-width: 280px;
+  margin: 21px 0;
+}
+
+.automation-limit-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 0 0 20px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid #e2e5df;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-limit-summary strong {
+  margin-left: 10px;
+  color: #151a17;
+  font-weight: 500;
+}
+
+.automation-limit-summary > .text-button {
+  font-size: 14px;
+}
+
+.automation-workspace.has-current-results > .automation-tools {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-workspace.has-current-results .automation-results {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.automation-flow [hidden] {
+  display: none;
+}
+
+.automation-tools > div > .automation-change-limit {
+  margin-bottom: 22px;
+}
+
+.automation-case-heading > h3 {
+  margin-bottom: 8px;
+  color: #151a17;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+  line-height: 1.5;
+}
+
+.automation-case-counts {
+  display: flex;
+  gap: 21px;
+  margin: 19px 0 10px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-case-list {
+  margin-bottom: 18px;
+}
+
+.automation-case-list > article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 16px 0;
+  border-bottom: 1px solid #e2e5df;
+}
+
+.automation-case-list > article > div {
+  min-width: 0;
+}
+
+.automation-case-list strong {
+  color: #151a17;
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.automation-case-list p {
+  margin-top: 4px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.automation-case-list .icon-button {
+  color: #687168;
+}
+
+.automation-test-editor {
+  margin: 23px 0 25px;
+  padding: 23px;
+  border: 1px solid #e2e5df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.automation-test-editor > h4 {
+  margin-bottom: 8px;
+  color: #151a17;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.automation-test-editor > p,
+.automation-test-editor > fieldset > p {
+  margin-bottom: 22px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-test-editor .field {
+  margin-bottom: 18px;
+}
+
+.automation-test-editor .field > span,
+.automation-limit .field > span {
+  color: #505650;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.automation-test-editor input,
+.automation-test-editor select,
+.automation-test-editor textarea,
+.automation-limit input {
+  border-color: #e2e5df;
+  border-radius: 6px;
+  background: #fff;
+  color: #151a17;
+  font-size: 14px;
+}
+
+.automation-two-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.automation-test-editor > fieldset {
+  margin: 7px 0 21px;
+  padding: 18px 0 0;
+  border: 0;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-test-editor legend {
+  padding-right: 12px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-test-editor > .automation-inline-actions {
+  margin-top: 24px;
+}
+
+.automation-test-editor > .notice {
+  margin-top: 18px;
+}
+
+.automation-detail > summary,
+.automation-policy > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  color: #505650;
+  font-size: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.automation-detail > summary::-webkit-details-marker,
+.automation-policy > summary::-webkit-details-marker {
+  display: none;
+}
+
+.automation-detail[open] > summary,
+.automation-policy[open] > summary {
+  margin-bottom: 17px;
+}
+
+.automation-detail > p,
+.automation-policy p {
+  margin: 12px 0;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.automation-detail > p strong {
+  font-weight: 500;
+}
+
+.automation-detail > p a {
+  color: #151a17;
+}
+
+.automation-detail h4 {
+  margin-top: 18px;
+  color: #505650;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.automation-task > .automation-detail {
+  margin-top: 22px;
+}
+
+.automation-run {
+  margin: 27px 0 0;
+  padding-top: 24px;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-run > p {
+  margin-top: 12px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-results {
+  margin-top: 28px;
+  padding-top: 25px;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-results > header strong {
+  display: block;
+  color: #151a17;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.7;
+}
+
+.automation-results > header > span {
+  display: block;
+  margin-top: 7px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-failed-checks {
+  margin: 20px 0;
+  padding-left: 14px;
+  border-left: 2px solid #d3ab76;
+}
+
+.automation-failed-checks > div + div {
+  margin-top: 16px;
+}
+
+.automation-failed-checks strong {
+  color: #505650;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.automation-failed-checks p {
+  margin-top: 4px;
+  color: #846e52;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-result-table {
+  margin: 23px 0;
+}
+
+.automation-result-head,
+.automation-result-table > article {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 0.8fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.automation-result-head {
+  padding-bottom: 12px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-result-table > article {
+  padding: 15px 0;
+  border-top: 1px solid #e2e5df;
+  color: #151a17;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.automation-result-table > article strong {
+  display: block;
+  color: #151a17;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.automation-result-table > article > div > span {
+  display: block;
+  margin-top: 4px;
+  color: #505650;
+  font-size: 14px;
+}
+
+.automation-result-table > article.failed > div > span {
+  color: #94662f;
+}
+
+.automation-results > .automation-detail {
+  padding-top: 19px;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-small {
+  margin-top: 18px;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-approval {
+  margin-top: 29px;
+  padding-top: 24px;
+  border-top: 1px solid #e2e5df;
+}
+
+.automation-approval .automation-task {
+  margin-top: 0;
+}
+
+.automation-approval .automation-task > .button {
+  margin-top: 17px;
+}
+
+.automation-approval .automation-task > .text-button {
+  display: block;
+  margin-top: 18px;
+}
+
+.automation-policy {
+  margin: 21px 0;
+}
+
+.automation-approval .checkbox-field {
+  align-items: flex-start;
+  margin: 22px 0;
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-approval .checkbox-field input {
+  margin-top: 6px;
+  accent-color: #174f3b;
+}
+
+.automation-blocker {
+  padding: 16px 0;
+}
+
+.automation-blocker > p {
+  color: #505650;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.automation-blocker > .text-button {
+  margin-left: 16px;
+}
+
+@media (max-width: 620px) {
+  .automation-heading > h1 {
+    font-size: 28px;
+  }
+  .automation-flow .automation-heading > p,
+  .automation-flow .automation-section-heading p,
+  .automation-flow .automation-review-link p,
+  .automation-flow .automation-task > p,
+  .automation-flow .automation-case-heading > p {
+    font-size: 14px;
+  }
+  .automation-section-heading h2,
+  .automation-review-link h2 {
+    font-size: 21px;
+  }
+  .automation-task {
+    padding: 20px 17px;
+  }
+  .automation-live {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+  .automation-live p,
+  .automation-approved p {
+    font-size: 14px;
+  }
+  .automation-approved {
+    flex-wrap: wrap;
+  }
+  .automation-approved > div {
+    min-width: calc(100% - 35px);
+  }
+  .automation-approved > .text-button {
+    margin: 4px 0 0 29px;
+    font-size: 14px;
+  }
+  .automation-limit-summary,
+  .automation-limit-summary > .text-button {
+    font-size: 14px;
+  }
+  .automation-case-list strong {
+    font-size: 14px;
+  }
+  .automation-case-list p {
+    font-size: 14px;
+  }
+  .automation-test-editor {
+    padding: 20px 16px;
+  }
+  .automation-test-editor > p,
+  .automation-test-editor > fieldset > p {
+    font-size: 14px;
+  }
+  .automation-test-editor .field > span,
+  .automation-limit .field > span,
+  .automation-test-editor legend {
+    font-size: 14px;
+  }
+  .automation-flow .automation-test-editor input,
+  .automation-flow .automation-test-editor select,
+  .automation-flow .automation-test-editor textarea,
+  .automation-flow .automation-limit input {
+    font-size: 16px;
+  }
+  .automation-two-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .automation-detail > summary,
+  .automation-policy > summary,
+  .automation-detail > p,
+  .automation-policy p {
+    font-size: 14px;
+  }
+  .automation-results > header strong {
+    font-size: 15px;
+  }
+  .automation-result-head,
+  .automation-result-table > article {
+    grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 0.8fr));
+    gap: 12px;
+  }
+  .automation-result-table > article {
+    font-size: 14px;
+  }
+  .automation-results .automation-small,
+  .automation-approval .automation-small {
+    font-size: 14px;
+  }
+  .automation-approval .checkbox-field {
+    font-size: 14px;
+  }
+  .automation-flow .button {
+    min-height: 44px;
+    font-size: 14px;
+  }
+  .automation-review-link > textarea {
+    font-size: 14px;
+  }
+}

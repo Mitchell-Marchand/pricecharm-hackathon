@@ -1,0 +1,15 @@
+.DS_Store
+*.log
+node_modules/
+playwright-report/
+test-results/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+
+# Local-only material that never belongs in the repository.
+/artifacts/
+/archive/
+/.claude/
