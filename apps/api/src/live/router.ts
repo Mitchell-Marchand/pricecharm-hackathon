@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { devTokensAllowed } from '../config.js';
 import { ApiError, ok, rateLimit } from '../http.js';
@@ -21,7 +21,22 @@ import {
 
 /** The customer side: the quote link and the website widget. */
 export const chatRouter = Router();
-chatRouter.use('/chat', rateLimit(120, 60_000));
+const chatLimit = rateLimit(120, 60_000);
+chatRouter.use('/chat', (req, res, next) =>
+  req.method === 'GET' && fromWebServer(req) ? next() : chatLimit(req, res, next),
+);
+
+/**
+ * The web app reads business profiles to build the quote link and widget pages. It calls from
+ * this machine, while nginx always adds the visitor's address, so these reads would otherwise
+ * share one rate limit bucket across every visitor.
+ */
+function fromWebServer(req: Request) {
+  const address = req.socket.remoteAddress ?? '';
+  return (
+    !req.headers['x-forwarded-for'] && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address)
+  );
+}
 
 chatRouter.get('/chat/:slug', async (req, res) => {
   res.json(ok(await publicProfile(await businessBySlug(req.params.slug))));

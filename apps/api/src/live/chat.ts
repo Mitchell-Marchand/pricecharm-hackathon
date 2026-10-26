@@ -82,6 +82,8 @@ export async function publicProfile(business: Row) {
     trade: tradeName(business.trade_id, business.custom_trade),
     services: await services(String(business.id)),
     ownerFirstName: await ownerFirstName(String(business.id)),
+    /** The one website allowed to show the widget. */
+    websiteDomain: String(business.website_domain ?? ''),
   };
 }
 
@@ -113,12 +115,15 @@ async function addMessage(
   );
 }
 
+/** The first thing a customer reads. It says it's an assistant, not a person. */
+export const greeting = (businessName: string) =>
+  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
+
 /** Starts a quote chat. The owner's own test chats are marked so they're never billed or emailed. */
 export async function startChat(business: Row, source: 'link' | 'widget' | 'test') {
   const token = newToken(),
     id = randomUUID();
   const offered = await services(String(business.id));
-  const trade = tradeName(business.trade_id, business.custom_trade).toLowerCase();
   await transaction(async (connection) => {
     await mutate(
       'INSERT INTO lead_chats (id,business_id,token_hash,source,expires_at) VALUES (?,?,?,?,?)',
@@ -129,7 +134,7 @@ export async function startChat(business: Row, source: 'link' | 'widget' | 'test
       businessId: String(business.id),
       chatId: id,
       sender: 'assistant',
-      text: `Hi! I can put together a ${trade} quote for you. What do you need done?`,
+      text: greeting(String(business.name)),
       chips: offered.slice(0, 6),
     });
   });
@@ -171,7 +176,8 @@ export async function chatView(business: Row, chat: Row) {
     [chat.id],
   );
   const quote = await liveQuoteFor(String(chat.id));
-  const visible = quote && quote.status !== 'review' && quote.status !== 'void';
+  // Customers only ever see a quote the business sent; a held or declined one stays private.
+  const visible = quote && ['sent', 'accepted', 'visit_requested'].includes(String(quote.status));
   return {
     id: String(chat.id),
     status: String(chat.status),
@@ -187,6 +193,7 @@ export async function chatView(business: Row, chat: Row) {
         url: photoPath(String(business.slug), String(chat.id), id),
       })),
       chips: json<string[]>(message.chips_json, []),
+      createdAt: new Date(message.created_at).toISOString(),
     })),
     contact: {
       name: String(chat.customer_name),
@@ -197,7 +204,8 @@ export async function chatView(business: Row, chat: Row) {
       ? {
           id: String(quote.id),
           status: String(quote.status),
-          card: json<Quote>(quote.quote_json, {} as Quote),
+          card: { ...json<Quote>(quote.quote_json, {} as Quote), note: '' },
+          sentAt: quote.sent_at ? new Date(quote.sent_at).toISOString() : null,
         }
       : null,
     waitingForOwner: quote?.status === 'review',
