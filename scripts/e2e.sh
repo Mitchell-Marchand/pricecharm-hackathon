@@ -57,4 +57,5 @@ for url in "http://127.0.0.1:$api_port/ready" "http://127.0.0.1:$web_port/"; do
   done
 done
 
-QUOTING_WEB_URL="http://localhost:$web_port" npm run test:e2e --workspace @quotefolk/web
+# Extra arguments go to Playwright, e.g. `bash scripts/e2e.sh request-history --repeat-each=5`.
+QUOTING_WEB_URL="http://localhost:$web_port" npm run test:e2e --workspace @quotefolk/web -- "$@"
