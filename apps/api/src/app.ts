@@ -34,6 +34,8 @@ import { pastJobsRouter } from './past-jobs.js';
 import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
 import { shareRouter } from './share.js';
+import { chatRouter } from './live/router.js';
+import { ownerQuotesRouter } from './live/owner.js';
 
 export function createApp() {
   validateRuntimeConfiguration();
@@ -123,7 +125,7 @@ export function createApp() {
   );
   app.use('/api/v1', csrfProtection);
   app.use('/api/v1', guestPreviewRouter);
-  app.use('/api/v1', onboardingRouter, pastJobsRouter, practiceRouter, profileRouter);
+  app.use('/api/v1', onboardingRouter, pastJobsRouter, practiceRouter, profileRouter, chatRouter);
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);
@@ -143,6 +145,7 @@ export function createApp() {
     accountRouter,
     serviceSetupRouter,
     shareRouter,
+    ownerQuotesRouter,
   );
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
   app.use(errorHandler);
