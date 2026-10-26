@@ -189,4 +189,50 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
   await page.getByRole('button', { name: 'See what your AI learned' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
+
+  await expect(page.getByRole('heading', { name: 'Your AI is ready.' })).toBeVisible();
+  await expect(
+    page.getByText('It learned from 1 past job and 3 practice customers.', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText('How big is the area?')).toBeVisible();
+  await expect(page.getByText('Asks about size and stains')).toHaveCount(0);
+  await expect(page.getByText(/^Charges about \$0\.51 per sq ft for patios$/)).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Dana R.' })).toBeVisible();
+  await expect(page.getByText('Anything over $1,500')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create your free account' }).click();
+  await expect(page).toHaveURL(/\/start\/account$/);
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByText('Add your first name.')).toBeVisible();
+  await page.getByLabel('First name').fill('Maya');
+  await page.getByLabel('Last name').fill('Lopez');
+  await page.getByLabel('Email').fill(`maya-${Date.now()}@example.test`);
+  await page.getByLabel('Password', { exact: true }).fill('test password strong123');
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  await expect(page).toHaveURL(/\/start\/live$/);
+  await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
+  await expect(page.getByText(/You.re all set, Maya/)).toBeVisible();
+  await expect(page.getByText(/\/q\/moss-and-stone-exterior-care-[0-9a-f]{8}$/)).toBeVisible();
+  await expect(
+    page.getByRole('img', { name: /QR code for the Moss & Stone Exterior Care quote link/ }),
+  ).toBeVisible();
+  const websiteSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/v1/share') && response.request().method() === 'PATCH',
+  );
+  await page.getByLabel(/What.s your website\?/).fill('https://www.MossAndStone.com/contact');
+  await page.getByLabel(/What.s your website\?/).press('Tab');
+  await websiteSaved;
+  await expect(
+    page.getByText('Only mossandstone.com and www.mossandstone.com can show your widget.'),
+  ).toBeVisible();
+  await page.getByRole('radio', { name: 'Section on a page' }).click();
+  await expect(page.locator('pre code')).toContainText('data-quotefolk-inline=');
+  await page.reload();
+  await expect(page.getByLabel(/What.s your website\?/)).toHaveValue('mossandstone.com');
+  await expect(page.getByRole('radio', { name: 'Section on a page' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
 });

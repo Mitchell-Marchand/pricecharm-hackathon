@@ -16,6 +16,7 @@ import { businessById, type Row } from './models.js';
 import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './verification.js';
 import { hashingSecret } from './config.js';
 import { clearDraftCookie, draftFromRequest } from './workspace.js';
+import { practiceState } from './practice/engine.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -229,9 +230,11 @@ export const register: RequestHandler = async (req, res) => {
       if (draft) {
         businessId = String(draft.id);
         claimed = true;
+        // Quotes go out on their own from day one if the AI's last two practice guesses matched.
+        const { autoSendReady } = await practiceState(businessId);
         await mutate(
-          "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
-          [businessName, businessSlug(businessName, businessId), businessId],
+          "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',auto_send=?,draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
+          [businessName, businessSlug(businessName, businessId), autoSendReady, businessId],
           connection,
         );
       } else
