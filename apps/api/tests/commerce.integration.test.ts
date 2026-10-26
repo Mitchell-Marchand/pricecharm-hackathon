@@ -333,7 +333,7 @@ test(
         .set('Origin', origin)
         .send({})
         .expect(200);
-      assert.match(checkout.body.data.url, /local=active/);
+      assert.match(checkout.body.data.url, /\/app\/settings\?billing=active$/);
       await a
         .patch('/api/v1/billing')
         .set('Origin', origin)
@@ -546,7 +546,7 @@ test(
         checkouts++;
         assert.deepEqual(params.line_items, [{ price: 'price_checkout_mock' }]);
         assert.equal(params.mode, 'subscription');
-        assert.match(params.success_url, /^http:\/\/localhost:3100\/dashboard\/billing/);
+        assert.match(params.success_url, /^http:\/\/localhost:3100\/app\/settings/);
         return { id: `cs_${suffix}`, url: 'https://checkout.stripe.com/mock-only' };
       }) as any;
       stripe.checkout.sessions.retrieve = (async () => ({
@@ -556,7 +556,7 @@ test(
       stripe.billingPortal.sessions.create = (async (params: any) => {
         portals++;
         assert.equal(params.customer, `cus_${suffix}`);
-        assert.equal(params.return_url, 'http://localhost:3100/dashboard/billing');
+        assert.equal(params.return_url, 'http://localhost:3100/app/settings');
         return { url: 'https://billing.stripe.com/mock-only' };
       }) as any;
       await agent

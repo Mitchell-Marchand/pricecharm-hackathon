@@ -91,12 +91,18 @@ function demoIntake(input: IntakeInput): IntakeTurn {
     .map((message) => message.text)
     .join(' ');
   const summary = customerText.slice(0, 300);
+  const serviceName =
+    input.serviceName ||
+    input.business.services.find((name) =>
+      customerText.toLowerCase().includes(name.toLowerCase()),
+    ) ||
+    '';
   if (asked <= 1)
     return {
       reply: `[Demo] Thanks! ${question}`,
       chips: [],
       askPhoto: false,
-      serviceName: input.serviceName,
+      serviceName,
       ready: false,
       summary,
       outOfScope: '',
@@ -106,7 +112,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       reply: '[Demo] Could you send a photo or two? It helps us price it right.',
       chips: ['Skip photos'],
       askPhoto: true,
-      serviceName: input.serviceName,
+      serviceName,
       ready: false,
       summary,
       outOfScope: '',

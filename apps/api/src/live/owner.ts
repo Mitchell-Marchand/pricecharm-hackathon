@@ -8,6 +8,7 @@ import { json } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type Quote } from '../practice/types.js';
 import { hashToken, newToken, owner } from '../auth.js';
+import { liveBillingSummary } from './billing.js';
 import { appOrigin, markSent } from './chat.js';
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
@@ -259,6 +260,10 @@ ownerQuotesRouter.post('/app/quotes/:id/decline', rateLimit(30, 60_000), async (
     '{business} replied to your quote request:',
   );
   res.json(ok(await quoteDetail(businessId, quoteId)));
+});
+
+ownerQuotesRouter.get('/app/billing', async (req, res) => {
+  res.json(ok(await liveBillingSummary(owner(req).businessId)));
 });
 
 ownerQuotesRouter.get('/app/profile', async (req, res) => {

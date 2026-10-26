@@ -3,7 +3,7 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { TRADES_BY_ID, tradeName } from '@quotefolk/trades';
 import { hashToken, newToken } from './auth.js';
-import { devTokensAllowed } from './config.js';
+import { devTokensAllowed, isDeployed } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { isDisposableEmail } from './email-domains.js';
 import { ApiError, ok, rateLimit } from './http.js';
@@ -32,6 +32,17 @@ export const ONBOARDING_STEPS = [
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 const RADII = ['10', '15', '25', '50'] as const;
 const DRAFTS_PER_ADDRESS_PER_DAY = 10;
+
+/**
+ * Setups one address may start in a day. The browser tests start many from one address, so a
+ * local run can raise it with LOCAL_SETUPS_PER_ADDRESS. Deployed servers ignore that.
+ */
+function draftsPerAddress(): number {
+  const local = Number(process.env.LOCAL_SETUPS_PER_ADDRESS);
+  return local > 0 && process.env.NODE_ENV !== 'production' && !isDeployed()
+    ? local
+    : DRAFTS_PER_ADDRESS_PER_DAY;
+}
 
 export const onboardingRouter = Router();
 
@@ -64,35 +75,39 @@ export async function onboardingState(businessId: string, draft: boolean, connec
 }
 
 /** Starts setup for a new visitor, or returns the setup this browser already has. */
-onboardingRouter.post('/onboarding/start', rateLimit(10, 15 * 60_000), async (req, res) => {
-  const existing = await workspaceFromRequest(req);
-  if (existing) {
-    res.json(ok(await onboardingState(existing.businessId, existing.draft)));
-    return;
-  }
-  await verifyHuman(req, 'onboarding');
-  const day = new Date().toISOString().slice(0, 10);
-  const businessId = await transaction(async (connection) => {
-    try {
-      await consumeAuthRateLimit(
-        draftIpBudgetKey(req.ip || req.socket.remoteAddress || 'unknown', day),
-        DRAFTS_PER_ADDRESS_PER_DAY,
-        24 * 60 * 60_000,
-        connection,
-      );
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
-        throw new ApiError(
-          429,
-          'SETUP_LIMIT',
-          'Too many setups were started from this connection today. Please try again tomorrow.',
-        );
-      throw error;
+onboardingRouter.post(
+  '/onboarding/start',
+  rateLimit(Math.max(10, draftsPerAddress()), 15 * 60_000),
+  async (req, res) => {
+    const existing = await workspaceFromRequest(req);
+    if (existing) {
+      res.json(ok(await onboardingState(existing.businessId, existing.draft)));
+      return;
     }
-    return createDraft(res, connection);
-  });
-  res.status(201).json(ok(await onboardingState(businessId, true)));
-});
+    await verifyHuman(req, 'onboarding');
+    const day = new Date().toISOString().slice(0, 10);
+    const businessId = await transaction(async (connection) => {
+      try {
+        await consumeAuthRateLimit(
+          draftIpBudgetKey(req.ip || req.socket.remoteAddress || 'unknown', day),
+          draftsPerAddress(),
+          24 * 60 * 60_000,
+          connection,
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
+          throw new ApiError(
+            429,
+            'SETUP_LIMIT',
+            'Too many setups were started from this connection today. Please try again tomorrow.',
+          );
+        throw error;
+      }
+      return createDraft(res, connection);
+    });
+    res.status(201).json(ok(await onboardingState(businessId, true)));
+  },
+);
 
 onboardingRouter.get('/onboarding', requireWorkspace, async (req, res) => {
   const current = workspace(req);

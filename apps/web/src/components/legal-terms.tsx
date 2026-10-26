@@ -120,31 +120,33 @@ export function termsOfService(operator?: Operator): LegalDocument {
           <ul>
             <li>
               Quotefolk charges a fee for each qualifying quote it delivers. The current fee, the
-              free trial and the details are on our <Link href="/pricing">pricing page</Link> and in
-              your billing settings. The fee and trial in place when you sign up apply to your
-              account until we change them as described below.
+              number of free quotes and the details are on our{' '}
+              <Link href="/pricing">pricing page</Link> and in your billing settings. The fee and
+              free quotes in place when you sign up apply to your account until we change them as
+              described below.
             </li>
             <li>
-              A quote qualifies when the assistant sends it automatically to a customer whose email
-              address has been verified. We don’t charge for practice, previews, your own test
-              requests, quotes you review and approve, or sending the same quote again. The fee
-              applies once a qualifying quote is delivered, whether or not the customer accepts it.
+              A quote qualifies when a customer whose email address has been verified receives it,
+              whether the assistant sent it automatically or you approved it first. Your free quotes
+              don’t expire. We don’t charge for practice, previews, your own test requests, or
+              sending the same quote again. The fee applies once a qualifying quote is delivered,
+              whether or not the customer accepts it.
             </li>
             <li>
-              You can set a monthly spending cap in billing settings. Once you reach it, the
-              assistant stops sending quotes automatically and sends new requests to you instead,
-              until the next month.
+              You can set a monthly spending cap in billing settings. Once you reach it, no more
+              quotes go out until the next month or until you raise the cap. New requests wait for
+              you in the meantime.
             </li>
             <li>
-              After the trial, automatic quotes need a payment method on file. Stripe bills fees
-              monthly, and you authorize us to charge your payment method for them. Stripe’s terms
-              also apply to payments.
+              After your free quotes, sending quotes needs a payment method on file. Stripe bills
+              fees monthly, and you authorize us to charge your payment method for them. Stripe’s
+              terms also apply to payments.
             </li>
             <li>
               Fees don’t include taxes. You’re responsible for any sales, use or similar taxes on
               them, except taxes on our income.
             </li>
-            <li>If a payment fails, we may pause automatic quotes until it’s fixed.</li>
+            <li>If a payment fails, we may pause sending quotes until it’s fixed.</li>
             <li>
               Fees aren’t refundable, except where the law requires or as this section says. If you
               think a fee is wrong, or that you were charged for a quote that went to a fake or
@@ -153,8 +155,8 @@ export function termsOfService(operator?: Operator): LegalDocument {
             </li>
             <li>
               We may change fees by emailing you at least 30 days before the change. New fees apply
-              from your first billing period after that. If you don’t agree, you can turn off
-              automatic quotes or close your account before the change.
+              from your first billing period after that. If you don’t agree, you can close your
+              account before the change.
             </li>
           </ul>
         ),

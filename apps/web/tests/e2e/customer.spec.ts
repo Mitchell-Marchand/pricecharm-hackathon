@@ -1,51 +1,10 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { createBusiness } from './helpers';
 
 const photo = path.resolve('public/photos/patio-stains.jpg');
-
-/** A signed-up business with three past driveway jobs, set up through the API. */
-async function createBusiness(browser: Browser, baseURL: string) {
-  const context = await browser.newContext({ baseURL });
-  const owner = context.request;
-  const headers = { Origin: new URL(baseURL).origin };
-  const send = async (method: 'post' | 'patch', url: string, data: object) => {
-    const response = await owner[method](url, { headers, data });
-    expect(response.ok(), `${url}: ${await response.text()}`).toBe(true);
-    return (await response.json()).data;
-  };
-  await send('post', '/api/v1/onboarding/start', {});
-  await send('patch', '/api/v1/onboarding/business', {
-    tradeId: 'pressure-washing',
-    services: ['Driveways', 'House wash'],
-    name: 'Moss & Stone Exterior Care',
-    area: 'Portland, OR',
-  });
-  for (const priceCents of [25000, 27500, 30000])
-    await send('post', '/api/v1/onboarding/jobs', {
-      serviceName: 'Driveways',
-      description: 'Two-car driveway wash.',
-      priceCents,
-      size: '600 sq ft',
-    });
-  const account = await send('post', '/api/v1/auth/register', {
-    firstName: 'Maya',
-    lastName: 'Lopez',
-    email: `maya-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`,
-    password: 'test password strong123',
-  });
-  return {
-    slug: String(account.business.slug),
-    context,
-    autoSend: (on: boolean) => send('patch', '/api/v1/app/settings', { autoSend: on }),
-    approveWaiting: async () => {
-      const response = await owner.get('/api/v1/app/quotes?filter=review');
-      const [waiting] = (await response.json()).data;
-      return send('post', `/api/v1/app/quotes/${waiting.id}/approve`, {});
-    },
-  };
-}
 
 /** Describes the job, then gives a name and email and enters the code from the screen. */
 async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {

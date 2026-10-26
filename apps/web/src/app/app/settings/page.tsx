@@ -1,0 +1,383 @@
+'use client';
+
+import { useRouter } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Download, LogOut } from 'lucide-react';
+import { PasswordInput } from '@/components/auth/PasswordInput';
+import { useOwner } from '@/components/owner/OwnerShell';
+import { Sheet } from '@/components/Sheet';
+import { useToast } from '@/components/Toast';
+import { Button, Field, MoneyInput, Segmented, TextInput } from '@/components/ui';
+import { logout } from '@/lib/account';
+import { errorMessage } from '@/lib/api';
+import {
+  deleteAccount,
+  loadBilling,
+  loadHome,
+  openBillingPortal,
+  saveSettings,
+  saveSpendingCap,
+  startCheckout,
+  type Billing,
+} from '@/lib/owner';
+import { money, moneyInput, parseMoney } from '@/lib/util';
+
+function Section({
+  title,
+  intro,
+  children,
+}: {
+  title: string;
+  intro?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="grid gap-6 border-t border-line py-10 first:border-0 first:pt-0 md:grid-cols-[260px_minmax(0,1fr)]">
+      <div>
+        <h2 className="t-h3">{title}</h2>
+        {intro && <p className="mt-2 text-sm text-muted">{intro}</p>}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </section>
+  );
+}
+
+export default function SettingsPage() {
+  const { me } = useOwner();
+  const notify = useToast();
+  const router = useRouter();
+  const [autoSend, setAutoSend] = useState<boolean | null>(null);
+  const [limit, setLimit] = useState('');
+  const [savedLimit, setSavedLimit] = useState(0);
+  const [billing, setBilling] = useState<Billing | null>(null);
+  const [cap, setCap] = useState('');
+  const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    loadHome()
+      .then((home) => {
+        setAutoSend(home.autoSend);
+        setLimit(moneyInput(home.autoSendLimitCents));
+        setSavedLimit(home.autoSendLimitCents);
+      })
+      .catch((loadError) => setError(errorMessage(loadError)));
+    loadBilling()
+      .then((loaded) => {
+        setBilling(loaded);
+        setCap(moneyInput(loaded.spendingCapCents));
+      })
+      .catch((loadError) => setError(errorMessage(loadError)));
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('billing') === 'active') {
+      notify('Billing is set up. Quotes keep going out after your free ones.');
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, [notify]);
+
+  const saveLimit = () => {
+    const cents = parseMoney(limit);
+    if (cents === null || cents === savedLimit) return;
+    saveSettings({ autoSendLimitCents: cents })
+      .then((saved) => {
+        setSavedLimit(saved.autoSendLimitCents);
+        setLimit(moneyInput(saved.autoSendLimitCents));
+        notify(`Saved. Quotes over ${saved.limitText} wait for you.`);
+      })
+      .catch((saveError) => notify(errorMessage(saveError)));
+  };
+
+  const go = (request: () => Promise<{ url: string }>) =>
+    request()
+      .then(({ url }) => window.location.assign(url))
+      .catch((billingError) => notify(errorMessage(billingError)));
+
+  return (
+    <>
+      <h1 className="t-h1">Settings</h1>
+      {error && (
+        <p className="mt-4 text-stop" role="alert">
+          {error}
+        </p>
+      )}
+
+      <div className="mt-10">
+        <Section
+          title="Automatic quotes"
+          intro="Quotes that match your usual prices can go out without waiting for you."
+        >
+          {autoSend === null ? (
+            <div className="shimmer h-24 rounded-md" />
+          ) : (
+            <div className="flex flex-col gap-6">
+              <Segmented
+                label="Automatic quotes"
+                value={autoSend ? 'on' : 'off'}
+                onChange={(value) => {
+                  const on = value === 'on';
+                  setAutoSend(on);
+                  saveSettings({ autoSend: on })
+                    .then(() =>
+                      notify(
+                        on
+                          ? 'Quotes can go out on their own now.'
+                          : 'Every quote waits for your OK.',
+                      ),
+                    )
+                    .catch((saveError) => {
+                      setAutoSend(!on);
+                      notify(errorMessage(saveError));
+                    });
+                }}
+                options={[
+                  { value: 'on', label: 'Send them on their own' },
+                  { value: 'off', label: 'I approve each one' },
+                ]}
+              />
+              <Field
+                label="Always ask me about quotes over"
+                htmlFor="settings-limit"
+                hint="Jobs outside your area, or for a service you don't list, always wait for you too."
+              >
+                <MoneyInput
+                  id="settings-limit"
+                  className="max-w-48"
+                  value={limit}
+                  onChange={setLimit}
+                  onBlur={saveLimit}
+                />
+              </Field>
+            </div>
+          )}
+        </Section>
+
+        <Section
+          title="Billing"
+          intro="Your first quotes are free. After that you pay a small fee for each quote a customer receives."
+        >
+          {!billing ? (
+            <div className="shimmer h-32 rounded-md" />
+          ) : (
+            <BillingDetails
+              billing={billing}
+              cap={cap}
+              setCap={setCap}
+              onChange={setBilling}
+              go={go}
+            />
+          )}
+        </Section>
+
+        <Section title="Account">
+          <dl className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <dt className="text-sm text-muted">Name</dt>
+              <dd className="mt-0.5 font-medium">{me.user.name}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted">Email</dt>
+              <dd className="mt-0.5 font-medium break-all">{me.user.email}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted">Business</dt>
+              <dd className="mt-0.5 font-medium">{me.business.name}</dd>
+            </div>
+          </dl>
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() =>
+                logout()
+                  .catch(() => {})
+                  .finally(() => router.replace('/login'))
+              }
+            >
+              <LogOut aria-hidden /> Sign out
+            </Button>
+            <a
+              href="/api/v1/account/export"
+              download="quotefolk-export.json"
+              className="inline-flex h-11 items-center gap-2 rounded-sm px-4 text-[15px] font-semibold text-ink-2 hover:bg-surface-2 hover:text-ink [&_svg]:size-[1.1em]"
+            >
+              <Download aria-hidden /> Download your data
+            </a>
+          </div>
+          <div className="mt-10 rounded-md border border-stop/30 p-4">
+            <p className="font-semibold">Delete your account</p>
+            <p className="mt-1 text-sm text-ink-2">
+              Your quote link and widget stop working right away. We delete your information, and
+              backup copies are overwritten within 30 days.
+            </p>
+            <Button
+              variant="secondary"
+              className="mt-4 text-stop"
+              onClick={() => setDeleting(true)}
+            >
+              Delete account
+            </Button>
+          </div>
+        </Section>
+      </div>
+
+      <DeleteSheet
+        open={deleting}
+        business={me.business.name}
+        onClose={() => setDeleting(false)}
+        onDeleted={() => router.replace('/')}
+      />
+    </>
+  );
+}
+
+function BillingDetails({
+  billing,
+  cap,
+  setCap,
+  onChange,
+  go,
+}: {
+  billing: Billing;
+  cap: string;
+  setCap: (value: string) => void;
+  onChange: (billing: Billing) => void;
+  go: (request: () => Promise<{ url: string }>) => void;
+}) {
+  const notify = useToast();
+  const active = billing.status === 'active';
+  const { trial, tariff } = billing;
+  const fee =
+    tariff.minimumFeeCents === tariff.maximumFeeCents
+      ? `${money(tariff.minimumFeeCents)} per quote`
+      : `${tariff.basisPoints / 100}% of the quote, between ${money(tariff.minimumFeeCents)} and ${money(tariff.maximumFeeCents)}`;
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="rounded-md border border-line bg-surface p-4">
+        {trial.remainingQuotes > 0 ? (
+          <p>
+            <span className="font-semibold">
+              {trial.remainingQuotes} of {trial.quoteLimit} free quotes left.
+            </span>{' '}
+            <span className="text-ink-2">They don&apos;t expire.</span>
+          </p>
+        ) : (
+          <p className="font-semibold">Your {trial.quoteLimit} free quotes are used.</p>
+        )}
+        <p className="mt-1 text-sm text-ink-2">After that: {fee}. Owner tests are always free.</p>
+        <p className="mt-3 text-sm text-muted">
+          This month: {billing.usage.billableQuotes} paid{' '}
+          {billing.usage.billableQuotes === 1 ? 'quote' : 'quotes'},{' '}
+          {money(billing.usage.feesCents)} in fees.
+        </p>
+        {!billing.canSend && billing.reason && (
+          <p className="mt-3 text-sm text-stop">{billing.reason}</p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {billing.checkoutAvailable && !active && (
+          <Button onClick={() => go(startCheckout)}>Add a payment method</Button>
+        )}
+        {billing.portalAvailable && (
+          <Button variant="secondary" onClick={() => go(openBillingPortal)}>
+            Manage billing
+          </Button>
+        )}
+      </div>
+
+      <Field
+        label="Monthly spending limit"
+        htmlFor="settings-cap"
+        hint="Once fees reach this, new quotes wait for you instead of going out."
+      >
+        <MoneyInput
+          id="settings-cap"
+          className="max-w-48"
+          value={cap}
+          onChange={setCap}
+          onBlur={() => {
+            const cents = parseMoney(cap);
+            if (cents === null || cents === billing.spendingCapCents) return;
+            saveSpendingCap(cents)
+              .then(() => loadBilling())
+              .then((loaded) => {
+                onChange(loaded);
+                notify(`Saved. Your limit is ${money(loaded.spendingCapCents)} a month.`);
+              })
+              .catch((saveError) => notify(errorMessage(saveError)));
+          }}
+        />
+      </Field>
+    </div>
+  );
+}
+
+function DeleteSheet({
+  open,
+  business,
+  onClose,
+  onDeleted,
+}: {
+  open: boolean;
+  business: string;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Delete your account"
+      subtitle="This can't be undone."
+    >
+      <form
+        className="flex flex-col gap-5"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setError('');
+          deleteAccount(password, confirmation)
+            .then(onDeleted)
+            .catch((deleteError) => {
+              setError(errorMessage(deleteError));
+              setBusy(false);
+            });
+        }}
+      >
+        <Field label={`Type ${business} to confirm`} htmlFor="delete-confirm">
+          <TextInput
+            id="delete-confirm"
+            autoComplete="off"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+          />
+        </Field>
+        <Field label="Your password" htmlFor="delete-password">
+          <PasswordInput
+            id="delete-password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </Field>
+        {error && (
+          <p className="text-sm text-stop" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="flex gap-2">
+          <Button type="submit" disabled={busy || confirmation !== business || !password}>
+            {busy ? 'Deleting…' : 'Delete everything'}
+          </Button>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}

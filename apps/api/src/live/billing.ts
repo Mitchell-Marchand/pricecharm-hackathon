@@ -3,9 +3,10 @@ import {
   billingProvider,
   ensureBillingAccount,
   feeForQuote,
+  getBilling,
   stripeConfigured,
 } from '../billing.js';
-import { mutate, rows, type Sql } from '../db.js';
+import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError } from '../http.js';
 
 /**
@@ -60,6 +61,25 @@ export async function liveBillingAccess(
       reason: 'You’ve reached your monthly spending limit. Raise it in billing to send more.',
     };
   return { canSend: true, trial: false };
+}
+
+/** What the owner's billing settings show, counted the way live quotes are billed. */
+export async function liveBillingSummary(businessId: string) {
+  const { canIssue: _old, reason: _oldReason, trial: _oldTrial, ...billing } =
+    await getBilling(businessId);
+  return transaction(async (connection) => {
+    const account = await ensureBillingAccount(businessId, connection);
+    const usage = await liveUsage(businessId, connection);
+    const access = await liveBillingAccess(businessId, connection, 0);
+    const quoteLimit = Number(account.trial_quote_limit);
+    return {
+      ...billing,
+      trial: { quoteLimit, remainingQuotes: Math.max(0, quoteLimit - usage.delivered) },
+      deliveredQuotes: usage.delivered,
+      canSend: access.canSend,
+      reason: access.canSend ? '' : access.reason,
+    };
+  });
 }
 
 /** Records one delivered quote, once. Call in the transaction that shows it to the customer. */

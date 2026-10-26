@@ -6,7 +6,7 @@ import { Sheet } from '@/components/Sheet';
 import { Button, Field, MoneyInput, Segmented, TextArea, TextInput } from '@/components/ui';
 import type { QuoteDraft } from '@/lib/practice';
 import type { Discount } from '@/lib/quote';
-import { money, parseMoney, uid } from '@/lib/util';
+import { money, moneyInput, parseMoney, uid } from '@/lib/util';
 
 /** The practice customer the quote is for. */
 type Customer = { id: string; name: string; firstName: string; suggestions: string[] };
@@ -22,6 +22,8 @@ const START_OPTIONS = ['This week', 'Next week', 'In 2 weeks', 'Next month'];
 export function QuoteBuilder({
   open,
   customer,
+  initial,
+  subtitle = 'Price it the way you normally would. Your AI learns from every line.',
   sending,
   error,
   onClose,
@@ -29,6 +31,9 @@ export function QuoteBuilder({
 }: {
   open: boolean;
   customer: Customer;
+  /** A quote to start from, such as the AI's draft. */
+  initial?: QuoteDraft;
+  subtitle?: string;
   sending: boolean;
   error: string;
   onClose: () => void;
@@ -39,13 +44,14 @@ export function QuoteBuilder({
       open={open}
       onClose={onClose}
       title={`Quote for ${customer.name}`}
-      subtitle="Price it the way you normally would. Your AI learns from every line."
+      subtitle={subtitle}
       flush
     >
       {open && (
         <BuilderForm
           key={customer.id}
           customer={customer}
+          initial={initial}
           sending={sending}
           error={error}
           onSend={onSend}
@@ -57,26 +63,46 @@ export function QuoteBuilder({
 
 function BuilderForm({
   customer,
+  initial,
   sending,
   error,
   onSend,
 }: {
   customer: Customer;
+  initial?: QuoteDraft;
   sending: boolean;
   error: string;
   onSend: (quote: QuoteDraft) => void;
 }) {
-  const [lines, setLines] = useState<LineDraft[]>([{ id: uid('line'), label: '', amount: '' }]);
-  const [discountOn, setDiscountOn] = useState(false);
-  const [discountKind, setDiscountKind] = useState<Discount['kind']>('percent');
-  const [discountValue, setDiscountValue] = useState('');
-  const [discountReason, setDiscountReason] = useState('');
-  const [start, setStart] = useState('Next week');
-  const [duration, setDuration] = useState('');
-  const [included, setIncluded] = useState('');
-  const [excluded, setExcluded] = useState('');
-  const [validDays, setValidDays] = useState(14);
-  const [note, setNote] = useState('');
+  const [lines, setLines] = useState<LineDraft[]>(() =>
+    initial?.lines.length
+      ? initial.lines.map((line) => ({
+          id: line.id,
+          label: line.label,
+          amount: moneyInput(line.amountCents),
+        }))
+      : [{ id: uid('line'), label: '', amount: '' }],
+  );
+  const [discountOn, setDiscountOn] = useState(!!initial?.discount);
+  const [discountKind, setDiscountKind] = useState<Discount['kind']>(
+    initial?.discount?.kind ?? 'percent',
+  );
+  const [discountValue, setDiscountValue] = useState(() =>
+    !initial?.discount
+      ? ''
+      : initial.discount.kind === 'amount'
+        ? moneyInput(initial.discount.value)
+        : String(initial.discount.value),
+  );
+  const [discountReason, setDiscountReason] = useState(initial?.discount?.reason ?? '');
+  const [start, setStart] = useState(initial?.start || 'Next week');
+  const [duration, setDuration] = useState(initial?.duration ?? '');
+  const [included, setIncluded] = useState(initial?.included.join('\n') ?? '');
+  const [excluded, setExcluded] = useState(initial?.excluded.join('\n') ?? '');
+  const [validDays, setValidDays] = useState(initial?.validDays ?? 14);
+  const [note, setNote] = useState(initial?.note ?? '');
+  const startOptions = START_OPTIONS.includes(start) ? START_OPTIONS : [start, ...START_OPTIONS];
+  const validOptions = [7, 14, 30].includes(validDays) ? [7, 14, 30] : [validDays, 7, 14, 30];
 
   const priced = lines
     .map((line) => ({
@@ -312,7 +338,7 @@ function BuilderForm({
                 onChange={(event) => setStart(event.target.value)}
                 className="h-12 w-full rounded-sm border border-line-strong bg-surface px-3 text-base text-ink focus:border-accent focus:outline-none"
               >
-                {START_OPTIONS.map((option) => (
+                {startOptions.map((option) => (
                   <option key={option}>{option}</option>
                 ))}
               </select>
@@ -332,7 +358,7 @@ function BuilderForm({
                 onChange={(event) => setValidDays(Number(event.target.value))}
                 className="h-12 w-full rounded-sm border border-line-strong bg-surface px-3 text-base text-ink focus:border-accent focus:outline-none"
               >
-                {[7, 14, 30].map((days) => (
+                {validOptions.map((days) => (
                   <option key={days} value={days}>
                     {days} days
                   </option>

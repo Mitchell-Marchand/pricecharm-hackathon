@@ -308,7 +308,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         connection,
       );
     });
-    res.json(ok({ url: `${appOrigin()}/dashboard/billing?local=active` }));
+    res.json(ok({ url: `${appOrigin()}/app/settings?billing=active` }));
     return;
   }
   await validateMeteredPrice();
@@ -350,8 +350,8 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         line_items: [{ price: process.env.STRIPE_PRICE_ID! }],
         client_reference_id: context.businessId,
         subscription_data: { metadata: { businessId: context.businessId } },
-        success_url: `${appOrigin()}/dashboard/billing?checkout=success`,
-        cancel_url: `${appOrigin()}/dashboard/billing?checkout=cancelled`,
+        success_url: `${appOrigin()}/app/settings?billing=active`,
+        cancel_url: `${appOrigin()}/app/settings`,
       },
       {
         idempotencyKey: `quotient-checkout:${context.businessId}:${Math.floor(Date.now() / 3600000)}`,
@@ -374,7 +374,7 @@ billingRouter.post('/billing/portal', async (req, res) => {
     .strict()
     .parse(req.body ?? {});
   if (billingProvider() === 'local') {
-    res.json(ok({ url: `${appOrigin()}/dashboard/billing?local=portal` }));
+    res.json(ok({ url: `${appOrigin()}/app/settings` }));
     return;
   }
   const [account] = await rows(
@@ -389,7 +389,7 @@ billingRouter.post('/billing/portal', async (req, res) => {
     );
   const portal = await stripeClient().billingPortal.sessions.create({
     customer: account.stripe_customer_id,
-    return_url: `${appOrigin()}/dashboard/billing`,
+    return_url: `${appOrigin()}/app/settings`,
   });
   res.json(ok({ url: portal.url }));
 });

@@ -27,6 +27,8 @@ export interface AuthContext {
   userId: string;
   businessId: string;
   name: string;
+  firstName: string;
+  lastName: string;
   email: string;
   emailVerified: boolean;
 }
@@ -134,7 +136,7 @@ export async function ownerFromRequest(req: Request): Promise<AuthContext | null
   const token = cookies(req)[COOKIE_NAME];
   if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const [user] = await rows(
-    'SELECT u.id, u.business_id, u.name, u.email, u.email_verified_at FROM owner_sessions s JOIN users u ON u.id = s.user_id JOIN businesses b ON b.id=u.business_id WHERE s.token_hash = ? AND s.expires_at > UTC_TIMESTAMP(3) AND b.deletion_requested_at IS NULL LIMIT 1',
+    'SELECT u.id, u.business_id, u.name, u.first_name, u.last_name, u.email, u.email_verified_at FROM owner_sessions s JOIN users u ON u.id = s.user_id JOIN businesses b ON b.id=u.business_id WHERE s.token_hash = ? AND s.expires_at > UTC_TIMESTAMP(3) AND b.deletion_requested_at IS NULL LIMIT 1',
     [hashToken(token)],
   );
   if (!user) return null;
@@ -142,6 +144,8 @@ export async function ownerFromRequest(req: Request): Promise<AuthContext | null
     userId: user.id,
     businessId: user.business_id,
     name: user.name,
+    firstName: String(user.first_name ?? ''),
+    lastName: String(user.last_name ?? ''),
     email: user.email,
     emailVerified: Boolean(user.email_verified_at),
   };
@@ -327,6 +331,8 @@ export const login: RequestHandler = async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
+        firstName: String(user.first_name ?? ''),
+        lastName: String(user.last_name ?? ''),
         email: user.email,
         emailVerified: Boolean(user.email_verified_at),
       },
@@ -352,6 +358,8 @@ export const me: RequestHandler = async (req, res) => {
       user: {
         id: context.userId,
         name: context.name,
+        firstName: context.firstName,
+        lastName: context.lastName,
         email: context.email,
         emailVerified: context.emailVerified,
       },
