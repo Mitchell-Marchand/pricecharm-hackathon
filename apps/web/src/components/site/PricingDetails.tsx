@@ -23,21 +23,23 @@ export function PricingDetails() {
   return (
     <dl className="mt-10 grid gap-4 sm:grid-cols-2">
       <div className="rounded-md border border-line bg-surface p-5">
-        <dt className="t-label text-muted">To start</dt>
+        <dt className="t-label text-muted">To train it</dt>
         <dd className="mt-2">
-          <p className="t-h2">{pricing ? `${pricing.trialQuotes} quotes free` : '…'}</p>
+          <p className="t-h2">Free</p>
           <p className="mt-2 text-ink-2">
-            Your first quotes cost nothing, so you can see how your customers take to it.
+            {pricing && pricing.trialQuotes > 0
+              ? `Set it up, practice and try it as a customer as much as you like. Your first ${pricing.trialQuotes} customer quotes are free too.`
+              : 'Set it up, practice and try it as a customer as much as you like.'}
           </p>
         </dd>
       </div>
       <div className="rounded-md border border-line bg-surface p-5">
-        <dt className="t-label text-muted">After that</dt>
+        <dt className="t-label text-muted">Each quote</dt>
         <dd className="mt-2">
-          <p className="t-h2">{percent} of each quote</p>
+          <p className="t-h2">{percent} of the quote</p>
           <p className="mt-2 text-ink-2">
             {pricing
-              ? `At least ${money(pricing.minimumFeeCents)} and never more than ${money(pricing.maximumFeeCents)} per quote, whether the customer says yes or not.`
+              ? `At least ${money(pricing.minimumFeeCents)} and never more than ${money(pricing.maximumFeeCents)}, whether the customer says yes or not.`
               : 'Loading the current fee…'}
           </p>
         </dd>

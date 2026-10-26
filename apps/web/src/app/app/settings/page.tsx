@@ -12,6 +12,7 @@ import { logout } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import {
   deleteAccount,
+  feeText,
   loadBilling,
   loadHome,
   openBillingPortal,
@@ -70,7 +71,7 @@ export default function SettingsPage() {
       .catch((loadError) => setError(errorMessage(loadError)));
     const params = new URLSearchParams(window.location.search);
     if (params.get('billing') === 'active') {
-      notify('Billing is set up. Quotes keep going out after your free ones.');
+      notify('Billing is set up. Quotes can go out to customers now.');
       window.history.replaceState(null, '', window.location.pathname);
     }
   }, [notify]);
@@ -153,7 +154,7 @@ export default function SettingsPage() {
 
         <Section
           title="Billing"
-          intro="Your first quotes are free. After that you pay a small fee for each quote a customer receives."
+          intro="You pay a small fee for each quote a customer receives. Setup, practice and your own tests are free."
         >
           {!billing ? (
             <div className="shimmer h-32 rounded-md" />
@@ -244,25 +245,20 @@ function BillingDetails({
 }) {
   const notify = useToast();
   const active = billing.status === 'active';
-  const { trial, tariff } = billing;
-  const fee =
-    tariff.minimumFeeCents === tariff.maximumFeeCents
-      ? `${money(tariff.minimumFeeCents)} per quote`
-      : `${tariff.basisPoints / 100}% of the quote, between ${money(tariff.minimumFeeCents)} and ${money(tariff.maximumFeeCents)}`;
+  const free = billing.trial.remainingQuotes;
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-md border border-line bg-surface p-4">
-        {trial.remainingQuotes > 0 ? (
-          <p>
-            <span className="font-semibold">
-              {trial.remainingQuotes} of {trial.quoteLimit} free quotes left.
-            </span>{' '}
-            <span className="text-ink-2">They don&apos;t expire.</span>
-          </p>
-        ) : (
-          <p className="font-semibold">Your {trial.quoteLimit} free quotes are used.</p>
-        )}
-        <p className="mt-1 text-sm text-ink-2">After that: {fee}. Owner tests are always free.</p>
+        <p className="font-semibold">{active ? 'Billing is on.' : 'No payment method yet.'}</p>
+        <p className="mt-1 text-sm text-ink-2">
+          {active
+            ? 'Quotes go out to customers as soon as they’re ready.'
+            : free > 0
+              ? `Your ${free} free ${free === 1 ? 'quote goes' : 'quotes go'} out without one. After that, quotes wait for you until you add one.`
+              : 'Quotes wait for you until you add one.'}{' '}
+          You pay {feeText(billing.tariff)}, only when a customer receives it. Your own tests are
+          always free.
+        </p>
         <p className="mt-3 text-sm text-muted">
           This month: {billing.usage.billableQuotes} paid{' '}
           {billing.usage.billableQuotes === 1 ? 'quote' : 'quotes'},{' '}

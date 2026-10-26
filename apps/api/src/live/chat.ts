@@ -799,11 +799,12 @@ export async function notifyOwner(
     connection,
   );
   const [quote] = await rows(
-    'SELECT id,total_cents FROM live_quotes WHERE chat_id=?',
+    'SELECT id,total_cents,review_reason FROM live_quotes WHERE chat_id=?',
     [chatId],
     connection,
   );
   if (!owner || !chat) return;
+  const why = quote?.review_reason ? `\n\nWhy it’s waiting: ${quote.review_reason}` : '';
   const first = String(chat.customer_name).trim().split(/\s+/)[0] || 'A customer';
   const service = String(chat.service_name || '').toLowerCase();
   const total = quote ? money(Number(quote.total_cents)) : '';
@@ -811,7 +812,7 @@ export async function notifyOwner(
   const message: Record<OwnerEvent, { subject: string; text: string }> = {
     review: {
       subject: `${first} wants a ${service || 'quote'}${service ? ' quote' : ''}. It needs your OK.`,
-      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your AI drafted it, and it’s waiting for you to approve or change it:\n${link}`,
+      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your AI drafted it, and it’s waiting for you to approve or change it:\n${link}${why}`,
     },
     sent: {
       subject: `Quote sent: ${total} to ${first}`,

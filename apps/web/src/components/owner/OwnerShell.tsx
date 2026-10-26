@@ -125,6 +125,7 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
 
 function VerifyBanner({ email }: { email: string }) {
   const notify = useToast();
+  const [localLink, setLocalLink] = useState('');
   return (
     <div className="border-b border-line bg-canary-soft">
       <div className="gutter mx-auto flex max-w-6xl flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -135,18 +136,27 @@ function VerifyBanner({ email }: { email: string }) {
             needs you.
           </span>
         </p>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-3 self-start sm:ml-0 sm:self-auto"
-          onClick={() =>
-            resendVerification()
-              .then(() => notify(`Sent. Check ${email}.`))
-              .catch((sendError) => notify(errorMessage(sendError)))
-          }
-        >
-          Send the link again
-        </Button>
+        {localLink ? (
+          <a href={localLink} className="text-sm font-semibold text-accent underline">
+            Local test: confirm it now
+          </a>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-3 self-start sm:ml-0 sm:self-auto"
+            onClick={() =>
+              resendVerification()
+                .then((sent) => {
+                  if (sent.devToken) setLocalLink(`/verify-email#token=${sent.devToken}`);
+                  else notify(`Sent. Check ${email}.`);
+                })
+                .catch((sendError) => notify(errorMessage(sendError)))
+            }
+          >
+            Send the link again
+          </Button>
+        )}
       </div>
     </div>
   );

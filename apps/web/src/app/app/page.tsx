@@ -4,11 +4,20 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Check, ChevronRight, Copy, ExternalLink, Inbox } from 'lucide-react';
 import { useOwner } from '@/components/owner/OwnerShell';
+import { PaymentCard } from '@/components/owner/PaymentCard';
 import { QuoteStatusTag } from '@/components/owner/QuoteStatus';
 import { useToast } from '@/components/Toast';
 import { Button, Tag } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
-import { listQuotes, loadHome, type Home, type QuoteFilter, type QuoteListItem } from '@/lib/owner';
+import {
+  listQuotes,
+  loadBilling,
+  loadHome,
+  type Billing,
+  type Home,
+  type QuoteFilter,
+  type QuoteListItem,
+} from '@/lib/owner';
 import { cx, money, shortDate } from '@/lib/util';
 
 const FILTERS: { id: QuoteFilter; label: string }[] = [
@@ -22,6 +31,7 @@ export default function QuotesHome() {
   const { me } = useOwner();
   const notify = useToast();
   const [home, setHome] = useState<Home | null>(null);
+  const [billing, setBilling] = useState<Billing | null>(null);
   const [filter, setFilter] = useState<QuoteFilter | null>(null);
   const [quotes, setQuotes] = useState<QuoteListItem[] | null>(null);
   const [error, setError] = useState('');
@@ -34,6 +44,10 @@ export default function QuotesHome() {
         setFilter((current) => current ?? (loaded.counts.needsOk ? 'review' : 'all'));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
+    // Only to show what's stopping quotes from going out; the list works without it.
+    loadBilling()
+      .then(setBilling)
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -99,6 +113,15 @@ export default function QuotesHome() {
           </div>
         </dl>
       </div>
+
+      {billing && (
+        <PaymentCard
+          billing={billing}
+          email={me.user.email}
+          emailVerified={me.user.emailVerified}
+          className="mt-8"
+        />
+      )}
 
       <div className="mt-10 flex flex-wrap gap-1.5" role="tablist" aria-label="Show quotes">
         {FILTERS.map((item) => (

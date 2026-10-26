@@ -10,9 +10,10 @@ import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError } from '../http.js';
 
 /**
- * Billing for quotes from the new customer chat. The first `trial_quote_limit` quotes a verified
- * customer receives are free, with no time limit. After that each one has a fee, whether it went
- * out on its own or the owner approved it. Owner tests and repeat sends are never billed.
+ * Billing for quotes from the customer chat. Each quote a verified customer receives has a fee,
+ * whether it went out on its own or the owner approved it, so a payment method has to be on file
+ * first. An account can have `trial_quote_limit` free quotes before that (none by default). Owner
+ * tests and repeat sends are never billed.
  */
 const LIVE_SOURCES = "('live_auto','live_owner')";
 
@@ -47,7 +48,7 @@ export async function liveBillingAccess(
   )
     return {
       canSend: false,
-      reason: 'Your free quotes are used up. Add a payment method to send more.',
+      reason: 'Add a payment method in Settings so your quotes can go out.',
     };
   if (
     billingProvider() === 'stripe' &&

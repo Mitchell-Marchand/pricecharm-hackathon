@@ -45,7 +45,7 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 
 **Customers.** A chat token, stored only as a hash, scopes each customer to their own chat. Customers confirm their email with a six-digit code (five tries, ten minutes) before they see a price. Emailed links carry a separate token in the URL fragment. An owner chatting with their own link gets a test chat that is never emailed or billed.
 
-**Billing.** The first 10 quotes a verified customer receives are free and don't expire. After that each one has a fee, recorded once in `quote_usage` and reported to Stripe by the worker. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
+**Billing.** Each quote a verified customer receives has a fee (1% by default, at least $1 and at most $25), recorded once in `quote_usage` and reported to Stripe by the worker. Owners add a payment method before their first customer quote; until then, quotes wait for them. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
 
 ## Photos and AI allowances
 

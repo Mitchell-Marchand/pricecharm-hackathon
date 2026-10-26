@@ -41,8 +41,9 @@ export const saveShare = (patch: { website?: string; widgetStyle?: Share['widget
   api<Share>('/share', { method: 'PATCH', ...json(patch) });
 export const sendInstructions = (email: string) =>
   api('/share/instructions', { method: 'POST', ...json({ email }) });
+/** On a local run the API also returns the link's token, since no email is sent. */
 export const resendVerification = () =>
-  api('/auth/request-verification', { method: 'POST', ...json({}) });
+  api<{ devToken?: string }>('/auth/request-verification', { method: 'POST', ...json({}) });
 
 export function register(
   body: { firstName: string; lastName: string; email: string; password: string },

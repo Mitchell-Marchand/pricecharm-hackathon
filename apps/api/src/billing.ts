@@ -29,7 +29,8 @@ export function publicPricing() {
     feeBasisPoints: setting('BILLING_FEE_BASIS_POINTS', 100, 10000),
     minimumFeeCents: setting('BILLING_MINIMUM_FEE_CENTS', 100, 100000),
     maximumFeeCents: setting('BILLING_MAXIMUM_FEE_CENTS', 2500, 100000),
-    trialQuotes: setting('BILLING_TRIAL_QUOTES', 10, 100, 1),
+    // Free quotes before fees start. None by default: every quote a customer receives has a fee.
+    trialQuotes: setting('BILLING_TRIAL_QUOTES', 0, 100),
     tariffVersion: process.env.BILLING_TARIFF_VERSION || 'quote-percentage-v1',
   };
 }

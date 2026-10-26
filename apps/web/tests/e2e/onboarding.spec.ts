@@ -62,7 +62,7 @@ test('step 1 saves the trade, services and business details as you go', async ({
 
 test('the public pages render without sideways scrolling on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/', '/pricing', '/privacy', '/terms']) {
+  for (const path of ['/', '/demo', '/pricing', '/privacy', '/terms']) {
     await page.goto(path);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
@@ -71,7 +71,7 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   }
   await page.goto('/pricing');
   const pricing = (await (await page.request.get('/api/v1/pricing')).json()).data;
-  await expect(page.getByText(`${pricing.trialQuotes} quotes free`)).toBeVisible();
+  await expect(page.getByText(`${pricing.feeBasisPoints / 100}% of the quote`)).toBeVisible();
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;
   await expect(page.locator('#contact')).toContainText(site.operatorName);

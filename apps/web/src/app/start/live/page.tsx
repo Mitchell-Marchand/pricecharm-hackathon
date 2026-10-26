@@ -4,18 +4,22 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, Check, Mail, MessageSquareText, Receipt } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SetupLoading } from '@/components/SetupLoading';
+import { PaymentCard } from '@/components/owner/PaymentCard';
 import { ShareSections } from '@/components/share/ShareSections';
 import { useToast } from '@/components/Toast';
 import { Button, ButtonLink } from '@/components/ui';
 import { loadMe, loadShare, resendVerification, type Me, type Share } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
+import { loadBilling, type Billing } from '@/lib/owner';
 
 export default function LiveStep() {
   const { state } = useOnboarding();
   const notify = useToast();
   const [me, setMe] = useState<Me | null>(null);
   const [share, setShare] = useState<Share | null>(null);
+  const [billing, setBilling] = useState<Billing | null>(null);
+  const [localLink, setLocalLink] = useState('');
 
   useEffect(() => {
     loadMe()
@@ -23,6 +27,9 @@ export default function LiveStep() {
       .catch(() => {});
     loadShare()
       .then(setShare)
+      .catch(() => {});
+    loadBilling()
+      .then(setBilling)
       .catch(() => {});
   }, []);
 
@@ -46,17 +53,26 @@ export default function LiveStep() {
                 confirm your email, so we can send you every quote.
               </span>
             </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() =>
-                resendVerification()
-                  .then(() => notify(`Sent. Check ${me.user.email}.`))
-                  .catch((error) => notify(errorMessage(error)))
-              }
-            >
-              Resend
-            </Button>
+            {localLink ? (
+              <a href={localLink} className="text-sm font-semibold text-accent underline">
+                Local test: confirm it now
+              </a>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  resendVerification()
+                    .then((sent) => {
+                      if (sent.devToken) setLocalLink(`/verify-email#token=${sent.devToken}`);
+                      else notify(`Sent. Check ${me.user.email}.`);
+                    })
+                    .catch((error) => notify(errorMessage(error)))
+                }
+              >
+                Resend
+              </Button>
+            )}
           </div>
         )}
 
@@ -68,9 +84,17 @@ export default function LiveStep() {
         </p>
         <h1 className="t-hero mt-4">You&apos;re live.</h1>
         <p className="mt-5 max-w-xl text-lg text-ink-2">
-          Customers can get quotes from {business} right now. Share your link, add it to your
+          Customers can ask {business} for a quote right now. Share your link, add it to your
           website, or both.
         </p>
+        {billing && me && (
+          <PaymentCard
+            billing={billing}
+            email={me.user.email}
+            emailVerified={me.user.emailVerified}
+            className="mt-8"
+          />
+        )}
 
         <div className="mt-12">
           <ShareSections business={business} share={share} onChange={setShare} />
@@ -90,8 +114,10 @@ export default function LiveStep() {
             },
             {
               icon: Receipt,
-              title: 'Your first 10 quotes are free',
-              text: 'After that you pay a small fee per quote a customer receives.',
+              title: billing
+                ? `${billing.tariff.basisPoints / 100}% per quote`
+                : 'A small fee per quote',
+              text: 'You pay only when a customer receives a quote. Setup, practice and your own tests are free.',
             },
           ].map(({ icon: Icon, title, text }) => (
             <div key={title}>

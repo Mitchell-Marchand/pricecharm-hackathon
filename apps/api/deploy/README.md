@@ -65,7 +65,7 @@ For a deliberate rollback, select a known compatible release and restore its sym
 
 ## Product operation and launch
 
-Read [LAUNCH.md](LAUNCH.md) for the complete EC2/CloudFormation/bootstrap, DNS/TLS, environment, backup/restore and acceptance runbook. Read [COMMERCE.md](COMMERCE.md) for SES, verified contacts, Stripe meter/price/webhook setup, free quotes, spending caps and reconciliation.
+Read [LAUNCH.md](LAUNCH.md) for the complete EC2/CloudFormation/bootstrap, DNS/TLS, environment, backup/restore and acceptance runbook. Read [COMMERCE.md](COMMERCE.md) for SES, verified contacts, Stripe meter/price/webhook setup, fees, spending caps and reconciliation.
 
 The production API rejects local email and payments and demo AI. Quotes go out on their own only when the owner allows it, the customer confirmed their email, and the server's checks pass: priced from the owner's own jobs, under their limit, for a listed service, in their area, and close to similar past jobs. Everything else waits for the owner. Practice and the owner's own test chats are never billed.
 

@@ -2,8 +2,15 @@ import { expect, request, type Browser } from '@playwright/test';
 
 export const OWNER_PASSWORD = 'test password strong123';
 
-/** A signed-up business with three past driveway jobs, set up through the API. */
-export async function createBusiness(browser: Browser, baseURL: string) {
+/**
+ * A signed-up business with three past driveway jobs, set up through the API. Billing is on
+ * unless asked otherwise, done the way an owner does it: confirm the email, then add a card.
+ */
+export async function createBusiness(
+  browser: Browser,
+  baseURL: string,
+  { billing = true }: { billing?: boolean } = {},
+) {
   const context = await browser.newContext({ baseURL });
   const owner = context.request;
   const headers = { Origin: new URL(baseURL).origin };
@@ -32,6 +39,11 @@ export async function createBusiness(browser: Browser, baseURL: string) {
     email: `maya-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`,
     password: OWNER_PASSWORD,
   });
+  if (billing) {
+    const { devToken } = await send('post', '/api/v1/auth/request-verification', {});
+    await send('post', '/api/v1/auth/verify-email', { token: devToken });
+    await send('post', '/api/v1/billing/checkout', {});
+  }
   return {
     slug: String(account.business.slug),
     email: String(account.user.email),

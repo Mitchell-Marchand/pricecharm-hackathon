@@ -23,7 +23,6 @@ test('an owner signs in, edits and sends one quote, and declines another', async
   await signIn(page, shop.email);
   await expect(page).toHaveURL(/\/app$/);
   await expect(page.getByRole('heading', { name: '2 quotes need your OK.' })).toBeVisible();
-  await expect(page.getByText(/Confirm .* so we can email you/)).toBeVisible();
 
   await page.getByRole('link', { name: /Sam Kim/ }).click();
   await expect(page.getByRole('heading', { name: 'Sam Kim' })).toBeVisible();
@@ -56,14 +55,31 @@ test('an owner signs in, edits and sends one quote, and declines another', async
   await shop.context.close();
 });
 
-test('settings turn on automatic quotes and show the free quotes left', async ({
+test('an owner adds a payment method, turns on automatic quotes and signs out', async ({
   browser,
   baseURL,
 }) => {
-  const shop = await createBusiness(browser, baseURL!);
+  const shop = await createBusiness(browser, baseURL!, { billing: false });
   const page = await shop.context.newPage();
+  await page.goto('/app');
+  const payment = page.getByRole('region', { name: 'Add a payment method so quotes can go out' });
+  await expect(payment).toContainText('1% of each quote');
+  await expect(payment).toContainText('Confirm your email first.');
+  await expect(payment.getByRole('button', { name: 'Add a payment method' })).toBeDisabled();
+
+  // Locally no email is sent, so the banner offers the link itself.
+  await page.getByRole('button', { name: 'Send the link again' }).click();
+  await page.getByRole('link', { name: 'Local test: confirm it now' }).click();
+  await expect(page.getByRole('heading', { name: 'Your email is confirmed' })).toBeVisible();
+  await page.goto('/app');
+  await payment.getByRole('button', { name: 'Add a payment method' }).click();
+  await expect(page).toHaveURL(/\/app\/settings/);
+  await expect(page.getByText('Billing is on.')).toBeVisible();
+  await page.goto('/app');
+  await expect(page.getByText('Hi Maya')).toBeVisible();
+  await expect(payment).toHaveCount(0);
+
   await page.goto('/app/settings');
-  await expect(page.getByText('10 of 10 free quotes left.')).toBeVisible();
   await page.getByRole('radio', { name: 'Send them on their own' }).click();
   await expect(page.getByText('Quotes can go out on their own now.')).toBeVisible();
   await page.getByLabel('Always ask me about quotes over').fill('900');

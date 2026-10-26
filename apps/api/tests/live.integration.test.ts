@@ -103,6 +103,45 @@ test(
       return { customer, contact: contact.body.data };
     }
 
+    // 0. No payment method yet: even an automatic quote waits, and the owner is told why.
+    await rival.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ autoSend: true })
+      .expect(200);
+    const unpaid = await reachQuote(rival.slug);
+    const unpaidView = await unpaid.customer.call('post', '/verify', {
+      verificationId: unpaid.contact.verificationId,
+      code: unpaid.contact.devCode,
+    });
+    assert.equal(unpaidView.body.data.waitingForOwner, true);
+    const [unpaidQuote] = await rows('SELECT id,review_reason FROM live_quotes WHERE chat_id=?', [
+      unpaid.customer.id,
+    ]);
+    assert.match(unpaidQuote.review_reason, /Add a payment method/);
+    const [alert] = await rows('SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?', [
+      `owner-review:${unpaid.customer.id}:once`,
+    ]);
+    assert.match(decryptEmail(alert.payload_encrypted).text, /Why it’s waiting: Add a payment/);
+    const blocked = await rival.owner
+      .post(`/api/v1/app/quotes/${unpaidQuote.id}/approve`)
+      .set('Origin', origin)
+      .send({});
+    assert.equal(blocked.body.error?.code, 'BILLING_LIMIT', 'Approving needs billing too');
+
+    // The shop sets up billing the way an owner does: confirm the email, then add a card.
+    const verification = await shop.owner
+      .post('/api/v1/auth/request-verification')
+      .set('Origin', origin)
+      .send({})
+      .expect(200);
+    await shop.owner
+      .post('/api/v1/auth/verify-email')
+      .set('Origin', origin)
+      .send({ token: verification.body.data.devToken })
+      .expect(200);
+    await shop.owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+
     // 1. Automatic quotes on: the quote goes out as soon as the email is confirmed.
     await shop.owner
       .patch('/api/v1/app/settings')
@@ -136,9 +175,10 @@ test(
       { ...usage, trial_covered: Boolean(usage.trial_covered), fee_cents: Number(usage.fee_cents) },
       {
         source: 'live_auto',
-        trial_covered: true,
-        fee_cents: 0,
+        trial_covered: false,
+        fee_cents: 275,
       },
+      '1% of the $275 quote, from the first one',
     );
     const emails = await rows(
       'SELECT dedupe_key,payload_encrypted FROM email_outbox WHERE business_id=? ORDER BY created_at',

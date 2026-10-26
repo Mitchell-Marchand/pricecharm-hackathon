@@ -119,18 +119,17 @@ export function termsOfService(operator?: Operator): LegalDocument {
         body: (
           <ul>
             <li>
-              Quotefolk charges a fee for each qualifying quote it delivers. The current fee, the
-              number of free quotes and the details are on our{' '}
-              <Link href="/pricing">pricing page</Link> and in your billing settings. The fee and
-              free quotes in place when you sign up apply to your account until we change them as
-              described below.
+              Quotefolk charges a fee for each qualifying quote it delivers. The current fee and the
+              details are on our <Link href="/pricing">pricing page</Link> and in your billing
+              settings. The fee in place when you sign up applies to your account until we change it
+              as described below. Setting up, practice and your own tests are free.
             </li>
             <li>
               A quote qualifies when a customer whose email address has been verified receives it,
-              whether the assistant sent it automatically or you approved it first. Your free quotes
-              don’t expire. We don’t charge for practice, previews, your own test requests, or
-              sending the same quote again. The fee applies once a qualifying quote is delivered,
-              whether or not the customer accepts it.
+              whether the assistant sent it automatically or you approved it first. We don’t charge
+              for practice, previews, your own test requests, or sending the same quote again. The
+              fee applies once a qualifying quote is delivered, whether or not the customer accepts
+              it.
             </li>
             <li>
               You can set a monthly spending cap in billing settings. Once you reach it, no more
@@ -138,9 +137,9 @@ export function termsOfService(operator?: Operator): LegalDocument {
               you in the meantime.
             </li>
             <li>
-              After your free quotes, sending quotes needs a payment method on file. Stripe bills
-              fees monthly, and you authorize us to charge your payment method for them. Stripe’s
-              terms also apply to payments.
+              Sending quotes to customers needs a payment method on file. Until you add one, quotes
+              wait for you instead of going out. Stripe bills fees monthly, and you authorize us to
+              charge your payment method for them. Stripe’s terms also apply to payments.
             </li>
             <li>
               Fees don’t include taxes. You’re responsible for any sales, use or similar taxes on

@@ -1,5 +1,6 @@
 import { api, json } from './api';
 import type { Profile } from './account';
+import { money } from './util';
 import type { Quote } from './quote';
 
 export type QuoteStatus = 'review' | 'sent' | 'accepted' | 'visit_requested' | 'declined' | 'void';
@@ -100,3 +101,11 @@ export const openBillingPortal = () =>
 export const deleteAccount = (password: string, confirmation: string) =>
   api('/account', { method: 'DELETE', ...json({ password, confirmation }) });
 export const loadOwnerProfile = () => api<Profile>('/app/profile');
+
+/** The fee in words, from the account's own tariff: "1% of each quote, at least $1 and at most $25". */
+export function feeText(tariff: Billing['tariff']): string {
+  const percent = `${tariff.basisPoints / 100}%`;
+  if (tariff.minimumFeeCents === tariff.maximumFeeCents)
+    return `${money(tariff.minimumFeeCents)} for each quote`;
+  return `${percent} of each quote, at least ${money(tariff.minimumFeeCents)} and at most ${money(tariff.maximumFeeCents)}`;
+}
