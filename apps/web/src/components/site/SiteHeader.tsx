@@ -17,6 +17,12 @@ export function SiteHeader({ howItWorks = false }: { howItWorks?: boolean }) {
           </a>
         )}
         <Link
+          href="/demo"
+          className="hidden rounded-sm px-3 py-2 text-[15px] text-ink-2 hover:text-ink sm:inline"
+        >
+          Demo
+        </Link>
+        <Link
           href="/pricing"
           className="hidden rounded-sm px-3 py-2 text-[15px] text-ink-2 hover:text-ink sm:inline"
         >

@@ -1,58 +1,17 @@
-import {
-  ArrowRight,
-  Camera,
-  Check,
-  Hand,
-  MessageSquareText,
-  Receipt,
-  ShieldCheck,
-} from 'lucide-react';
-import { PaperButton, QuoteForm } from '@/components/QuoteForm';
+import { ArrowRight, Camera, Hand, MessageSquareText, Receipt, ShieldCheck } from 'lucide-react';
+import { DemoExplorer } from '@/components/demo/DemoExplorer';
+import { HeroQuotes } from '@/components/site/HeroQuotes';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteHeader';
-import { Avatar, ButtonLink, Chip, Tag } from '@/components/ui';
+import { TradeMarquee } from '@/components/site/TradeMarquee';
+import { buttonClass } from '@/components/button-class';
+import { Avatar, ButtonLink, Tag } from '@/components/ui';
 import { PHOTOS } from '@/lib/photos';
-import type { Quote } from '@/lib/quote';
+import { publicPricing } from '@/lib/server-api';
+import { money } from '@/lib/util';
 
-const today = new Date().toISOString();
-
-const HERO_QUOTE: Quote = {
-  number: 1038,
-  customer: 'Dana R.',
-  place: 'Eastgate',
-  lines: [
-    { id: 'h1', label: 'Patio wash, about 550 sq ft', amountCents: 28000 },
-    { id: 'h2', label: 'Stain pre-treatment', amountCents: 4500 },
-  ],
-  discount: null,
-  start: 'Next week',
-  duration: '3 hours',
-  included: [],
-  excluded: [],
-  validDays: 14,
-  note: '',
-  issuedAt: today,
-};
-
-const CUSTOMER_QUOTE: Quote = {
-  number: 1052,
-  customer: 'Sam K.',
-  place: 'Westmoreland',
-  lines: [
-    { id: 'c1', label: 'Driveway wash, about 640 sq ft', amountCents: 26000 },
-    { id: 'c2', label: 'Oil stain treatment, 2 spots', amountCents: 4000 },
-    { id: 'c3', label: 'Front walk and steps', amountCents: 6500 },
-  ],
-  discount: { kind: 'amount', value: 2500, reason: 'Booked with a neighbor' },
-  start: 'This week',
-  duration: '4 hours',
-  included: ['Hot-water surface clean', 'Rinse of nearby siding'],
-  excluded: ['Sealing', 'Crack repair'],
-  validDays: 14,
-  note: '',
-  issuedAt: today,
-};
-
-export default function LandingPage() {
+export default async function LandingPage() {
+  const pricing = await publicPricing();
+  const percent = `${pricing.feeBasisPoints / 100}%`;
   return (
     <div className="min-h-dvh">
       <SiteHeader howItWorks />
@@ -68,65 +27,28 @@ export default function LandingPage() {
               Show it a few jobs you've done. Answer a couple of practice customers. Then it quotes
               your real ones, with your prices and your questions.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
+            <div className="mt-8 flex flex-wrap items-center gap-3">
               <ButtonLink href="/start" size="lg">
                 Get started <ArrowRight aria-hidden />
               </ButtonLink>
-              <p className="text-sm text-muted">About 15 minutes · Free · No card needed</p>
+              <a href="#demo" className={buttonClass('secondary', 'lg')}>
+                Try the demo
+              </a>
             </div>
+            <p className="mt-4 text-sm text-muted">
+              About 5 minutes · Free to set up · No card to start
+            </p>
           </div>
 
-          <div className="rise relative mx-auto w-full max-w-[460px] pb-40 md:mx-0 md:justify-self-end">
-            <div className="w-[88%] rounded-md border border-line bg-surface p-4 shadow-2">
-              <div className="flex items-center gap-2.5">
-                <Avatar initials="DR" tone="canary" />
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">Dana R. · Eastgate</p>
-                  <p className="text-xs text-muted">New quote request · 2 photos</p>
-                </div>
-              </div>
-              <p className="mt-3 text-[15px] leading-[1.55]">
-                Hi! We're listing the house soon. Could you give me a price to pressure wash the
-                back patio?
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-1.5">
-                <img
-                  src={PHOTOS['patio-overview']}
-                  alt="Stained concrete patio with a flagstone inlay"
-                  className="aspect-[4/3] w-full max-w-full rounded-sm object-cover"
-                />
-                <img
-                  src={PHOTOS['patio-stains']}
-                  alt="Close-up of dark stains on the concrete"
-                  className="aspect-[4/3] w-full max-w-full rounded-sm object-cover"
-                />
-              </div>
-            </div>
-            <div className="absolute right-4 bottom-2 w-[74%] rotate-[1.5deg] sm:w-[68%]">
-              <QuoteForm
-                quote={HERO_QUOTE}
-                business="Moss & Stone Exterior Care"
-                stamp="sent"
-                compact
-              />
-            </div>
-          </div>
+          <HeroQuotes />
         </section>
 
         <section id="how" className="border-y border-line bg-surface">
           <div className="gutter mx-auto max-w-6xl py-20">
             <h2 className="t-h1 max-w-xl">Three steps. Then it's quoting.</h2>
             <ol className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
-              <li className="flex flex-col gap-5">
-                <div
-                  className="flex h-44 flex-wrap content-center gap-2 rounded-md bg-surface-2 p-5"
-                  aria-hidden
-                >
-                  <Chip selected>Pressure washing</Chip>
-                  <Chip>Window cleaning</Chip>
-                  <Chip>Lawn care</Chip>
-                  <Chip>Painting</Chip>
-                </div>
+              <li className="flex min-w-0 flex-col gap-5">
+                <TradeMarquee />
                 <div>
                   <p className="font-mono text-sm text-muted">Step 1</p>
                   <h3 className="t-h2 mt-1">Pick your trade</h3>
@@ -195,9 +117,16 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="gutter mx-auto grid max-w-6xl items-center gap-14 py-20 md:grid-cols-2">
-          <div className="max-w-md">
+        <section
+          id="demo"
+          className="gutter mx-auto grid max-w-6xl scroll-mt-6 items-start gap-14 py-20 md:grid-cols-2"
+        >
+          <div className="max-w-md md:sticky md:top-10">
             <h2 className="t-h1">Your customers get a real quote in about two minutes.</h2>
+            <p className="mt-5 text-lg text-ink-2">
+              Try it as a customer. Pick an industry, answer a few questions and see the quote they
+              get. The prices are samples; yours come from your own jobs.
+            </p>
             <ul className="mt-8 flex flex-col gap-4 text-ink-2">
               {[
                 {
@@ -215,20 +144,8 @@ export default function LandingPage() {
               ))}
             </ul>
           </div>
-          <div className="mx-auto w-full max-w-[460px] pr-3 pb-3">
-            <QuoteForm
-              quote={CUSTOMER_QUOTE}
-              business="Moss & Stone Exterior Care"
-              footnote="Estimate based on the photos and details you shared."
-              actions={
-                <>
-                  <PaperButton primary sample>
-                    <Check aria-hidden /> Accept quote
-                  </PaperButton>
-                  <PaperButton sample>Ask a question</PaperButton>
-                </>
-              }
-            />
+          <div className="mx-auto w-full max-w-[460px]">
+            <DemoExplorer />
           </div>
         </section>
 
@@ -247,8 +164,8 @@ export default function LandingPage() {
               },
               {
                 icon: Receipt,
-                title: 'Pay per quote',
-                text: 'Your first 10 quotes are free. After that you pay a small fee for each quote a customer receives.',
+                title: `${percent} per quote`,
+                text: `You pay ${percent} of each quote a customer receives, at least ${money(pricing.minimumFeeCents)} and at most ${money(pricing.maximumFeeCents)}. Setting up and practice are free.`,
               },
             ].map(({ icon: Icon, title, text }) => (
               <div key={title}>
@@ -262,7 +179,7 @@ export default function LandingPage() {
 
         <section className="bg-ink text-on-ink">
           <div className="gutter mx-auto flex max-w-6xl flex-col items-start justify-between gap-6 py-16 md:flex-row md:items-center">
-            <h2 className="t-h1 max-w-xl">Train yours in about 15 minutes.</h2>
+            <h2 className="t-h1 max-w-xl">Train yours in about 5 minutes.</h2>
             <ButtonLink href="/start" variant="quote" size="lg">
               Get started <ArrowRight aria-hidden />
             </ButtonLink>

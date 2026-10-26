@@ -24,14 +24,19 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: { default: 'Quotefolk: train an AI to quote like you', template: '%s · Quotefolk' },
   description:
-    'Teach an AI how you price your jobs in about 15 minutes. It answers your customers, asks the right questions and sends quotes the way you would.',
+    'Teach an AI how you price your jobs in about 5 minutes. It answers your customers, asks the right questions and sends quotes the way you would.',
 };
 
 export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${archivo.variable} ${publicSans.variable} ${plexMono.variable}`}>
+    // Smooth scrolling for in-page links; Next.js turns it off while changing pages.
+    <html
+      lang="en"
+      data-scroll-behavior="smooth"
+      className={`${archivo.variable} ${publicSans.variable} ${plexMono.variable}`}
+    >
       <body>{children}</body>
     </html>
   );

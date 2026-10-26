@@ -27,3 +27,32 @@ export async function publicBusiness(
     return undefined;
   }
 }
+
+export interface PublicPricing {
+  feeBasisPoints: number;
+  minimumFeeCents: number;
+  maximumFeeCents: number;
+  trialQuotes: number;
+}
+
+/** The API's defaults, shown only if it can't be reached while a page is built. */
+const DEFAULT_PRICING: PublicPricing = {
+  feeBasisPoints: 100,
+  minimumFeeCents: 100,
+  maximumFeeCents: 2500,
+  trialQuotes: 0,
+};
+
+/** The current fee, read on the server so marketing pages match what billing charges. */
+export async function publicPricing(): Promise<PublicPricing> {
+  try {
+    const response = await fetch(`${apiOrigin()}/api/v1/pricing`, {
+      next: { revalidate: 300 },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) return DEFAULT_PRICING;
+    return { ...DEFAULT_PRICING, ...((await response.json()) as { data: PublicPricing }).data };
+  } catch {
+    return DEFAULT_PRICING;
+  }
+}
