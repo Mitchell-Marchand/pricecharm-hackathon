@@ -65,8 +65,12 @@ export async function liveBillingAccess(
 
 /** What the owner's billing settings show, counted the way live quotes are billed. */
 export async function liveBillingSummary(businessId: string) {
-  const { canIssue: _old, reason: _oldReason, trial: _oldTrial, ...billing } =
-    await getBilling(businessId);
+  const {
+    canIssue: _old,
+    reason: _oldReason,
+    trial: _oldTrial,
+    ...billing
+  } = await getBilling(businessId);
   return transaction(async (connection) => {
     const account = await ensureBillingAccount(businessId, connection);
     const usage = await liveUsage(businessId, connection);

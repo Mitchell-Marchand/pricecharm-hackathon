@@ -164,6 +164,18 @@ test(
       .get(automatic.customer.base)
       .set('Authorization', `Bearer ${linkParams.get('token')}`);
     assert.equal(viaEmail.status, 200, 'The emailed link opens the quote');
+    const [autoQuote] = await rows('SELECT id FROM live_quotes WHERE chat_id=?', [
+      automatic.customer.id,
+    ]);
+    await shop.owner
+      .post(`/api/v1/app/quotes/${autoQuote.id}/messages`)
+      .set('Origin', origin)
+      .send({ text: 'Can you move the cars before we arrive?' })
+      .expect(200);
+    const afterReply = await request(app)
+      .get(automatic.customer.base)
+      .set('Authorization', `Bearer ${linkParams.get('token')}`);
+    assert.equal(afterReply.status, 200, 'A later email keeps the quote email’s link working');
     const accepted = await automatic.customer.call('post', '/accept');
     assert.equal(accepted.body.data.status, 'accepted');
     assert.equal(

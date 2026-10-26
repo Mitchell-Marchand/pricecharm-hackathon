@@ -10,6 +10,7 @@ import { mutate, rows, transaction, type Sql } from '../db.js';
 import { isDisposableEmail } from '../email-domains.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
+import { hashingSecret } from '../config.js';
 import { mailProvider, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
@@ -23,6 +24,24 @@ import { recordLiveDelivery, liveBillingAccess } from './billing.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
+
+/**
+ * The link in every email to this chat's customer, so a later email never retires the one in
+ * their quote email. Derived from the server secret, so only its hash is stored. Each email
+ * extends how long it works.
+ */
+export async function chatEmailLink(connection: Sql | undefined, slug: string, chatId: string) {
+  const secret = hashingSecret();
+  const token = secret
+    ? createHmac('sha256', secret).update(`quote-chat-email-link:${chatId}`).digest('base64url')
+    : newToken();
+  await mutate(
+    'UPDATE lead_chats SET email_token_hash=?,email_token_expires_at=? WHERE id=?',
+    [hashToken(token), new Date(Date.now() + EMAIL_LINK_DAYS * 86_400_000), chatId],
+    connection,
+  );
+  return { link: `${appOrigin()}/q/${slug}#chat=${chatId}&token=${token}`, days: EMAIL_LINK_DAYS };
+}
 const MAX_MESSAGES = 60;
 
 export function appOrigin() {
@@ -746,13 +765,7 @@ async function notifyCustomerQuote(
     connection,
   );
   if (!chat.customer_email) return;
-  const token = newToken();
-  await mutate(
-    'UPDATE lead_chats SET email_token_hash=?,email_token_expires_at=? WHERE id=?',
-    [hashToken(token), new Date(Date.now() + EMAIL_LINK_DAYS * 86_400_000), chatId],
-    connection,
-  );
-  const link = `${appOrigin()}/q/${business.slug}#chat=${chatId}&token=${token}`;
+  const { link } = await chatEmailLink(connection, String(business.slug), chatId);
   const first = String(chat.customer_name).trim().split(/\s+/)[0];
   await queueEmail(
     {

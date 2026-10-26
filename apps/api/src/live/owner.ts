@@ -7,9 +7,9 @@ import { queueEmail } from '../integrations/email.js';
 import { json } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type Quote } from '../practice/types.js';
-import { hashToken, newToken, owner } from '../auth.js';
+import { owner } from '../auth.js';
 import { liveBillingSummary } from './billing.js';
-import { appOrigin, markSent } from './chat.js';
+import { chatEmailLink, markSent } from './chat.js';
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
@@ -169,18 +169,13 @@ async function emailCustomer(businessId: string, chatId: string, subject: string
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
   const [business] = await rows('SELECT name,slug FROM businesses WHERE id=?', [businessId]);
   if (!chat?.customer_email || chat.source === 'test') return;
-  const token = newToken();
-  await mutate('UPDATE lead_chats SET email_token_hash=?,email_token_expires_at=? WHERE id=?', [
-    hashToken(token),
-    new Date(Date.now() + 30 * 86_400_000),
-    chatId,
-  ]);
+  const { link } = await chatEmailLink(undefined, String(business.slug), chatId);
   await queueEmail({
     businessId,
     dedupeKey: `owner-reply:${chatId}:${randomUUID()}`,
     to: String(chat.customer_email),
     subject: subject.replace('{business}', String(business.name)),
-    text: `${intro.replace('{business}', String(business.name))}\n${appOrigin()}/q/${business.slug}#chat=${chatId}&token=${token}`,
+    text: `${intro.replace('{business}', String(business.name))}\n${link}`,
   });
 }
 

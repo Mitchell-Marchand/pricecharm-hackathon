@@ -138,6 +138,7 @@ function VerifyBanner({ email }: { email: string }) {
         <Button
           variant="ghost"
           size="sm"
+          className="-ml-3 self-start sm:ml-0 sm:self-auto"
           onClick={() =>
             resendVerification()
               .then(() => notify(`Sent. Check ${email}.`))
