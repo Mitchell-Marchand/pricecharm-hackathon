@@ -12,7 +12,7 @@ import { putPhoto, getPhoto, deletePhoto } from './storage.js';
 
 const maxImages = 3;
 let inFlightUploads = 0;
-const uploadSlot: RequestHandler = (_req, res, next) => {
+export const uploadSlot: RequestHandler = (_req, res, next) => {
   if (inFlightUploads >= 2) {
     res.setHeader('Retry-After', '3');
     return next(
@@ -42,7 +42,7 @@ const upload = multer({
   },
 });
 const single = upload.single('file');
-const imageUpload = (
+export const imageUpload = (
   req: Request,
   res: Parameters<typeof single>[1],
   next: Parameters<typeof single>[2],
@@ -63,12 +63,18 @@ function publicAttachment(row: Record<string, any>) {
     createdAt: new Date(row.created_at).toISOString(),
   };
 }
-async function saveImage(
-  req: Request,
-  businessId: string,
-  conversationId: string | null,
-  exampleId: string | null,
-) {
+/** Where an uploaded photo belongs. Past-job photos upload first and attach when the job saves. */
+export type PhotoTarget = {
+  conversationId?: string | null;
+  exampleId?: string | null;
+  purpose?: 'past_job';
+};
+// A setup that never becomes an account shouldn't be able to fill storage.
+const DRAFT_PHOTO_LIMIT = 60;
+
+export async function saveImage(req: Request, businessId: string, target: PhotoTarget = {}) {
+  const conversationId = target.conversationId ?? null,
+    exampleId = target.exampleId ?? null;
   if (!req.file) throw new ApiError(400, 'FILE_REQUIRED', 'Choose a photo to upload.');
   const bytes = req.file.buffer;
   const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -128,6 +134,17 @@ async function saveImage(
         [businessId],
         connection,
       );
+      const [business] = await rows(
+        'SELECT status FROM businesses WHERE id = ?',
+        [businessId],
+        connection,
+      );
+      if (business?.status === 'draft' && Number(totals.count) >= DRAFT_PHOTO_LIMIT)
+        throw new ApiError(
+          413,
+          'DRAFT_PHOTO_LIMIT',
+          `You can add up to ${DRAFT_PHOTO_LIMIT} photos before you create your account.`,
+        );
       if (Number(totals.bytes) + photo.length > 100 * 1024 * 1024)
         throw new ApiError(
           413,
@@ -148,12 +165,13 @@ async function saveImage(
           );
       }
       await mutate(
-        'INSERT INTO attachments (id,business_id,conversation_id,example_id,filename,mime_type,storage_key,width,height,byte_size) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO attachments (id,business_id,conversation_id,example_id,purpose,filename,mime_type,storage_key,width,height,byte_size) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
         [
           id,
           businessId,
           conversationId,
           exampleId,
+          target.purpose ?? null,
           filename,
           'image/jpeg',
           storageKey,
@@ -215,7 +233,7 @@ export function createUploadRouter() {
         ).length
       )
         throw new ApiError(404, 'NOT_FOUND', 'Project example not found.');
-      res.status(201).json(ok(await saveImage(req, businessId, null, exampleId)));
+      res.status(201).json(ok(await saveImage(req, businessId, { exampleId })));
     },
   );
   router.get('/uploads', requireOwner, async (req, res) => {
@@ -308,7 +326,11 @@ export function createUploadRouter() {
         );
       res
         .status(201)
-        .json(ok(await saveImage(req, access.business.id, String(access.session.id), null)));
+        .json(
+          ok(
+            await saveImage(req, access.business.id, { conversationId: String(access.session.id) }),
+          ),
+        );
     },
   );
   router.get('/public/:slug/sessions/:id/uploads', async (req, res) => {

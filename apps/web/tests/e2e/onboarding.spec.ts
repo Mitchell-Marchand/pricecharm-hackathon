@@ -1,4 +1,16 @@
-import { expect, test } from '@playwright/test';
+import path from 'node:path';
+import { expect, test, type Page } from '@playwright/test';
+
+const photo = path.resolve('public/photos/patio-overview.jpg');
+
+async function finishStepOne(page: Page, name: string) {
+  await page.goto('/start');
+  await expect(page).toHaveURL(/\/start\/business$/);
+  await page.getByRole('radio', { name: 'Pressure washing' }).click();
+  await page.getByLabel('Business name').fill(name);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/jobs$/);
+}
 
 test('the landing page leads into setup', async ({ page }) => {
   await page.goto('/');
@@ -63,4 +75,62 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;
   await expect(page.locator('#contact')).toContainText(site.operatorName);
+});
+
+test('step 2 saves past jobs with photos, and edits and removes them', async ({ page }) => {
+  await finishStepOne(page, 'Moss & Stone Exterior Care');
+  const next = page.getByRole('button', { name: 'Continue' });
+  await expect(next).toBeDisabled();
+  await page.getByRole('button', { name: 'Add a job' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Add a job' });
+  await sheet.locator('input[type=file]').setInputFiles(photo);
+  await expect(sheet.getByRole('img', { name: 'Job photo 1' })).toBeVisible();
+  await sheet.getByRole('button', { name: 'Patios & pavers' }).click();
+  await sheet.getByLabel('What was the job?').fill('Back patio and walkway, about 600 sq ft.');
+  await sheet.getByLabel('What did you charge?').fill('275');
+  await sheet.getByRole('button', { name: 'More details' }).click();
+  await sheet.getByLabel('How big was it?').fill('600 sq ft');
+  await sheet.getByLabel('Discount amount').fill('25');
+  await sheet.getByPlaceholder('Why? For example: repeat customer').fill('Repeat customer');
+  await sheet.getByRole('button', { name: 'Save job' }).click();
+  await expect(sheet).toBeHidden();
+
+  const card = page.getByRole('listitem').filter({ hasText: 'Back patio and walkway' });
+  await expect(card).toContainText('$275');
+  await expect(card).toContainText('Patios & pavers · 600 sq ft');
+  await expect(card).toContainText('$25 off, repeat customer');
+  await expect(card.locator('img')).toBeVisible();
+  await expect(next).toBeEnabled();
+
+  await page.reload();
+  await card.getByRole('button', { name: 'Edit' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit job' });
+  await edit.getByLabel('What did you charge?').fill('290');
+  await edit.getByRole('button', { name: 'Remove photo 1' }).click();
+  await edit.getByRole('button', { name: 'Save job' }).click();
+  await expect(card).toContainText('$290');
+  await expect(card).toContainText('No photos');
+
+  await card.getByRole('button', { name: 'Remove' }).click();
+  await expect(page.getByText('Start with a job you remember well')).toBeVisible();
+});
+
+test('an uploaded invoice fills in a job for the owner to check', async ({ page }) => {
+  await finishStepOne(page, 'Driveway Pros');
+  await page.getByRole('button', { name: 'Upload an old quote or invoice' }).click();
+  await page
+    .getByRole('dialog', { name: 'Upload a quote or invoice' })
+    .locator('input[type=file]')
+    .setInputFiles({
+      name: 'invoice-1187.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 fixture'),
+    });
+  const check = page.getByRole('dialog', { name: 'Check this job' });
+  await expect(check).toContainText('We filled this in from invoice-1187.pdf');
+  await expect(check.getByLabel('What did you charge?')).toHaveValue('320');
+  await check.getByRole('button', { name: 'Save job' }).click();
+  await expect(page.getByRole('listitem').filter({ hasText: 'Driveway wash' })).toContainText(
+    '$20 off, repeat customer',
+  );
 });

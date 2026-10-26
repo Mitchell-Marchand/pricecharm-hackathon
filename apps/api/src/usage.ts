@@ -254,6 +254,40 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         'AI_APP_BUDGET',
         'AI conversations are at capacity today. Please try again later.',
       );
+    // A setup that hasn't become an account yet draws on a smaller pool, with a lifetime cap.
+    const [business] = await rows(
+      'SELECT status FROM businesses WHERE id = ?',
+      [businessId],
+      connection,
+    );
+    const draft = business?.status === 'draft';
+    if (draft) {
+      const [draftBudget] = await rows(
+        'SELECT draft_reserved FROM ai_daily_budgets WHERE budget_day = UTC_DATE()',
+        [],
+        connection,
+      );
+      if (
+        Number(draftBudget.draft_reserved) >=
+        Math.min(dailyLimit('AI_DAILY_DRAFT_APP_LIMIT', 400), appLimit)
+      )
+        throw new ApiError(
+          429,
+          'SETUP_AI_CAPACITY',
+          'Setup is busy right now. Your progress is saved, so please try again in a little while.',
+        );
+      const [used] = await rows(
+        "SELECT COUNT(*) AS count FROM usage_events WHERE business_id = ? AND kind = 'ai_reservation'",
+        [businessId],
+        connection,
+      );
+      if (Number(used.count) >= dailyLimit('AI_DRAFT_LIFETIME_LIMIT', 150))
+        throw new ApiError(
+          429,
+          'SETUP_AI_LIMIT',
+          'This setup has used its AI allowance. Create your account to keep going.',
+        );
+    }
     const [tenant] = await rows(
       "SELECT COUNT(*) AS count FROM usage_events WHERE business_id = ? AND kind = 'ai_reservation' AND created_at >= UTC_DATE()",
       [businessId],
@@ -266,7 +300,7 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         'This workspace reached its daily AI conversation allowance. You can still review requests and manage pricing.',
       );
     await mutate(
-      'UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1 WHERE budget_day = UTC_DATE()',
+      `UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1${draft ? ', draft_reserved = draft_reserved + 1' : ''} WHERE budget_day = UTC_DATE()`,
       [],
       connection,
     );
