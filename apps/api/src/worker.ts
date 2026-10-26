@@ -17,6 +17,7 @@ import {
 import { deliverEmail, validateEmailConfiguration } from './integrations/email.js';
 import { json } from './models.js';
 import { processTrainingPhotos } from './training-photos.js';
+import { flushErrorReports, reportError, startErrorReporting } from './error-reporting.js';
 
 type Job = RowDataPacket & {
   id: string;
@@ -207,6 +208,7 @@ export async function runOneJob(jobId?: string): Promise<boolean> {
         code: (error as { code?: string }).code || 'PROCESSING_FAILED',
       }),
     );
+    reportError(error, { jobType: String(job.type), jobId: String(job.id) });
     const delay = Math.min(300, 10 * 2 ** (job.attempts - 1));
     await mutate(
       `UPDATE jobs SET status=IF(attempts>=max_attempts,'failed','pending'),available_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? SECOND),locked_at=NULL,locked_by=NULL,
@@ -241,24 +243,33 @@ export async function startWorker(): Promise<void> {
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
   console.info(JSON.stringify({ event: 'worker_started', workerId }));
+  let unavailable = false;
   while (!stopping) {
     try {
       await scheduleMaintenance();
       if (!(await runOneJob())) await pause(2000);
-    } catch {
+      unavailable = false;
+    } catch (error) {
       console.error(JSON.stringify({ event: 'worker_database_unavailable' }));
+      // Once per outage, not every two seconds while it lasts.
+      if (!unavailable) reportError(error, { event: 'worker_database_unavailable' });
+      unavailable = true;
       await pause(2000);
     }
   }
   await closeDatabase();
+  await flushErrorReports();
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startErrorReporting('worker');
   startWorker().catch(async (error: unknown) => {
     console.error(
       'Worker startup failed. Check configuration and database availability.',
       error instanceof Error ? error.message : '',
     );
+    reportError(error, { event: 'worker_startup_failed' });
     await closeDatabase();
+    await flushErrorReports();
     process.exitCode = 1;
   });
 }

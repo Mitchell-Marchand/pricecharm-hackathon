@@ -34,9 +34,16 @@ Practice photos always use OpenAI, so production needs an OpenAI key even when c
 
 ## Spending controls in the app
 
-The provider cap is the hard backstop. The API also has its own daily limits:
+The provider cap is the hard backstop. The API also counts AI calls per UTC day, in four pools:
 
-- `AI_DAILY_APP_LIMIT` and `AI_DAILY_BUSINESS_LIMIT`
-- `GUEST_PREVIEW_DAILY_APP_LIMIT` and `GUEST_PREVIEW_DAILY_IP_LIMIT`
+| Setting | Default | Covers |
+| --- | --- | --- |
+| `AI_DAILY_APP_LIMIT` | 1000 | Every AI call |
+| `AI_DAILY_BUSINESS_LIMIT` | 100 | One business's own work: training, setup, imports, private tests |
+| `AI_DAILY_CUSTOMER_APP_LIMIT` | 600 | Customer chat on every business's link, together |
+| `AI_DAILY_BUSINESS_CUSTOMER_LIMIT` | 200 | Customer chat on one business's link |
+| `AI_DAILY_CUSTOMER_IP_LIMIT` | 60 | Customer chat from one address, across all businesses |
 
-The security review found that one anonymous visitor can use up the shared daily pool. Splitting budgets by visitor type and weighting them by tokens is phase 2 work.
+Customer chat can't touch an owner's allowance, and customers together can't use more than their pool, so owners always have the rest of the app limit for training. The landing-page preview has its own limits, `GUEST_PREVIEW_DAILY_APP_LIMIT` and `GUEST_PREVIEW_DAILY_IP_LIMIT`. Signup, the preview and new customer chats also need a Turnstile check on staging and production.
+
+The pools count calls, not tokens, so a chat with several photos costs more than its count suggests. Set the provider cap with that in mind.

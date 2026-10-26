@@ -49,6 +49,8 @@ The API refuses to start a staging or production server with settings that are o
 - an unencrypted connection to a remote database
 - email codes in API responses
 - a test Stripe key in production, or a live one in staging
+- no Turnstile secret, or Cloudflare's test secret in production
+- no `SENTRY_DSN` in production
 
 Production uses its own RDS database, with a rows-only app user and a separate migration user ([database guide](docs/ops/database.md)).
 

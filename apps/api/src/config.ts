@@ -65,6 +65,17 @@ export function isDeployed(): boolean {
 }
 
 /**
+ * A stable server secret for keyed hashes of addresses and browsers: MAIL_ENCRYPTION_KEY, which
+ * every deployed server has, or the database password on a laptop.
+ */
+export function hashingSecret(): string | undefined {
+  return (
+    process.env.MAIL_ENCRYPTION_KEY ||
+    (process.env.NODE_ENV !== 'production' && !isDeployed() ? process.env.DB_PASS : undefined)
+  );
+}
+
+/**
  * Local runs and tests can return email codes and links in API responses, so flows work without
  * an inbox. That needs EXPOSE_DEV_TOKENS=1, a local deployment and a request from this machine.
  */
@@ -91,8 +102,21 @@ export function validateRuntimeConfiguration(): void {
   if (process.env.EXPOSE_DEV_TOKENS === '1') {
     problems.push('Remove EXPOSE_DEV_TOKENS. It is only for local development and tests.');
   }
-  for (const name of ['AI_PROVIDER', 'MAIL_PROVIDER', 'BILLING_PROVIDER', 'TRUST_PROXY']) {
+  for (const name of [
+    'AI_PROVIDER',
+    'MAIL_PROVIDER',
+    'BILLING_PROVIDER',
+    'TRUST_PROXY',
+    'TURNSTILE_SECRET_KEY',
+  ]) {
     if (!process.env[name]?.trim()) problems.push(`Set ${name} explicitly.`);
+  }
+  // Cloudflare's published test secrets pass or fail every check, so they're only for staging.
+  if (env === 'production' && /^[123]x0{20}/.test(process.env.TURNSTILE_SECRET_KEY || '')) {
+    problems.push('Production needs a real Turnstile secret, not one of Cloudflare’s test keys.');
+  }
+  if (env === 'production' && !process.env.SENTRY_DSN?.trim()) {
+    problems.push('Set SENTRY_DSN so production errors are reported.');
   }
   if (process.env.TRUST_PROXY && !['0', '1'].includes(process.env.TRUST_PROXY)) {
     problems.push('TRUST_PROXY must be 0 (no proxy) or 1 (exactly one proxy, such as Nginx).');

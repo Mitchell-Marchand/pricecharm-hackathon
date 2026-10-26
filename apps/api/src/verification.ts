@@ -2,10 +2,11 @@ import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { devTokensAllowed } from './config.js';
-import { hashPassword, hashToken, newToken, owner } from './auth.js';
+import { hashPassword, hashToken, loginFailureKeys, newToken, owner } from './auth.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
+import { isDisposableEmail } from './email-domains.js';
 
 const emailSchema = z
   .email()
@@ -56,6 +57,32 @@ export async function consumeAuthRateLimit(
       'IDENTITY_RATE_LIMIT',
       'Too many attempts. Please wait before trying again.',
     );
+}
+
+/** Whether a bucket is already full, without counting this attempt. */
+export async function authRateLimitReached(
+  key: string,
+  maximum: number,
+  windowMs: number,
+): Promise<boolean> {
+  const [row] = await rows(
+    'SELECT attempts,window_started_at FROM auth_rate_limits WHERE bucket_key=?',
+    [hashToken(key)],
+  );
+  return (
+    !!row &&
+    new Date(row.window_started_at).getTime() + windowMs > Date.now() &&
+    Number(row.attempts) >= maximum
+  );
+}
+
+export async function clearAuthRateLimits(keys: string[], connection?: Sql): Promise<void> {
+  if (!keys.length) return;
+  await mutate(
+    `DELETE FROM auth_rate_limits WHERE bucket_key IN (${keys.map(() => '?').join(',')})`,
+    keys.map(hashToken),
+    connection,
+  );
 }
 
 export async function createOwnerToken(
@@ -237,6 +264,9 @@ export const resetPassword: RequestHandler = async (req, res) => {
   await consumeOwnerToken(token, 'reset_password', async (userId, connection) => {
     await mutate('UPDATE users SET password_hash=? WHERE id=?', [passwordHash, userId], connection);
     await mutate('DELETE FROM owner_sessions WHERE user_id=?', [userId], connection);
+    // A new password ends any lock that wrong guesses put on the account.
+    const [user] = await rows('SELECT email FROM users WHERE id=?', [userId], connection);
+    if (user) await clearAuthRateLimits(loginFailureKeys(user.email), connection);
   });
   res.json(ok({ ok: true }));
 };
@@ -251,6 +281,12 @@ export async function requestContactVerification(input: {
 }): Promise<{ verificationId: string; delivery: 'email' | 'local'; devCode?: string }> {
   const email = emailSchema.parse(input.email),
     verificationId = randomUUID();
+  if (isDisposableEmail(email))
+    throw new ApiError(
+      422,
+      'DISPOSABLE_EMAIL',
+      'Please use an email address you’ll keep. Your quote will be sent there.',
+    );
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   if (input.ip) await consumeAuthRateLimit(`contact-ip:${input.ip}`, 20, 3600_000);
   await transaction(async (connection) => {

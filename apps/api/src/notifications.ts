@@ -45,6 +45,32 @@ export async function queueQuoteNotification(
       );
     return;
   }
+  // The owner hears about every quote that went out without them, so a burst of fake requests
+  // (each one a fee) can't run up their bill unnoticed.
+  if (event === 'issued' && item.issued_by === 'automatic') {
+    const [user] = await rows(
+      'SELECT email FROM users WHERE business_id=? AND email_verified_at IS NOT NULL ORDER BY created_at LIMIT 1',
+      [businessId],
+      connection,
+    );
+    const total = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: item.currency,
+    }).format(Number(item.total_cents) / 100);
+    const customer = String(item.customer_name || '').trim() || 'a customer';
+    const support = process.env.SUPPORT_EMAIL?.trim();
+    if (user)
+      await queueEmail(
+        {
+          businessId,
+          dedupeKey: `quote:${quoteId}:owner-issued`,
+          to: user.email,
+          subject: `Quote sent: ${total} to ${customer}`,
+          text: `Your assistant sent ${customer} (${item.customer_email}) a quote for ${total}.\n\nSee the quote and the conversation:\n${origin}/dashboard/quotes?quote=${encodeURIComponent(quoteId)}${support ? `\n\nDoesn’t look like a real customer? Email ${support} and we’ll look into it.` : ''}`,
+        },
+        connection,
+      );
+  }
   // Send private quote content only to the contact verified for this exact inquiry.
   if (
     !item.contact_verified_at ||

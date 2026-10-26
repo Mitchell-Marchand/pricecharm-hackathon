@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage, json } from '@/lib/api';
+import { useHumanCheck } from '@/lib/human-check';
 import {
   approveGuestPreview,
   claimGuestPreview,
@@ -36,6 +37,7 @@ export default function AuthForm({ register = false }: { register?: boolean }) {
   const [approval, setApproval] = useState<GuestApproval | null>(null);
   const [requestIntent, setRequestIntent] = useState<OwnerRequestIntent | null>(null);
   const [registerBusinessName, setRegisterBusinessName] = useState<string | null>(null);
+  const human = useHumanCheck('signup', register);
 
   useEffect(() => {
     let active = true;
@@ -128,6 +130,7 @@ export default function AuthForm({ register = false }: { register?: boolean }) {
       }
       await api('/auth/' + (register ? 'register' : 'login'), {
         method: 'POST',
+        headers: register ? await human.headers() : undefined,
         ...json({
           ...(register ? { businessName, name: businessName } : {}),
           email: String(form.get('email') || '').trim(),
@@ -307,6 +310,7 @@ export default function AuthForm({ register = false }: { register?: boolean }) {
                     : 'Sign in'}
               </Button>
             )}
+            {register && !signedIn && <div ref={human.slot} className="human-check" />}
             {claimIntent && preview && (
               <p className="account-claim-note">
                 Saves the questions you reviewed. You set the final price.

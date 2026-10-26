@@ -34,7 +34,7 @@ import {
   type Row,
 } from './models.js';
 import { aiMode, aiProvider, analyzeInquiry, type InquiryAnalysis } from './ai/index.js';
-import { withAiUsage } from './usage.js';
+import { withAiUsage, withCustomerAiUsage } from './usage.js';
 import { loadConversationImages } from './uploads.js';
 import {
   requestContactVerification,
@@ -45,6 +45,7 @@ import { assertBillingAccess } from './billing.js';
 import { recordQuoteDelivery } from './integrations/billing.js';
 import { queueQuoteNotification } from './notifications.js';
 import { mapQuoteWithSubmittedIntake } from './quote-intake.js';
+import { requireHuman } from './human-check.js';
 
 const slugSchema = z.string().regex(/^[a-z0-9-]{1,180}$/);
 type StoredAnalysis = InquiryAssessment & {
@@ -60,6 +61,23 @@ async function publicBusiness(slug: unknown, connection?: Sql) {
   );
   if (!row) throw new ApiError(404, 'BUSINESS_NOT_FOUND', 'This quote page is unavailable.');
   return mapBusiness(row);
+}
+/** An owner's private test counts against the owner's allowance; a real customer has their own. */
+function withChatAiUsage<T>(
+  req: Request,
+  access: { business: Business; session: Row },
+  task: () => Promise<T>,
+): Promise<T> {
+  return access.session.source === 'playground'
+    ? withAiUsage(access.business.id, access.session.id, task)
+    : withCustomerAiUsage(
+        {
+          businessId: access.business.id,
+          sessionId: access.session.id,
+          ip: req.ip || req.socket.remoteAddress || 'unknown',
+        },
+        task,
+      );
 }
 export async function publicAccess(req: Request, connection?: Sql, lock = false) {
   let business = await publicBusiness(req.params.slug, connection);
@@ -229,49 +247,54 @@ publicRouter.get('/:slug', async (req, res) => {
     }),
   );
 });
-publicRouter.post('/:slug/sessions', rateLimit(20, 60_000), async (req, res) => {
-  const business = await publicBusiness(req.params.slug),
-    { serviceId } = z.object({ serviceId: idSchema }).strict().parse(req.body);
-  const token = newToken(),
-    id = randomUUID();
-  const service = await transaction(async (connection) => {
-    await rows('SELECT id FROM businesses WHERE id = ? FOR UPDATE', [business.id], connection);
-    const service = await serviceById(business.id, serviceId, connection, true);
-    if (!service.publishedAt)
-      throw new ApiError(
-        404,
-        'SERVICE_UNAVAILABLE',
-        'This service is not accepting quote requests.',
+publicRouter.post(
+  '/:slug/sessions',
+  rateLimit(20, 60_000),
+  requireHuman('quote_chat'),
+  async (req, res) => {
+    const business = await publicBusiness(req.params.slug),
+      { serviceId } = z.object({ serviceId: idSchema }).strict().parse(req.body);
+    const token = newToken(),
+      id = randomUUID();
+    const service = await transaction(async (connection) => {
+      await rows('SELECT id FROM businesses WHERE id = ? FOR UPDATE', [business.id], connection);
+      const service = await serviceById(business.id, serviceId, connection, true);
+      if (!service.publishedAt)
+        throw new ApiError(
+          404,
+          'SERVICE_UNAVAILABLE',
+          'This service is not accepting quote requests.',
+        );
+      await mutate(
+        'INSERT INTO public_sessions (id,business_id,service_id,service_version,token_hash,expires_at,facts_json) VALUES (?,?,?,?,?,?,?)',
+        [
+          id,
+          business.id,
+          serviceId,
+          service.version,
+          hashToken(token),
+          new Date(Date.now() + 7 * 24 * 60 * 60_000),
+          '{}',
+        ],
+        connection,
       );
-    await mutate(
-      'INSERT INTO public_sessions (id,business_id,service_id,service_version,token_hash,expires_at,facts_json) VALUES (?,?,?,?,?,?,?)',
-      [
-        id,
+      await addMessage(
         business.id,
-        serviceId,
-        service.version,
-        hashToken(token),
-        new Date(Date.now() + 7 * 24 * 60 * 60_000),
-        '{}',
-      ],
-      connection,
-    );
-    await addMessage(
+        id,
+        'public',
+        'assistant',
+        `${aiMode === 'demo' ? '[Demo assistant] ' : ''}Tell us about your ${service.name.toLowerCase()} project. ${service.mode === 'review' ? 'The business owner will review the details and prepare your quote.' : 'We’ll ask for the details needed to prepare your quote.'}`,
+        connection,
+      );
+      return service;
+    });
+    const [session] = await rows('SELECT * FROM public_sessions WHERE business_id = ? AND id = ?', [
       business.id,
       id,
-      'public',
-      'assistant',
-      `${aiMode === 'demo' ? '[Demo assistant] ' : ''}Tell us about your ${service.name.toLowerCase()} project. ${service.mode === 'review' ? 'The business owner will review the details and prepare your quote.' : 'We’ll ask for the details needed to prepare your quote.'}`,
-      connection,
-    );
-    return service;
-  });
-  const [session] = await rows('SELECT * FROM public_sessions WHERE business_id = ? AND id = ?', [
-    business.id,
-    id,
-  ]);
-  res.status(201).json(ok({ token, session: await sessionResponse(business, service, session) }));
-});
+    ]);
+    res.status(201).json(ok({ token, session: await sessionResponse(business, service, session) }));
+  },
+);
 publicRouter.get('/:slug/sessions/:id', async (req, res) => {
   const access = await publicAccess(req);
   res.json(ok(await sessionResponse(access.business, access.service, access.session)));
@@ -359,7 +382,7 @@ publicRouter.post('/:slug/sessions/:id/messages', rateLimit(40, 60_000), async (
   let analysis: InquiryAnalysis | undefined;
   if (access.session.status === 'active' && !access.session.human_handoff) {
     const images = await loadConversationImages(access.business.id, access.session.id);
-    analysis = await withAiUsage(access.business.id, access.session.id, () =>
+    analysis = await withChatAiUsage(req, access, () =>
       analyzeInquiry({
         business: access.business,
         service: {
@@ -506,7 +529,7 @@ publicRouter.post('/:slug/sessions/:id/quote', async (req, res) => {
       try {
         const images = await loadConversationImages(initial.business.id, initial.session.id);
         const messages = await getMessages(initial.business.id, initial.session.id, 'public');
-        const analysis = await withAiUsage(initial.business.id, initial.session.id, () =>
+        const analysis = await withChatAiUsage(req, initial, () =>
           analyzeInquiry({
             business: initial.business,
             service: {

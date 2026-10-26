@@ -11,6 +11,7 @@ import { reserveGuestAiCall, withGuestAiUsage } from './usage.js';
 import { generateGuestPreview, guestPreviewResultSchema } from './guest-preview-ai.js';
 import { businessNameSuggestion } from './business-intro.js';
 import { confirmSetupSession } from './service-setup.js';
+import { verifyHuman } from './human-check.js';
 
 const COOKIE = 'quotient_guest_preview',
   EXPIRY_MS = 30 * 60_000;
@@ -162,6 +163,15 @@ guestPreviewRouter.post('/guest-preview', rateLimit(12, 60_000), async (req, res
     .parse(req.body);
   const inputHash = hashToken(input.content),
     processingToken = randomUUID();
+  // Retries of an attempt reuse its preview; only a new attempt needs a fresh check.
+  const session = await proofSession(req);
+  const [attempt] = session
+    ? await rows('SELECT id FROM guest_previews WHERE session_id=? AND request_id=?', [
+        session.id,
+        input.requestId,
+      ])
+    : [];
+  if (session && !attempt) await verifyHuman(req, 'guest_preview');
   const reserved = await transaction(async (connection) => {
     const session = await proofSession(req, connection, true);
     if (!session)

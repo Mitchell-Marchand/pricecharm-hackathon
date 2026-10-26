@@ -334,6 +334,14 @@ test(
         [businessId!, `quote:${issued.id}:issued`],
       );
       assert.ok(email, 'Issued quote notification must be durable in the same transaction');
+      const [ownerEmail] = await rows(
+        'SELECT payload_encrypted FROM email_outbox WHERE business_id = ? AND dedupe_key = ?',
+        [businessId!, `quote:${issued.id}:owner-issued`],
+      );
+      assert.ok(ownerEmail, 'The owner hears about every automatic quote');
+      const ownerNotice = decryptEmail(ownerEmail.payload_encrypted);
+      assert.match(ownerNotice.subject, /^Quote sent: \$145\.00 to /);
+      assert.ok(ownerNotice.text.includes(`/dashboard/quotes?quote=${issued.id}`));
       const emailText = decryptEmail(email.payload_encrypted).text,
         resumeUrl = new URL(emailText.match(/https?:\/\/\S+/)![0]);
       const resumeParameters = resumeUrl.hash

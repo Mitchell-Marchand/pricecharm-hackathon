@@ -7360,3 +7360,9 @@ td > .icon-button {
     gap: 7px;
   }
 }
+
+/* Cloudflare Turnstile. It takes no space unless Cloudflare asks the visitor to tick a box. */
+.human-check {
+  display: flex;
+  justify-content: center;
+}

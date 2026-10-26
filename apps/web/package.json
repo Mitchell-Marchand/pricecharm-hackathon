@@ -12,6 +12,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/embed.js \"deploy/*.cjs\""
   },
   "dependencies": {
+    "@sentry/nextjs": "11.6.0",
     "lucide-react": "^0.577.0",
     "next": "^16.3.1",
     "react": "^19.2.3",

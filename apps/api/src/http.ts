@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { ZodError } from 'zod';
 import { AiError } from './ai/index.js';
+import { reportError } from './error-reporting.js';
 
 export class ApiError extends Error {
   constructor(
@@ -84,6 +85,7 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
       code: error?.code || error?.name || 'unknown',
     }),
   );
+  reportError(error, { requestId: String(res.locals.requestId || '') });
   res.status(500).json({
     error: {
       code: 'INTERNAL_ERROR',

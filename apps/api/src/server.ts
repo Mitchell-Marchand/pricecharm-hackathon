@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { createApp } from './app.js';
 import { closeDatabase } from './db.js';
+import { flushErrorReports, startErrorReporting } from './error-reporting.js';
+
+startErrorReporting('api');
 
 const port = Number(process.env.PORT || 4100);
 const host = process.env.HOST || '127.0.0.1';
@@ -21,6 +24,7 @@ async function shutdown() {
   server.close(async () => {
     clearTimeout(deadline);
     await closeDatabase();
+    await flushErrorReports();
     process.exit(0);
   });
   server.closeIdleConnections();

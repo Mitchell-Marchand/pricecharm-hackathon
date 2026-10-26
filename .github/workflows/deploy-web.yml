@@ -31,9 +31,20 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run format:check --workspace @quotefolk/web
       - run: npm run typecheck --workspace @quotefolk/web
+      - name: Require the public keys a deployable build needs
+        if: github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
+        env:
+          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+        run: |
+          # The deployed API rejects signups and new customer chats without a Turnstile token.
+          test -n "$TURNSTILE_SITE_KEY" || { echo "Set the TURNSTILE_SITE_KEY repository variable."; exit 1; }
       - run: npm run build --workspace @quotefolk/web
         env:
           API_BASE_URL: http://127.0.0.1:4100
+          # Both are public by design; they ship in the browser bundle.
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.SENTRY_WEB_DSN }}
+          NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
       - name: Package an immutable release
         # Standalone output mirrors the monorepo, so the server lives at apps/web/server.js inside it.
         run: |

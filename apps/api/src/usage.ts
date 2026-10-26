@@ -1,7 +1,7 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import type { PoolConnection } from 'mysql2/promise';
-import { isDeployed } from './config.js';
+import { hashingSecret } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { runWithAiUsage, aiMode, type AiUsage } from './ai/index.js';
 import { ApiError } from './http.js';
@@ -14,25 +14,35 @@ function dailyLimit(key: string, fallback: number) {
 }
 
 /** The database stores a daily keyed fingerprint, never a visitor's address. */
+function ipFingerprint(scope: string, ip: string, day: string): string | undefined {
+  const key = hashingSecret();
+  if (!key) return undefined;
+  const context = createHmac('sha256', key).update(`quotient-${scope}-ip-v1`).digest();
+  const address = ip
+    .trim()
+    .toLowerCase()
+    .replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, '$1');
+  return createHmac('sha256', context)
+    .update(`${day}:${isIP(address) ? address : 'unavailable'}`)
+    .digest('hex');
+}
+
 export function guestIpBudgetKey(ip: string, day: string): string {
-  const key =
-    process.env.MAIL_ENCRYPTION_KEY ||
-    (process.env.NODE_ENV !== 'production' && !isDeployed() ? process.env.DB_PASS : undefined);
-  if (!key)
+  const fingerprint = ipFingerprint('guest-preview', ip, day);
+  if (!fingerprint)
     throw new ApiError(
       503,
       'GUEST_PREVIEW_UNAVAILABLE',
       'Free previews are unavailable right now.',
     );
-  const context = createHmac('sha256', key).update('quotient-guest-preview-ip-v1').digest();
-  const address = ip
-    .trim()
-    .toLowerCase()
-    .replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/, '$1');
-  const fingerprint = createHmac('sha256', context)
-    .update(`${day}:${isIP(address) ? address : 'unavailable'}`)
-    .digest('hex');
   return `guest-preview:${day}:${fingerprint}`;
+}
+
+export function customerIpBudgetKey(ip: string, day: string): string {
+  const fingerprint = ipFingerprint('customer-chat', ip, day);
+  if (!fingerprint)
+    throw new ApiError(503, 'CUSTOMER_CHAT_UNAVAILABLE', 'Quote chat is unavailable right now.');
+  return `customer-chat:${day}:${fingerprint}`;
 }
 
 /** Caller inserts/locks the preview in this transaction, then commits before any provider call. */
@@ -126,26 +136,44 @@ export async function withGuestAiUsage<T>(
   );
 }
 
+function recordBusinessAiUsage<T>(
+  businessId: string,
+  conversationId: string | undefined,
+  task: () => Promise<T>,
+): Promise<T> {
+  return runWithAiUsage(
+    {
+      businessId,
+      conversationId,
+      record: async (usage: AiUsage) => {
+        await mutate(
+          'INSERT INTO usage_events (id, business_id, kind, metadata_json) VALUES (?, ?, ?, ?)',
+          [randomUUID(), businessId, 'ai_call', JSON.stringify({ ...usage, conversationId })],
+        );
+      },
+    },
+    task,
+  );
+}
+
+/** Owner work: training, setup, imports, private tests. */
 export function withAiUsage<T>(
   businessId: string,
   conversationId: string | undefined,
   task: () => Promise<T>,
 ): Promise<T> {
   return (aiMode === 'demo' ? Promise.resolve() : reserveAiCall(businessId, conversationId)).then(
-    () =>
-      runWithAiUsage(
-        {
-          businessId,
-          conversationId,
-          record: async (usage: AiUsage) => {
-            await mutate(
-              'INSERT INTO usage_events (id, business_id, kind, metadata_json) VALUES (?, ?, ?, ?)',
-              [randomUUID(), businessId, 'ai_call', JSON.stringify({ ...usage, conversationId })],
-            );
-          },
-        },
-        task,
-      ),
+    () => recordBusinessAiUsage(businessId, conversationId, task),
+  );
+}
+
+/** Customer chat on a public link. It has allowances of its own, so it can't use up the owner's. */
+export function withCustomerAiUsage<T>(
+  input: { businessId: string; sessionId: string; ip: string },
+  task: () => Promise<T>,
+): Promise<T> {
+  return (aiMode === 'demo' ? Promise.resolve() : reserveCustomerAiCall(input)).then(() =>
+    recordBusinessAiUsage(input.businessId, input.sessionId, task),
   );
 }
 export async function recordReviewedDelivery(
@@ -243,6 +271,84 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         businessId,
         'ai_reservation',
         JSON.stringify({ conversationId: conversationId ?? null }),
+      ],
+      connection,
+    );
+  });
+}
+
+/**
+ * Customer chat draws on three allowances besides the app-wide one: all customers together, each
+ * business's customers, and each visitor's address. Owners keep whatever customers can't reach.
+ */
+export async function reserveCustomerAiCall(input: {
+  businessId: string;
+  sessionId: string;
+  ip: string;
+}) {
+  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
+  const customerLimit = Math.min(dailyLimit('AI_DAILY_CUSTOMER_APP_LIMIT', 600), appLimit);
+  const businessLimit = dailyLimit('AI_DAILY_BUSINESS_CUSTOMER_LIMIT', 200);
+  const ipLimit = dailyLimit('AI_DAILY_CUSTOMER_IP_LIMIT', 60);
+  await transaction(async (connection) => {
+    await mutate(
+      'INSERT INTO ai_daily_budgets (budget_day,total_reserved) VALUES (UTC_DATE(),0) ON DUPLICATE KEY UPDATE total_reserved = total_reserved',
+      [],
+      connection,
+    );
+    const [budget] = await rows(
+      "SELECT total_reserved,customer_reserved,DATE_FORMAT(budget_day,'%Y-%m-%d') AS day FROM ai_daily_budgets WHERE budget_day = UTC_DATE() FOR UPDATE",
+      [],
+      connection,
+    );
+    if (
+      Number(budget.total_reserved) >= appLimit ||
+      Number(budget.customer_reserved) >= customerLimit
+    )
+      throw new ApiError(
+        429,
+        'AI_CUSTOMER_CAPACITY',
+        'Quote chat is busy right now. Please try again later.',
+      );
+    const [business] = await rows(
+      "SELECT COUNT(*) AS count FROM usage_events WHERE business_id = ? AND kind = 'ai_customer_reservation' AND created_at >= UTC_DATE()",
+      [input.businessId],
+      connection,
+    );
+    if (Number(business.count) >= businessLimit)
+      throw new ApiError(
+        429,
+        'AI_BUSINESS_CUSTOMER_BUDGET',
+        'This business has reached today’s chat limit. Please try again tomorrow.',
+      );
+    try {
+      await consumeAuthRateLimit(
+        customerIpBudgetKey(input.ip, String(budget.day)),
+        ipLimit,
+        24 * 60 * 60_000,
+        connection,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
+        throw new ApiError(
+          429,
+          'AI_CUSTOMER_IP_LIMIT',
+          'You’ve reached today’s chat limit. Please try again tomorrow.',
+        );
+      throw error;
+    }
+    await mutate(
+      'UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1, customer_reserved = customer_reserved + 1 WHERE budget_day = UTC_DATE()',
+      [],
+      connection,
+    );
+    await mutate(
+      'INSERT INTO usage_events (id,business_id,kind,metadata_json) VALUES (?,?,?,?)',
+      [
+        randomUUID(),
+        input.businessId,
+        'ai_customer_reservation',
+        JSON.stringify({ conversationId: input.sessionId }),
       ],
       connection,
     );

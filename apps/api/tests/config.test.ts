@@ -27,6 +27,8 @@ const base: NodeJS.ProcessEnv = {
   STRIPE_METER_EVENT_NAME: 'quotient_fee_cents',
   SUPPORT_EMAIL: 'support@example.test',
   OPERATOR_NAME: 'Configuration test operator',
+  // Cloudflare's published always-pass test secret, which staging may use.
+  TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
   DB_NAME: 'quotient_config_no_connection',
   DB_USER: 'config_no_connection',
   DB_HOST: '127.0.0.1',
@@ -60,6 +62,12 @@ function inspect(overrides: NodeJS.ProcessEnv = {}) {
 
 // Built at runtime so no live-looking key appears in the source.
 const liveStripeKey = ['sk', 'live', 'config_only_never_charge'].join('_');
+const production: NodeJS.ProcessEnv = {
+  APP_ENV: 'production',
+  STRIPE_SECRET_KEY: liveStripeKey,
+  TURNSTILE_SECRET_KEY: '0x4AAAAAAAconfigOnlySecret',
+  SENTRY_DSN: 'https://config-only@errors.example.test/1',
+};
 
 for (const provider of ['openai', 'anthropic']) {
   test(`fully configured staging initializes with ${provider} without any network action`, () => {
@@ -69,7 +77,7 @@ for (const provider of ['openai', 'anthropic']) {
   });
 }
 test('fully configured production initializes with a live Stripe key', () => {
-  const result = inspect({ APP_ENV: 'production', STRIPE_SECRET_KEY: liveStripeKey });
+  const result = inspect(production);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'CONFIG_OK');
 });
@@ -147,6 +155,21 @@ const rejected: { name: string; env: NodeJS.ProcessEnv; message: RegExp }[] = [
     name: 'insecure application origin',
     env: { APP_ORIGIN: 'http://app.example.test' },
     message: /explicit HTTPS/,
+  },
+  {
+    name: 'a missing Turnstile secret',
+    env: { TURNSTILE_SECRET_KEY: '' },
+    message: /Set TURNSTILE_SECRET_KEY explicitly/,
+  },
+  {
+    name: 'a Cloudflare test Turnstile secret in production',
+    env: { ...production, TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA' },
+    message: /real Turnstile secret/,
+  },
+  {
+    name: 'production without error reporting',
+    env: { ...production, SENTRY_DSN: '' },
+    message: /SENTRY_DSN/,
   },
   {
     name: 'missing support identity',

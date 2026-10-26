@@ -28,6 +28,7 @@ import { accountRouter } from './accounts.js';
 import { serviceSetupRouter } from './service-setup.js';
 import { guestPreviewRouter } from './guest-preview.js';
 import { validateRuntimeConfiguration } from './config.js';
+import { requireHuman } from './human-check.js';
 
 export function createApp() {
   validateRuntimeConfiguration();
@@ -73,7 +74,7 @@ export function createApp() {
       origin: (origin, callback) => callback(null, !origin || origins.includes(origin)),
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token'],
     }),
   );
   app.get('/health', (_req, res) =>
@@ -112,7 +113,7 @@ export function createApp() {
   );
   app.use('/api/v1', csrfProtection);
   app.use('/api/v1', guestPreviewRouter);
-  app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), register);
+  app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);
   app.get('/api/v1/auth/me', requireOwner, me);

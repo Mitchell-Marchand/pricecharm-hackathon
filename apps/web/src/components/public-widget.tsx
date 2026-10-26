@@ -9,6 +9,7 @@ import {
   type PublicQuoteSubmission,
 } from './public-request';
 import { api, ApiError, errorMessage, json } from '@/lib/api';
+import { useHumanCheck } from '@/lib/human-check';
 import type {
   PrivatePreviewProfile,
   PublicProfile,
@@ -110,6 +111,7 @@ export default function PublicWidget({
   const headers = useCallback((value = token) => ({ Authorization: `Bearer ${value}` }), [token]);
   const base = `/public/${encodeURIComponent(slug)}`;
   const privatePreview = !!previewProfile;
+  const human = useHumanCheck('quote_chat', !privatePreview);
   const previewScope = previewProfile?.services
     .map((item) => `${item.id}@${item.version}`)
     .sort()
@@ -614,6 +616,7 @@ export default function PublicWidget({
                 privatePreview ? '/playground/sessions' : `${base}/sessions`,
                 {
                   method: 'POST',
+                  headers: privatePreview ? undefined : await human.headers(),
                   ...json({ serviceId: service.id }),
                 },
               );
@@ -1450,6 +1453,7 @@ export default function PublicWidget({
           </div>
         </Modal>
       )}
+      {!privatePreview && <div ref={human.slot} className="human-check" />}
     </main>
   );
 }

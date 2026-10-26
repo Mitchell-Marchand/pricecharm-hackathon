@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { api, ApiError, errorMessage, json } from '@/lib/api';
+import { useHumanCheck } from '@/lib/human-check';
 import {
   approveGuestPreview,
   claimGuestPreview,
@@ -108,6 +109,7 @@ export default function GuestPreviewCanvas({
   const [needsCheck, setNeedsCheck] = useState(false);
   const [attemptContent, setAttemptContent] = useState('');
   const [attemptExpiresAt, setAttemptExpiresAt] = useState('');
+  const human = useHumanCheck('guest_preview');
   const [retryAllowed, setRetryAllowed] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const mutation = useRef(false);
@@ -396,6 +398,7 @@ export default function GuestPreviewCanvas({
     try {
       const response = await api<{ preview: GuestPreview }>('/guest-preview', {
         method: 'POST',
+        headers: await human.headers(),
         ...json({
           content: submittedContent,
           requestId: id,
@@ -699,6 +702,7 @@ export default function GuestPreviewCanvas({
               <span aria-hidden="true">↗</span>
             </button>
           </div>
+          <div ref={human.slot} className="human-check" />
           {editing && (usable(displayed) || displayed?.status === 'ready') && (
             <button
               className={styles.quiet}

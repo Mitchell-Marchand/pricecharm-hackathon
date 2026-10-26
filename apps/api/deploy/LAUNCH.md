@@ -35,6 +35,9 @@ Copy `env.production.example` to `/srv/quotient-api/shared/.env` and `migrate.en
 - `BILLING_PROVIDER=stripe`, Stripe secret, webhook signing secret, meter event name and metered price ID, using the exact setup in [COMMERCE.md](COMMERCE.md).
 - `S3_BUCKET` from the stack output, `S3_PREFIX=quotient/`, AWS region. AWS credentials come from the EC2 role.
 - Real `OPERATOR_NAME` and `SUPPORT_EMAIL`; these appear on the public support/privacy/terms pages.
+- `TURNSTILE_SECRET_KEY` from a Cloudflare Turnstile widget (free, and the domain doesn't need to be on Cloudflare). Add the product domain to the widget's hostnames and choose the Managed mode. Signup, the landing-page preview and new customer chats require a passing check. The widget's site key goes in a GitHub variable (section 4). Staging can use Cloudflare's published test keys; production refuses them.
+- `SENTRY_DSN` from a Sentry project for the API and worker. Production refuses to start without it. Reports carry the error, its stack and the request ID, never request bodies, headers, emails or AI prompts. Set an alert rule in Sentry so a new error emails you.
+- The customer chat budgets (`AI_DAILY_CUSTOMER_APP_LIMIT`, `AI_DAILY_BUSINESS_CUSTOMER_LIMIT`, `AI_DAILY_CUSTOMER_IP_LIMIT`). The defaults are in the [AI keys guide](../../../docs/ops/ai-keys.md).
 
 Production rejects demo AI, local email/payments, missing required provider configuration and HTTP app origins. `.env` stays on the server and never goes into CI artifacts or Git. The web uses same-origin `/api/v1`, so no browser API keys or separate API public hostname are required.
 
@@ -46,7 +49,7 @@ The complete example logs `$uri`, excluding query strings containing password-re
 
 ## 4. Configure the GitHub repository
 
-Create one private repository for the monorepo, add it as the remote and push `main`. Configure production environment secrets: `EC2_HOST`, `EC2_USER=quotient`, `EC2_SSH_KEY`, and trusted/pinned `EC2_KNOWN_HOSTS`. Optionally set `EC2_API_DEPLOY_ROOT` (default `/srv/quotient-api`) and `EC2_WEB_DEPLOY_ROOT` (default `/srv/quotient-web`). Set repository variable `ENABLE_DEPLOY=true` after server secrets/TLS are ready. `CI` runs on every pull request; `Deploy API` and `Deploy web` run on pushes to `main` that change their app. Keep the SSH host key pinned; do not use an unverified runtime key scan.
+Create one private repository for the monorepo, add it as the remote and push `main`. Configure production environment secrets: `EC2_HOST`, `EC2_USER=quotient`, `EC2_SSH_KEY`, and trusted/pinned `EC2_KNOWN_HOSTS`. Optionally set `EC2_API_DEPLOY_ROOT` (default `/srv/quotient-api`) and `EC2_WEB_DEPLOY_ROOT` (default `/srv/quotient-web`). The web build reads two repository variables: `TURNSTILE_SITE_KEY` (the deploy fails without it) and `SENTRY_WEB_DSN`, the web app's Sentry DSN (a separate Sentry project from the API's works best). Set repository variable `ENABLE_DEPLOY=true` after server secrets/TLS are ready. `CI` runs on every pull request; `Deploy API` and `Deploy web` run on pushes to `main` that change their app. Keep the SSH host key pinned; do not use an unverified runtime key scan.
 
 Deploy **API first**, then web. CI runs typechecks/tests/build, packages immutable releases, installs API production dependencies on EC2, runs additive migrations, switches `current`, starts PM2 and checks readiness plus exact release identity. On failed readiness it restores the prior application release. Database DDL is not rolled back automatically. See [README.md](README.md) for details and workflow inputs.
 
