@@ -57,6 +57,21 @@ CREATE TABLE IF NOT EXISTS live_quotes (
   INDEX live_quote_business (business_id, status, created_at)
 ) ENGINE=InnoDB;
 
-ALTER TABLE quote_usage DROP FOREIGN KEY quote_usage_ibfk_2;
-ALTER TABLE usage_events DROP FOREIGN KEY usage_events_ibfk_2;
-ALTER TABLE contact_verifications DROP FOREIGN KEY contact_verifications_ibfk_2
+-- Live quotes are recorded in the existing ledgers, which pointed at the old flow's tables.
+-- Generated key names differ between MariaDB versions (quote_usage_ibfk_2 on 11.4, 2 on 12),
+-- so each key is found by what it links. A rerun finds nothing left to drop.
+SET @fk = (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'quote_usage' AND COLUMN_NAME = 'quote_id' AND REFERENCED_TABLE_NAME = 'quotes' LIMIT 1);
+SET @drop_fk = IF(@fk IS NULL, 'DO 0', CONCAT('ALTER TABLE quote_usage DROP FOREIGN KEY `', @fk, '`'));
+PREPARE drop_fk FROM @drop_fk;
+EXECUTE drop_fk;
+DEALLOCATE PREPARE drop_fk;
+SET @fk = (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'usage_events' AND COLUMN_NAME = 'quote_id' AND REFERENCED_TABLE_NAME = 'quotes' LIMIT 1);
+SET @drop_fk = IF(@fk IS NULL, 'DO 0', CONCAT('ALTER TABLE usage_events DROP FOREIGN KEY `', @fk, '`'));
+PREPARE drop_fk FROM @drop_fk;
+EXECUTE drop_fk;
+DEALLOCATE PREPARE drop_fk;
+SET @fk = (SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'contact_verifications' AND COLUMN_NAME = 'session_id' AND REFERENCED_TABLE_NAME = 'public_sessions' LIMIT 1);
+SET @drop_fk = IF(@fk IS NULL, 'DO 0', CONCAT('ALTER TABLE contact_verifications DROP FOREIGN KEY `', @fk, '`'));
+PREPARE drop_fk FROM @drop_fk;
+EXECUTE drop_fk;
+DEALLOCATE PREPARE drop_fk
