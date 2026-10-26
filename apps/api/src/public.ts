@@ -55,7 +55,7 @@ type StoredAnalysis = InquiryAssessment & {
 };
 async function publicBusiness(slug: unknown, connection?: Sql) {
   const [row] = await rows(
-    'SELECT * FROM businesses WHERE slug = ? AND deletion_requested_at IS NULL',
+    "SELECT * FROM businesses WHERE slug = ? AND status='active' AND deletion_requested_at IS NULL",
     [slugSchema.parse(slug)],
     connection,
   );

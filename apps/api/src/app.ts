@@ -29,6 +29,7 @@ import { serviceSetupRouter } from './service-setup.js';
 import { guestPreviewRouter } from './guest-preview.js';
 import { validateRuntimeConfiguration } from './config.js';
 import { requireHuman } from './human-check.js';
+import { onboardingRouter } from './onboarding.js';
 
 export function createApp() {
   validateRuntimeConfiguration();
@@ -118,6 +119,7 @@ export function createApp() {
   );
   app.use('/api/v1', csrfProtection);
   app.use('/api/v1', guestPreviewRouter);
+  app.use('/api/v1', onboardingRouter);
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);

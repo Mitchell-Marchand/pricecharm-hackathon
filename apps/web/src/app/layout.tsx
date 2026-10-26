@@ -1,21 +1,37 @@
-import type { Metadata } from 'next';
-import './design-tokens.css';
+import type { Metadata, Viewport } from 'next';
+import { Archivo, IBM_Plex_Mono, Public_Sans } from 'next/font/google';
 import './globals.css';
-import './features.css';
-import './product.css';
-import './publishing.css';
-import './brand.css';
-import './conversation.css';
+
+const archivo = Archivo({
+  subsets: ['latin'],
+  axes: ['wdth'],
+  variable: '--font-archivo',
+  display: 'swap',
+});
+const publicSans = Public_Sans({
+  subsets: ['latin'],
+  style: ['normal', 'italic'],
+  variable: '--font-public-sans',
+  display: 'swap',
+});
+const plexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-plex-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
-  title: { default: 'Quotefolk — Quote the way you do', template: '%s · Quotefolk' },
+  title: { default: 'Quotefolk: train an AI to quote like you', template: '%s · Quotefolk' },
   description:
-    'Show your assistant a job you’ve priced. Try it as a customer, then share a quote link. Review requests and approve any prices. Automatic quotes stay off until you enable them.',
+    'Teach an AI how you price your jobs in about 15 minutes. It answers your customers, asks the right questions and sends quotes the way you would.',
 };
+
+export const viewport: Viewport = { width: 'device-width', initialScale: 1, viewportFit: 'cover' };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${archivo.variable} ${publicSans.variable} ${plexMono.variable}`}>
       <body>{children}</body>
     </html>
   );

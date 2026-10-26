@@ -256,6 +256,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               head={['Name', 'What it’s for', 'How long it lasts']}
               rows={[
                 [
+                  'quotient_draft',
+                  'Keeps your setup together before you have an account',
+                  '14 days, or until you create your account',
+                ],
+                [
                   'quotient_session',
                   'Keeps a business owner signed in',
                   '30 days, or until you sign out',
@@ -299,6 +304,10 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 [
                   'Quote requests, including messages, photos, contact details and quotes',
                   'As long as the business that received them has an account, unless deleted sooner on request',
+                ],
+                [
+                  'Setups that never become an account, including their photos',
+                  '14 days after you start',
                 ],
                 ['Landing-page previews that aren’t saved to an account', '30 minutes'],
                 [

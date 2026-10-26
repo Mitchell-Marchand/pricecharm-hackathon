@@ -15,6 +15,7 @@ import { isDisposableEmail } from './email-domains.js';
 import { businessById, type Row } from './models.js';
 import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './verification.js';
 import { hashingSecret } from './config.js';
+import { clearDraftCookie, draftFromRequest } from './workspace.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -127,22 +128,30 @@ async function createSession(userId: string, res: Response, connection?: Sql) {
   );
   setSessionCookie(res, token);
 }
-export const requireOwner: RequestHandler = async (req, _res, next) => {
+/** The signed-in owner, or null. requireOwner and the onboarding routes both use it. */
+export async function ownerFromRequest(req: Request): Promise<AuthContext | null> {
   const token = cookies(req)[COOKIE_NAME];
-  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token))
-    throw new ApiError(401, 'AUTH_REQUIRED', 'Sign in to continue.');
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
   const [user] = await rows(
     'SELECT u.id, u.business_id, u.name, u.email, u.email_verified_at FROM owner_sessions s JOIN users u ON u.id = s.user_id JOIN businesses b ON b.id=u.business_id WHERE s.token_hash = ? AND s.expires_at > UTC_TIMESTAMP(3) AND b.deletion_requested_at IS NULL LIMIT 1',
     [hashToken(token)],
   );
-  if (!user) throw new ApiError(401, 'SESSION_EXPIRED', 'Your session expired. Sign in again.');
-  req.auth = {
+  if (!user) return null;
+  return {
     userId: user.id,
     businessId: user.business_id,
     name: user.name,
     email: user.email,
     emailVerified: Boolean(user.email_verified_at),
   };
+}
+export const requireOwner: RequestHandler = async (req, _res, next) => {
+  const token = cookies(req)[COOKIE_NAME];
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token))
+    throw new ApiError(401, 'AUTH_REQUIRED', 'Sign in to continue.');
+  const context = await ownerFromRequest(req);
+  if (!context) throw new ApiError(401, 'SESSION_EXPIRED', 'Your session expired. Sign in again.');
+  req.auth = context;
   next();
 };
 export function owner(req: Request): AuthContext {
@@ -160,11 +169,32 @@ export const csrfProtection: RequestHandler = (req, _res, next) => {
     throw new ApiError(403, 'CSRF_REJECTED', 'Cross-site account requests are blocked.');
   next();
 };
+/** The quote link's address: the business name, then part of its id so it's always unique. */
+export function businessSlug(name: string, businessId: string): string {
+  const base =
+    name
+      .replace(/&/g, ' and ')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 100) || 'business';
+  return `${base}-${businessId.slice(0, 8)}`;
+}
+
+/**
+ * Creates the owner's account. When this browser has a setup in progress, the account takes over
+ * that draft business, with everything entered so far; otherwise it starts a new business.
+ */
 export const register: RequestHandler = async (req, res) => {
   const input = z
     .object({
-      name: z.string().trim().min(1).max(160),
-      businessName: z.string().trim().min(2).max(160),
+      firstName: z.string().trim().min(1).max(80).optional(),
+      lastName: z.string().trim().min(1).max(80).optional(),
+      /** Older clients send one name field. */
+      name: z.string().trim().min(1).max(160).optional(),
+      businessName: z.string().trim().min(2).max(160).optional(),
       email: z
         .email()
         .max(254)
@@ -172,6 +202,10 @@ export const register: RequestHandler = async (req, res) => {
       password: z.string().min(10).max(128),
     })
     .strict()
+    .refine((value) => value.name || (value.firstName && value.lastName), {
+      message: 'Enter your first and last name.',
+      path: ['firstName'],
+    })
     .parse(req.body);
   if (isDisposableEmail(input.email))
     throw new ApiError(
@@ -179,28 +213,36 @@ export const register: RequestHandler = async (req, res) => {
       'DISPOSABLE_EMAIL',
       'Please use an email address you’ll keep. Temporary inboxes can’t be used for an account.',
     );
+  const firstName = input.firstName ?? '',
+    lastName = input.lastName ?? '';
+  const name = input.name ?? `${firstName} ${lastName}`;
   const passwordHash = await hashPassword(input.password);
-  const businessId = randomUUID(),
-    userId = randomUUID();
-  const baseSlug =
-    input.businessName
-      .normalize('NFKD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 100) || 'business';
-  const slug = `${baseSlug}-${businessId.slice(0, 8)}`;
+  const userId = randomUUID();
+  let businessId: string = randomUUID();
+  let claimed = false;
   try {
     await transaction(async (connection) => {
+      const draft = await draftFromRequest(req, connection, true);
+      const businessName = (input.businessName ?? draft?.name ?? '').trim();
+      if (businessName.length < 2)
+        throw new ApiError(422, 'BUSINESS_NAME_REQUIRED', 'Add your business name first.');
+      if (draft) {
+        businessId = String(draft.id);
+        claimed = true;
+        await mutate(
+          "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
+          [businessName, businessSlug(businessName, businessId), businessId],
+          connection,
+        );
+      } else
+        await mutate(
+          'INSERT INTO businesses (id, name, slug, description) VALUES (?, ?, ?, ?)',
+          [businessId, businessName, businessSlug(businessName, businessId), ''],
+          connection,
+        );
       await mutate(
-        'INSERT INTO businesses (id, name, slug, description) VALUES (?, ?, ?, ?)',
-        [businessId, input.businessName, slug, ''],
-        connection,
-      );
-      await mutate(
-        'INSERT INTO users (id, business_id, name, email, password_hash) VALUES (?, ?, ?, ?, ?)',
-        [userId, businessId, input.name, input.email, passwordHash],
+        'INSERT INTO users (id, business_id, name, first_name, last_name, email, password_hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [userId, businessId, name, firstName, lastName, input.email, passwordHash],
         connection,
       );
       await createSession(userId, res, connection);
@@ -218,9 +260,10 @@ export const register: RequestHandler = async (req, res) => {
       );
     throw error;
   }
+  if (claimed) clearDraftCookie(res);
   res.status(201).json(
     ok({
-      user: { id: userId, name: input.name, email: input.email, emailVerified: false },
+      user: { id: userId, name, firstName, lastName, email: input.email, emailVerified: false },
       business: await businessById(businessId),
     }),
   );

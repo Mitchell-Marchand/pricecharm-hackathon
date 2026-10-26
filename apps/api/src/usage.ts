@@ -38,6 +38,12 @@ export function guestIpBudgetKey(ip: string, day: string): string {
   return `guest-preview:${day}:${fingerprint}`;
 }
 
+export function draftIpBudgetKey(ip: string, day: string): string {
+  const fingerprint = ipFingerprint('draft-start', ip, day);
+  if (!fingerprint) throw new ApiError(503, 'SETUP_UNAVAILABLE', 'Setup is unavailable right now.');
+  return `draft-start:${day}:${fingerprint}`;
+}
+
 export function customerIpBudgetKey(ip: string, day: string): string {
   const fingerprint = ipFingerprint('customer-chat', ip, day);
   if (!fingerprint)

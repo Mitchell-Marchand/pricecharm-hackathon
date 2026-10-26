@@ -2,7 +2,7 @@ import type { Request, RequestHandler } from 'express';
 import { ApiError } from './http.js';
 
 /** Each page renders the Turnstile widget with its own action, so a token only works where it was earned. */
-export type HumanCheckAction = 'signup' | 'guest_preview' | 'quote_chat';
+export type HumanCheckAction = 'signup' | 'guest_preview' | 'quote_chat' | 'onboarding';
 
 const VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 

@@ -18,6 +18,7 @@ import { deliverEmail, validateEmailConfiguration } from './integrations/email.j
 import { json } from './models.js';
 import { processTrainingPhotos } from './training-photos.js';
 import { flushErrorReports, reportError, startErrorReporting } from './error-reporting.js';
+import { scheduleExpiredDraftDeletion } from './workspace.js';
 
 type Job = RowDataPacket & {
   id: string;
@@ -74,6 +75,7 @@ export async function cleanupGuestPreviews(connection: Sql): Promise<void> {
 async function maintenance(): Promise<void> {
   await transaction(async (connection) => {
     await cleanupGuestPreviews(connection);
+    await scheduleExpiredDraftDeletion(connection);
     await mutate('DELETE FROM owner_sessions WHERE expires_at<UTC_TIMESTAMP(3)', [], connection);
     await mutate(
       "UPDATE public_sessions SET status='expired' WHERE expires_at<UTC_TIMESTAMP(3) AND status='active'",

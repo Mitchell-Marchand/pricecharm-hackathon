@@ -15,7 +15,7 @@ declare global {
 }
 
 /** Matches the API's actions, so a token earned on one form can't be spent on another. */
-export type HumanCheckAction = 'signup' | 'guest_preview' | 'quote_chat';
+export type HumanCheckAction = 'signup' | 'guest_preview' | 'quote_chat' | 'onboarding';
 
 /** Public by design. Set at build time; without it there's no check (local runs and tests). */
 const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() || null;
