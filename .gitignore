@@ -13,3 +13,6 @@ __pycache__/
 /artifacts/
 /archive/
 /.claude/
+
+# Next.js writes this for whichever of dev or build ran last, so it isn't tracked.
+apps/web/next-env.d.ts

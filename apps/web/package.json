@@ -6,7 +6,7 @@
     "dev": "next dev --port 3100 --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --port 3100 --hostname 127.0.0.1",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test:e2e": "playwright test",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/widget.js \"deploy/*.cjs\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/widget.js \"deploy/*.cjs\""
