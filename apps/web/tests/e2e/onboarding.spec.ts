@@ -60,6 +60,41 @@ test('step 1 saves the trade, services and business details as you go', async ({
   await expect(page).toHaveURL(/\/start\/jobs$/, { timeout: 15_000 });
 });
 
+test('a trade that isn’t listed is picked straight from the search', async ({ page }) => {
+  await page.goto('/start');
+  await expect(page).toHaveURL(/\/start\/business$/);
+  const search = page.getByLabel('Search trades');
+  await search.fill('Dog grooming');
+  await page.getByRole('radio', { name: 'Use “Dog grooming”' }).click();
+  const picked = page.getByRole('radio', { name: 'Dog grooming', exact: true });
+  await expect(picked).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('button', { name: 'Dog grooming', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await search.fill('');
+  await expect(picked, 'Clearing the search keeps it in view').toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+
+  await search.fill('Pet sitting');
+  await search.press('Enter');
+  await expect(page.getByRole('radio', { name: 'Pet sitting', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await page.getByLabel('Business name').fill('Clean Paws');
+  await expect(page.getByText('Saved.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('radio', { name: 'Pet sitting', exact: true })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/jobs$/);
+});
+
 test('the public pages render without sideways scrolling on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   for (const path of ['/', '/demo', '/pricing', '/privacy', '/terms']) {
@@ -80,6 +115,45 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;
   await expect(page.locator('#contact')).toContainText(site.operatorName);
+});
+
+test('the job sheet marks what the API turned down', async ({ page }) => {
+  await finishStepOne(page, 'Moss & Stone Exterior Care');
+  await page.getByRole('button', { name: 'Add a usual Driveways job' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Add a job' });
+  await sheet.getByLabel('What was the job?').fill('Two-car driveway.');
+  await sheet.getByLabel('What did you charge?').fill('250');
+  const size = sheet.getByLabel('How big was it?');
+  await size.fill('x'.repeat(81));
+  await sheet.getByRole('button', { name: 'Save job' }).click();
+  await expect(sheet.getByText('Check the highlighted fields.')).toBeVisible();
+  await expect(size).toHaveAttribute('aria-invalid', 'true');
+  await expect(sheet.getByText('Keep this to 80 characters or fewer.')).toBeVisible();
+  await size.fill('600 sq ft');
+  await expect(size).not.toHaveAttribute('aria-invalid');
+  await expect(sheet.getByText('Check the highlighted fields.')).toHaveCount(0);
+
+  // A page from a newer release than the API sends a field the API doesn't know yet.
+  await page.route('**/api/v1/onboarding/jobs', (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Check the highlighted fields.',
+          details: [{ field: '', message: 'Unrecognized key: "slot"' }],
+        },
+      }),
+    }),
+  );
+  await sheet.getByRole('button', { name: 'Save job' }).click();
+  await expect(
+    sheet.getByText('We couldn’t save this. Refresh the page and try again.'),
+  ).toBeVisible();
+  await page.unroute('**/api/v1/onboarding/jobs');
+  await sheet.getByRole('button', { name: 'Save job' }).click();
+  await expect(sheet).toBeHidden();
 });
 
 test('step 2 asks for a small, a usual and a big job, and edits and removes them', async ({

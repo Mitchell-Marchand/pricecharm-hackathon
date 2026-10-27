@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Check, Plus, Search } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Briefcase, Check, Plus, Search, type LucideIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { SetupLoading } from '@/components/SetupLoading';
 import { BottomBar, WizardHeader } from '@/components/Wizard';
@@ -21,10 +21,11 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
   const { updateBusiness, goTo } = useOnboarding();
   const trade = business.tradeId ? TRADES_BY_ID[business.tradeId] : null;
   const [query, setQuery] = useState('');
-  const [otherOpen, setOtherOpen] = useState(Boolean(business.customTrade));
   const [newService, setNewService] = useState('');
+  const search = useRef<HTMLInputElement>(null);
   const details = useRef<HTMLDivElement>(null);
-  const chosen = Boolean(trade || business.customTrade.trim());
+  const customTrade = business.customTrade.trim();
+  const chosen = Boolean(trade || customTrade);
   const firstChoice = useRef(!chosen);
 
   // Picking a trade moves on to the services, as does arriving with one picked on a demo
@@ -42,9 +43,13 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
     }, 80);
   }, [chosen]);
 
-  const matches = TRADES.filter((item) =>
-    item.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const typed = query.trim();
+  const matchesQuery = (name: string) => name.toLowerCase().includes(typed.toLowerCase());
+  const matches = TRADES.filter((item) => matchesQuery(item.name));
+  // A trade they typed in sits first, like the listed ones. When nothing fits the search, the
+  // search itself becomes the choice.
+  const showCustom = Boolean(customTrade) && matchesQuery(customTrade);
+  const offerTyped = Boolean(typed) && !matches.length && !showCustom;
   const serviceOptions = [
     ...(trade?.services ?? []),
     ...business.customServices.filter((name) => !trade?.services.includes(name)),
@@ -75,6 +80,16 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
       customServices: [],
     });
   };
+  // Their trade's own name starts as its first service, so there's something to switch on.
+  const pickCustomTrade = (name: string) => {
+    const service = name.slice(0, 60).trim();
+    updateBusiness({
+      tradeId: null,
+      customTrade: name,
+      services: [service],
+      customServices: [service],
+    });
+  };
   const toggleService = (name: string) =>
     updateBusiness({
       services: business.services.includes(name)
@@ -100,11 +115,16 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
             Search trades
           </label>
           <TextInput
+            ref={search}
             id="trade-search"
             className="pl-11"
-            placeholder="Search trades"
+            placeholder="Search trades or type your own"
+            maxLength={80}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && offerTyped) pickCustomTrade(typed);
+            }}
           />
         </div>
 
@@ -113,71 +133,47 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
           aria-label="Trades"
           className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3"
         >
-          {matches.map((item) => {
-            const selected = business.tradeId === item.id;
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => {
-                  pickTrade(item.id);
-                  setOtherOpen(false);
-                }}
-                className={cx(
-                  'relative flex min-h-[72px] items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-[border-color,background-color] duration-150 sm:px-4',
-                  selected
-                    ? 'border-accent bg-accent-soft shadow-[inset_0_0_0_1px_var(--accent)]'
-                    : 'border-line bg-surface hover:border-line-strong',
-                )}
-              >
-                <Icon
-                  className={cx('size-6 shrink-0', selected ? 'text-accent' : 'text-ink-2')}
-                  aria-hidden
-                />
-                <span className="text-[15px] leading-tight font-semibold">{item.name}</span>
-                {selected && (
-                  <span className="absolute top-2 right-2 inline-flex size-5 items-center justify-center rounded-full bg-accent text-on-accent">
-                    <Check className="size-3.5" aria-hidden />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-        {matches.length === 0 && (
-          <p className="mt-4 text-ink-2">No trade matches “{query}”. Type yours in below.</p>
-        )}
-
-        <div className="mt-5">
-          {otherOpen || matches.length === 0 ? (
-            <Field label="Something else? Type your trade" htmlFor="custom-trade">
-              <TextInput
-                id="custom-trade"
-                placeholder="For example: Holiday lighting"
-                value={business.customTrade}
-                onChange={(event) =>
-                  updateBusiness(
-                    business.tradeId
-                      ? {
-                          tradeId: null,
-                          customTrade: event.target.value,
-                          services: [],
-                          customServices: [],
-                        }
-                      : { customTrade: event.target.value },
-                  )
-                }
-              />
-            </Field>
-          ) : (
-            <Button variant="link" onClick={() => setOtherOpen(true)}>
-              Something else? Type it in
-            </Button>
+          {showCustom && (
+            <TradeCard icon={Briefcase} selected onClick={() => {}}>
+              {customTrade}
+            </TradeCard>
           )}
+          {offerTyped && (
+            <TradeCard
+              icon={Plus}
+              selected={false}
+              onClick={() => pickCustomTrade(typed)}
+              className="col-span-2"
+            >
+              Use “{typed}”
+            </TradeCard>
+          )}
+          {matches.map((item) => (
+            <TradeCard
+              key={item.id}
+              icon={item.icon}
+              selected={business.tradeId === item.id}
+              onClick={() => pickTrade(item.id)}
+            >
+              {item.name}
+            </TradeCard>
+          ))}
         </div>
+        {!typed && !customTrade && (
+          <Button
+            variant="link"
+            className="mt-4"
+            onClick={() => {
+              search.current?.focus();
+              search.current?.scrollIntoView({
+                behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+                block: 'center',
+              });
+            }}
+          >
+            Don’t see yours? Type it in the search.
+          </Button>
+        )}
 
         {chosen && (
           <div
@@ -285,5 +281,48 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
         hint={hint}
       />
     </div>
+  );
+}
+
+function TradeCard({
+  icon: Icon,
+  selected,
+  onClick,
+  className,
+  children,
+}: {
+  icon: LucideIcon;
+  selected: boolean;
+  onClick: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onClick}
+      className={cx(
+        'relative flex min-h-[72px] min-w-0 items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-[border-color,background-color] duration-150 sm:px-4',
+        selected
+          ? 'border-accent bg-accent-soft shadow-[inset_0_0_0_1px_var(--accent)]'
+          : 'border-line bg-surface hover:border-line-strong',
+        className,
+      )}
+    >
+      <Icon
+        className={cx('size-6 shrink-0', selected ? 'text-accent' : 'text-ink-2')}
+        aria-hidden
+      />
+      <span className="min-w-0 pr-4 text-[15px] leading-tight font-semibold break-words">
+        {children}
+      </span>
+      {selected && (
+        <span className="absolute top-2 right-2 inline-flex size-5 items-center justify-center rounded-full bg-accent text-on-accent">
+          <Check className="size-3.5" aria-hidden />
+        </span>
+      )}
+    </button>
   );
 }

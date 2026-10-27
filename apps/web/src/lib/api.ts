@@ -46,10 +46,54 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     throw new ApiError(
       response.status,
       body?.error?.code || 'REQUEST_FAILED',
-      body?.error?.message || 'The request could not be completed. Please try again.',
+      body?.error?.code === 'VALIDATION_ERROR'
+        ? validationMessage(body.error.details)
+        : body?.error?.message || 'The request could not be completed. Please try again.',
       body?.error?.details,
     );
   return body.data as T;
+}
+
+type Rejection = { field: string; message: string };
+const rejections = (details: unknown): Rejection[] =>
+  Array.isArray(details)
+    ? details.filter(
+        (item): item is Rejection =>
+          typeof item?.field === 'string' && typeof item?.message === 'string',
+      )
+    : [];
+
+/** The API's own messages are sentences. Zod's defaults ("Too big: expected…") aren't. */
+const written = (message: string) => /[.!?]$/.test(message.trim());
+
+/**
+ * The API says "Check the highlighted fields" whether or not the page marks any, so the message
+ * comes from what it turned down. A form that marks its fields with fieldErrors says so itself.
+ * A request with no field to blame is usually a page from a different release than the API.
+ */
+function validationMessage(details: unknown): string {
+  const found = rejections(details);
+  const sentence = found.find((item) => item.field && written(item.message));
+  if (sentence) return sentence.message;
+  if (!found.length || found.some((item) => !item.field))
+    return 'We couldn’t save this. Refresh the page and try again.';
+  return 'Some of this wasn’t accepted. Check what you entered and try again.';
+}
+
+/** What the API turned down, by the field's path in the request ("discount.value"). */
+export function fieldErrors(error: unknown): Record<string, string> {
+  if (!(error instanceof ApiError) || error.code !== 'VALIDATION_ERROR') return {};
+  const found: Record<string, string> = {};
+  for (const { field, message } of rejections(error.details)) {
+    if (!field || found[field]) continue;
+    const limit = /<=\s*(\d+) characters/.exec(message)?.[1];
+    found[field] = written(message)
+      ? message
+      : limit
+        ? `Keep this to ${limit} characters or fewer.`
+        : 'This doesn’t look right.';
+  }
+  return found;
 }
 
 export const json = (value: unknown): Pick<RequestInit, 'body'> => ({

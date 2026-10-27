@@ -131,7 +131,11 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await shop.context.close();
 });
 
-test('an owner resets a forgotten password', async ({ page, browser, baseURL }) => {
+test('an owner resets a forgotten password, then signs out from the menu at the top', async ({
+  page,
+  browser,
+  baseURL,
+}) => {
   const shop = await createBusiness(browser, baseURL!);
   await shop.context.close();
   await page.goto('/login');
@@ -148,6 +152,23 @@ test('an owner resets a forgotten password', async ({ page, browser, baseURL }) 
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await signIn(page, shop.email, 'a brand new password');
   await expect(page).toHaveURL(/\/app$/);
+
+  // Signups are rate limited, so signing out rides along with this owner.
+  const account = page.getByRole('button', { name: /^Account/ });
+  await account.click();
+  const menu = page.locator(`[id="${await account.getAttribute('aria-controls')}"]`);
+  await expect(menu).toContainText(shop.email);
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+  await expect(account).toBeFocused();
+
+  await page.goto('/start/business');
+  await expect(page.getByRole('button', { name: /Finish later/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Account/ }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await page.goto('/app');
+  await expect(page).toHaveURL(/\/login/);
 });
 
 test('after setup, an owner practices with as many customers as they like', async ({

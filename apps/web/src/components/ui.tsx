@@ -72,7 +72,7 @@ export function Field({
 }
 
 const control =
-  'w-full min-w-0 rounded-sm border border-line-strong bg-surface text-ink transition-[border-color,box-shadow] duration-150 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none';
+  'w-full min-w-0 rounded-sm border border-line-strong bg-surface text-ink transition-[border-color,box-shadow] duration-150 focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none aria-[invalid=true]:border-stop aria-[invalid=true]:shadow-[0_0_0_3px_var(--stop-soft)]';
 
 export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function TextInput({ className, ...props }, ref) {

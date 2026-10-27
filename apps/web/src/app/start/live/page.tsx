@@ -6,6 +6,7 @@ import { ArrowRight, Check, Lock, Mail, MessageSquareText, Receipt } from 'lucid
 import { Logo } from '@/components/Logo';
 import { ReadinessCard } from '@/components/ReadinessCard';
 import { SetupLoading } from '@/components/SetupLoading';
+import { AccountMenu } from '@/components/owner/AccountMenu';
 import { EmailCode } from '@/components/owner/EmailCode';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { ShareSections } from '@/components/share/ShareSections';
@@ -109,8 +110,9 @@ export default function LiveStep() {
 
   return (
     <div className="min-h-dvh">
-      <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
+      <header className="gutter mx-auto flex h-18 max-w-5xl items-center justify-between gap-3">
         <Logo href="/app" />
+        <AccountMenu business={business} name={me.user.name} email={me.user.email} />
       </header>
       <main className="gutter mx-auto max-w-5xl pt-4 pb-20">
         {live ? (

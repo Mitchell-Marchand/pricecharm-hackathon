@@ -6,7 +6,7 @@ import { JobImports } from '@/components/jobs/JobImports';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Button, Chip, Field, MoneyInput, Segmented, TextArea, TextInput } from '@/components/ui';
-import { errorMessage } from '@/lib/api';
+import { errorMessage, fieldErrors } from '@/lib/api';
 import {
   listJobs,
   removeJob,
@@ -393,6 +393,24 @@ export function PastJobsEditor({
   );
 }
 
+/**
+ * The sheet's fields, top to bottom, by the name the API uses for each. The ones under "More
+ * details" open it when the API turns them down.
+ */
+const SHEET_FIELDS = {
+  photoIds: { id: null, more: false },
+  serviceName: { id: null, more: false },
+  description: { id: 'job-description', more: false },
+  priceCents: { id: 'job-price', more: false },
+  size: { id: 'job-size', more: false },
+  duration: { id: 'job-duration', more: true },
+  when: { id: 'job-when', more: true },
+  materialsCents: { id: 'job-materials', more: true },
+  discount: { id: 'job-discount', more: true },
+  notes: { id: 'job-notes', more: true },
+} as const;
+type SheetField = keyof typeof SHEET_FIELDS;
+
 /** Adding or editing one job. A job added for a slot says which size it's after. */
 export function JobSheet({
   editing,
@@ -438,12 +456,41 @@ export function JobSheet({
   const [notes, setNotes] = useState(start.notes);
   const [photoError, setPhotoError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [problems, setProblems] = useState<Partial<Record<SheetField, string>>>({});
   const [saving, setSaving] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const priceCents = parseMoney(price);
   const valid = description.trim().length > 3 && priceCents !== null && priceCents > 0;
+
+  /** Editing a field the API turned down clears its mark, and the footer once none are left. */
+  const fix = (field: SheetField) => {
+    if (!problems[field]) return;
+    const rest = { ...problems };
+    delete rest[field];
+    setProblems(rest);
+    if (!Object.keys(rest).length) setSaveError('');
+  };
+  const mark = (field: SheetField) => ({ 'aria-invalid': Boolean(problems[field]) || undefined });
+
+  function showRejected(error: unknown) {
+    const found: Partial<Record<SheetField, string>> = {};
+    for (const [path, message] of Object.entries(fieldErrors(error))) {
+      const field = path.split('.')[0];
+      if (field in SHEET_FIELDS) found[field as SheetField] ??= message;
+    }
+    setProblems(found);
+    const first = (Object.keys(SHEET_FIELDS) as SheetField[]).find((field) => found[field]);
+    if (!first) {
+      setSaveError(errorMessage(error));
+      return;
+    }
+    setSaveError('Check the highlighted fields.');
+    if (Object.keys(found).some((field) => SHEET_FIELDS[field as SheetField].more)) setMore(true);
+    const id = SHEET_FIELDS[first].id;
+    if (id) window.setTimeout(() => document.getElementById(id)?.focus(), 50);
+  }
 
   async function addFiles(files: FileList | File[]) {
     setPhotoError('');
@@ -478,6 +525,7 @@ export function JobSheet({
         : Number.parseInt(discountValue, 10) || null;
     setSaving(true);
     setSaveError('');
+    setProblems({});
     try {
       const job = await saveJob(
         editing?.id ?? null,
@@ -501,7 +549,7 @@ export function JobSheet({
       );
       onSaved(job);
     } catch (error) {
-      setSaveError(errorMessage(error));
+      showRejected(error);
     } finally {
       setSaving(false);
     }
@@ -604,37 +652,60 @@ export function JobSheet({
               event.target.value = '';
             }}
           />
-          {photoError && <p className="mt-2 text-sm text-stop">{photoError}</p>}
+          {(photoError || problems.photoIds) && (
+            <p className="mt-2 text-sm text-stop">{photoError || problems.photoIds}</p>
+          )}
         </div>
 
         <div>
           <p className="text-sm font-semibold">Service</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {services.map((name) => (
-              <Chip key={name} selected={serviceName === name} onClick={() => setServiceName(name)}>
+              <Chip
+                key={name}
+                selected={serviceName === name}
+                onClick={() => {
+                  setServiceName(name);
+                  fix('serviceName');
+                }}
+              >
                 {name}
               </Chip>
             ))}
           </div>
+          {problems.serviceName && <p className="mt-2 text-sm text-stop">{problems.serviceName}</p>}
         </div>
 
-        <Field label="What was the job?" htmlFor="job-description">
+        <Field label="What was the job?" htmlFor="job-description" error={problems.description}>
           <TextArea
             id="job-description"
             rows={3}
             placeholder={placeholder}
             value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            onChange={(event) => {
+              setDescription(event.target.value);
+              fix('description');
+            }}
+            {...mark('description')}
           />
         </Field>
 
-        <Field label="What did you charge?" htmlFor="job-price" hint="The total the customer paid.">
+        <Field
+          label="What did you charge?"
+          htmlFor="job-price"
+          hint="The total the customer paid."
+          error={problems.priceCents}
+        >
           <MoneyInput
             id="job-price"
             placeholder="275"
             value={price}
-            onChange={setPrice}
+            onChange={(value) => {
+              setPrice(value);
+              fix('priceCents');
+            }}
             className="max-w-[220px]"
+            {...mark('priceCents')}
           />
         </Field>
 
@@ -642,13 +713,18 @@ export function JobSheet({
           label="How big was it?"
           htmlFor="job-size"
           hint="However you price it. This is how it learns your rate."
+          error={problems.size}
         >
           <TextInput
             id="job-size"
             placeholder={sizeHint ?? 'Sq ft, rooms, hours'}
             value={size}
-            onChange={(event) => setSize(event.target.value)}
+            onChange={(event) => {
+              setSize(event.target.value);
+              fix('size');
+            }}
             className="max-w-[320px]"
+            {...mark('size')}
           />
         </Field>
 
@@ -676,28 +752,48 @@ export function JobSheet({
           {more && (
             <div className="fade-up mt-5 flex flex-col gap-5">
               <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="How long did it take?" htmlFor="job-duration">
+                <Field
+                  label="How long did it take?"
+                  htmlFor="job-duration"
+                  error={problems.duration}
+                >
                   <TextInput
                     id="job-duration"
                     placeholder="3 hours"
                     value={duration}
-                    onChange={(event) => setDuration(event.target.value)}
+                    onChange={(event) => {
+                      setDuration(event.target.value);
+                      fix('duration');
+                    }}
+                    {...mark('duration')}
                   />
                 </Field>
-                <Field label="When was it?" htmlFor="job-when">
+                <Field label="When was it?" htmlFor="job-when" error={problems.when}>
                   <TextInput
                     id="job-when"
                     placeholder="June 2026"
                     value={when}
-                    onChange={(event) => setWhen(event.target.value)}
+                    onChange={(event) => {
+                      setWhen(event.target.value);
+                      fix('when');
+                    }}
+                    {...mark('when')}
                   />
                 </Field>
-                <Field label="Materials cost" htmlFor="job-materials">
+                <Field
+                  label="Materials cost"
+                  htmlFor="job-materials"
+                  error={problems.materialsCents}
+                >
                   <MoneyInput
                     id="job-materials"
                     placeholder="0"
                     value={materials}
-                    onChange={setMaterials}
+                    onChange={(value) => {
+                      setMaterials(value);
+                      fix('materialsCents');
+                    }}
+                    {...mark('materialsCents')}
                   />
                 </Field>
               </div>
@@ -710,6 +806,7 @@ export function JobSheet({
                     onChange={(kind) => {
                       setDiscountKind(kind);
                       setDiscountValue('');
+                      fix('discount');
                     }}
                     options={[
                       { value: 'amount', label: '$ off' },
@@ -722,8 +819,12 @@ export function JobSheet({
                       aria-label="Discount amount"
                       placeholder="20"
                       value={discountValue}
-                      onChange={setDiscountValue}
+                      onChange={(value) => {
+                        setDiscountValue(value);
+                        fix('discount');
+                      }}
                       className="w-32"
+                      {...mark('discount')}
                     />
                   ) : (
                     <div className="relative w-28">
@@ -733,10 +834,12 @@ export function JobSheet({
                         inputMode="numeric"
                         placeholder="10"
                         value={discountValue}
-                        onChange={(event) =>
-                          setDiscountValue(event.target.value.replace(/\D/g, '').slice(0, 2))
-                        }
+                        onChange={(event) => {
+                          setDiscountValue(event.target.value.replace(/\D/g, '').slice(0, 2));
+                          fix('discount');
+                        }}
                         className="pr-8 font-mono"
+                        {...mark('discount')}
                       />
                       <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 font-mono text-muted">
                         %
@@ -751,16 +854,28 @@ export function JobSheet({
                   id="job-discount-reason"
                   placeholder="Why? For example: repeat customer"
                   value={discountReason}
-                  onChange={(event) => setDiscountReason(event.target.value)}
+                  onChange={(event) => {
+                    setDiscountReason(event.target.value);
+                    fix('discount');
+                  }}
                 />
+                {problems.discount && <p className="text-sm text-stop">{problems.discount}</p>}
               </fieldset>
-              <Field label="Anything that made it cost more or less?" htmlFor="job-notes">
+              <Field
+                label="Anything that made it cost more or less?"
+                htmlFor="job-notes"
+                error={problems.notes}
+              >
                 <TextArea
                   id="job-notes"
                   rows={2}
                   placeholder="Steep driveway, extra moss, had to haul water"
                   value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
+                  onChange={(event) => {
+                    setNotes(event.target.value);
+                    fix('notes');
+                  }}
+                  {...mark('notes')}
                 />
               </Field>
             </div>

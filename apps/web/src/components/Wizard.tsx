@@ -6,6 +6,7 @@ import { api, errorMessage, json } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
 import { cx } from '@/lib/util';
 import { Logo } from './Logo';
+import { AccountMenu } from './owner/AccountMenu';
 import { Sheet } from './Sheet';
 import { useToast } from './Toast';
 import { Button, Field, TextInput } from './ui';
@@ -54,8 +55,10 @@ function Stepper({ step }: { step: 1 | 2 | 3 }) {
 }
 
 export function WizardHeader({ step, children }: { step: 1 | 2 | 3; children?: ReactNode }) {
-  const { save, flush } = useOnboarding();
+  const { state, save, flush } = useOnboarding();
   const [saveOpen, setSaveOpen] = useState(false);
+  // Before signup there's nothing to sign out of, and "Finish later" emails a link back instead.
+  const signedIn = state ? !state.draft : false;
   return (
     <header
       className="sticky z-40 border-b border-line bg-bg/92 backdrop-blur-md"
@@ -66,35 +69,49 @@ export function WizardHeader({ step, children }: { step: 1 | 2 | 3; children?: R
           <Logo href="/" />
         </div>
         <Stepper step={step} />
-        {save === 'failed' ? (
-          <button
-            type="button"
-            onClick={() => void flush()}
-            className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm text-stop hover:bg-stop-soft"
-          >
-            <CloudAlert className="size-4" aria-hidden /> Not saved.{' '}
-            <span className="underline underline-offset-4">Try again</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setSaveOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink"
-          >
-            {save === 'saving' ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <CloudCheck className="size-4" aria-hidden />
-            )}
-            <span className="hidden sm:inline" aria-live="polite">
-              {save === 'saving' ? 'Saving…' : 'Saved.'}
-            </span>{' '}
-            <span className="underline underline-offset-4">
-              <span className="sm:hidden">Later</span>
-              <span className="hidden sm:inline">Finish later</span>
-            </span>
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {save === 'failed' ? (
+            <button
+              type="button"
+              onClick={() => void flush()}
+              className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm text-stop hover:bg-stop-soft"
+            >
+              <CloudAlert className="size-4" aria-hidden /> Not saved.{' '}
+              <span className="underline underline-offset-4">Try again</span>
+            </button>
+          ) : signedIn ? (
+            <p className="inline-flex items-center gap-1.5 px-2 py-1.5 text-sm text-muted">
+              {save === 'saving' ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <CloudCheck className="size-4" aria-hidden />
+              )}
+              <span className="hidden sm:inline" aria-live="polite">
+                {save === 'saving' ? 'Saving…' : 'Saved.'}
+              </span>
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSaveOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink"
+            >
+              {save === 'saving' ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <CloudCheck className="size-4" aria-hidden />
+              )}
+              <span className="hidden sm:inline" aria-live="polite">
+                {save === 'saving' ? 'Saving…' : 'Saved.'}
+              </span>{' '}
+              <span className="underline underline-offset-4">
+                <span className="sm:hidden">Later</span>
+                <span className="hidden sm:inline">Finish later</span>
+              </span>
+            </button>
+          )}
+          {signedIn && state && <AccountMenu business={state.business.name || 'Your business'} />}
+        </div>
       </div>
       <div
         className={cx(

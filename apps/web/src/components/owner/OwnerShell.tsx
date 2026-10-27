@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Mail } from 'lucide-react';
 import { Logo } from '@/components/Logo';
+import { AccountMenu } from '@/components/owner/AccountMenu';
 import { EmailCode } from '@/components/owner/EmailCode';
 import { ToastProvider } from '@/components/Toast';
 import { Button } from '@/components/ui';
@@ -92,9 +93,9 @@ function SignedIn({ children }: { children: ReactNode }) {
                 <NavLink key={item.href} {...item} active={active(item.href)} />
               ))}
             </nav>
-            <p className="ml-auto hidden truncate text-sm text-muted md:block">
-              {me.business.name}
-            </p>
+            <div className="ml-auto min-w-0">
+              <AccountMenu business={me.business.name} name={me.user.name} email={me.user.email} />
+            </div>
           </div>
           <nav aria-label="Main" className="gutter flex gap-1 overflow-x-auto pb-2 sm:hidden">
             {NAV.map((item) => (
