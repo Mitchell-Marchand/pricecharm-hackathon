@@ -24,17 +24,20 @@ export function ReadinessCard({
   nextHref,
   className,
 }: {
-  readiness: AgentReadiness;
+  /** Nothing shows without one. */
+  readiness?: AgentReadiness;
   /** Takes the next step right here, like opening the job form. */
   onNext?: (next: Next) => void;
   /** Or a page to take it on. */
   nextHref?: string;
   className?: string;
 }) {
-  const { score, next } = readiness;
+  const score = readiness?.score ?? 0;
+  const next = readiness?.next ?? null;
   // Points gained since this browser last showed it, so training feels like it's going somewhere.
   const [gained, setGained] = useState(0);
   useEffect(() => {
+    if (!readiness) return;
     try {
       const last = Number(localStorage.getItem(STORE));
       if (last && score > last) setGained(score - last);
@@ -42,7 +45,8 @@ export function ReadinessCard({
     } catch {
       // Private browsing: no running tally, and nothing else changes.
     }
-  }, [score]);
+  }, [readiness, score]);
+  if (!readiness) return null;
 
   return (
     <section

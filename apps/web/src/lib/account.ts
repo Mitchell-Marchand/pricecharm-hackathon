@@ -51,7 +51,8 @@ export interface Profile {
   /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
   services: ServiceReadiness[];
   autoSendReady: boolean;
-  readiness: AgentReadiness;
+  /** Missing from an API older than this page, as when web and API deploy a moment apart. */
+  readiness?: AgentReadiness;
   /** The AI's record on real quotes the owner checked before sending. */
   live: {
     reviewed: number;

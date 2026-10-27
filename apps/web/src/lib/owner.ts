@@ -1,7 +1,7 @@
 import { api, json } from './api';
 import type { AgentReadiness, Profile } from './account';
 import { money } from './util';
-import type { Plan, PlanChoice, Pricing } from './plans';
+import { DEFAULT_PRICING, type Plan, type PlanChoice, type Pricing } from './plans';
 import type { Quote } from './quote';
 
 export type QuoteStatus =
@@ -26,7 +26,8 @@ export interface Home {
   autoSend: boolean;
   autoSendLimitCents: number;
   websiteDomain: string;
-  readiness: AgentReadiness;
+  /** Missing from an API older than this page, as when web and API deploy a moment apart. */
+  readiness?: AgentReadiness;
 }
 
 export interface QuoteCheck {
@@ -114,7 +115,29 @@ export interface Billing {
   reason: string;
 }
 
-export const loadBilling = () => api<Billing>('/app/billing');
+/**
+ * Billing with anything an older API leaves out filled in, as when the web app and the API deploy
+ * a moment apart, so pages show what they can instead of breaking.
+ */
+function complete(billing: Billing): Billing {
+  return {
+    ...billing,
+    plan: billing.plan ?? null,
+    nextPlan: billing.nextPlan ?? null,
+    planOrder: billing.planOrder?.length
+      ? billing.planOrder
+      : ['per_quote', 'per_accepted', 'subscription'],
+    pricing: billing.pricing ?? DEFAULT_PRICING,
+    freeWeek: billing.freeWeek ?? true,
+    periodEnd: billing.periodEnd ?? null,
+    coveredThisMonth: billing.coveredThisMonth ?? 0,
+    // Before deploying existed, a link with billing in place was already taking requests.
+    linkOn: billing.linkOn ?? true,
+    deployed: billing.deployed ?? true,
+  };
+}
+
+export const loadBilling = () => api<Billing>('/app/billing').then(complete);
 export const saveSpendingCap = (spendingCapCents: number) =>
   api('/billing', { method: 'PATCH', ...json({ spendingCapCents }) });
 /** Where to add a card. From setup, it comes back to setup's last screen. */
@@ -125,14 +148,16 @@ export const startCheckout = (from?: 'setup') =>
   });
 /** Picks or switches the plan. Off a paid subscription, it waits for the end of the period. */
 export const choosePlan = (plan: Plan) =>
-  api<Billing>('/app/billing/plan', { method: 'POST', ...json({ plan }) });
+  api<Billing>('/app/billing/plan', { method: 'POST', ...json({ plan }) }).then(complete);
 /** Deploys the agent: the quote link starts taking requests. Needs a plan and a card. */
-export const deployAgent = () => api<Billing>('/app/deploy', { method: 'POST', ...json({}) });
+export const deployAgent = () =>
+  api<Billing>('/app/deploy', { method: 'POST', ...json({}) }).then(complete);
 /** Pauses the quote link, or turns it back on. */
 export const setLinkOn = (on: boolean) =>
-  api<Billing>('/app/link', { method: 'PATCH', ...json({ on }) });
+  api<Billing>('/app/link', { method: 'PATCH', ...json({ on }) }).then(complete);
 /** Billing as Stripe has it right now, for coming back from adding a card. */
-export const syncBilling = () => api<Billing>('/app/billing/sync', { method: 'POST', ...json({}) });
+export const syncBilling = () =>
+  api<Billing>('/app/billing/sync', { method: 'POST', ...json({}) }).then(complete);
 export const openBillingPortal = () =>
   api<{ url: string }>('/billing/portal', { method: 'POST', ...json({}) });
 export const deleteAccount = (password: string, confirmation: string) =>

@@ -296,29 +296,27 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await page.getByLabel('Password', { exact: true }).fill('test password strong123');
   await page.getByRole('button', { name: 'Create account' }).click();
 
-  // Straight on to a plan and a card on this same page, then deploying. No email check first.
-  await expect(page.getByRole('heading', { name: 'Two quick steps to go live.' })).toBeVisible();
-  await expect(page).toHaveURL(/\/start\/account$/);
-  const steps = page.getByRole('list', { name: 'Before you go live' });
-  const addCard = steps.getByRole('button', { name: 'Add a card' });
-  await expect(addCard, 'Nothing is picked for them').toBeDisabled();
-  await expect(steps.getByRole('radio')).toHaveCount(3);
-  await steps.getByRole('radio', { name: /^\$49 a month or \$499 a year/ }).check();
-  await expect(steps).toContainText('First week free. 100 quotes a month included, then $1 each.');
-  await steps.getByRole('radio', { name: 'Yearly', exact: true }).click();
-  await steps.getByRole('radio', { name: /^\$2 per quote/ }).check();
-
-  // Leaving before the card leaves them a step short, and the live page says so.
-  await page.getByRole('button', { name: /I.ll finish this later/ }).click();
+  // Straight to the plans, then a card, then deploying. No email check first.
   await expect(page).toHaveURL(/\/start\/live$/);
-  await expect(page.getByRole('heading', { name: 'Almost live.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Pick a plan. Then go live.' })).toBeVisible();
+  const plans = page.getByRole('list', { name: 'Plans' });
+  for (const name of ['Pay per quote', 'Pay when you win', 'Subscription'])
+    await expect(plans.getByRole('listitem', { name, exact: true })).toBeVisible();
+  const subscription = plans.getByRole('listitem', { name: 'Subscription' });
+  await expect(subscription).toContainText('First week free');
+  await subscription.getByRole('radio', { name: 'Yearly' }).click();
+  await expect(subscription).toContainText('$499');
+  await expect(page.getByText('Switch plans or cancel any time.', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
-  await steps.getByRole('radio', { name: /^\$2 per quote/ }).check();
-  await addCard.click();
-  await expect(steps).toContainText('$2 per quote. Card added.');
+  await plans
+    .getByRole('listitem', { name: 'Pay per quote' })
+    .getByRole('button', { name: 'Start with $2 a quote' })
+    .click();
+  await expect(page.getByRole('heading', { name: 'Ready when you are.' })).toBeVisible();
+  await expect(page.getByText('$2 per quote, card added')).toBeVisible();
+  await expect(page.getByText(/It.s \d+% ready, so for now it drafts each quote/)).toBeVisible();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
-  await expect(steps).toContainText(/Your agent is \d+% ready, so for now it drafts each quote/);
-  await steps.getByRole('button', { name: 'Deploy your agent' }).click();
+  await page.getByRole('button', { name: 'Deploy your agent' }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByText(/You.re all set, Maya/)).toBeVisible();

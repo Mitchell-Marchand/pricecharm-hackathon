@@ -116,7 +116,7 @@ export default function QuotesHome() {
       </div>
 
       {billing && <GoLiveCard billing={billing} onChange={setBilling} className="mt-8" />}
-      {home.readiness.next && (
+      {home.readiness?.next && (
         <ReadinessCard className="mt-8" readiness={home.readiness} nextHref="/app/train" />
       )}
 

@@ -5,14 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import { Logo } from '@/components/Logo';
-import { GoLiveSteps } from '@/components/owner/GoLive';
 import { SetupLoading } from '@/components/SetupLoading';
 import { Button, Field, TextInput } from '@/components/ui';
 import { register } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
 import { useHumanCheck } from '@/lib/human-check';
 import { useOnboarding } from '@/lib/onboarding';
-import { loadBilling, type Billing } from '@/lib/owner';
 import { tradeName } from '@/lib/trades';
 
 const MIN_PASSWORD = 10;
@@ -29,25 +27,12 @@ export default function AccountStep() {
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<{ message: string; exists?: boolean } | null>(null);
-  // Once the account exists, this page goes on to choosing a plan and adding a card.
-  const [signedUp, setSignedUp] = useState(false);
-  const [billing, setBilling] = useState<Billing | null>(null);
-
-  // Signed up before, on another visit: the live page has whatever is left.
+  // Signed up already: the live page has the plans and whatever else is left.
   useEffect(() => {
-    if (state && !state.draft && !signedUp) router.replace('/start/live');
-  }, [state, signedUp, router]);
+    if (state && !state.draft) router.replace('/start/live');
+  }, [state, router]);
 
-  if (!state || (!state.draft && !signedUp)) return <SetupLoading />;
-  if (signedUp)
-    return (
-      <GoingLive
-        business={state.business.name || 'Your business'}
-        billing={billing}
-        onDeployed={() => void goTo('live')}
-        onLater={() => void goTo('live')}
-      />
-    );
+  if (!state || !state.draft) return <SetupLoading />;
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const passwordOk = password.length >= MIN_PASSWORD;
   const business = state.business.name || 'Your business';
@@ -68,11 +53,8 @@ export default function AccountStep() {
         },
         await human.headers(),
       );
-      setSignedUp(true);
       reload();
-      loadBilling()
-        .then(setBilling)
-        .catch(() => void goTo('live'));
+      await goTo('live');
     } catch (registerError) {
       setError({
         message: errorMessage(registerError),
@@ -200,48 +182,6 @@ export default function AccountStep() {
             .
           </p>
         </form>
-      </main>
-    </div>
-  );
-}
-
-/** Right after signing up: a plan and a card, on this same page, then deploying. */
-function GoingLive({
-  business,
-  billing,
-  onDeployed,
-  onLater,
-}: {
-  business: string;
-  billing: Billing | null;
-  onDeployed: () => void;
-  onLater: () => void;
-}) {
-  return (
-    <div className="min-h-dvh">
-      <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
-        <Logo href="/" />
-      </header>
-      <main className="gutter mx-auto max-w-[640px] pt-6 pb-20">
-        <h1 className="t-h1 mt-5">Two quick steps to go live.</h1>
-        <p className="mt-3 text-lg text-ink-2">
-          Your account is saved. Choose how you’d like to pay, then deploy your agent and {business}{' '}
-          can send customers real quotes.
-        </p>
-        <div className="mt-8">
-          {billing ? (
-            <GoLiveSteps billing={billing} onDeployed={onDeployed} />
-          ) : (
-            <div className="shimmer h-48 rounded-md" aria-busy="true" />
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onLater}
-          className="mt-6 text-sm text-muted underline underline-offset-4 hover:text-ink"
-        >
-          I&apos;ll finish this later
-        </button>
       </main>
     </div>
   );

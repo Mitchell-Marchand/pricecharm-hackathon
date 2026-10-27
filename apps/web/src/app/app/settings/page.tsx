@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
-import { PlanPicker } from '@/components/owner/PlanPicker';
+import { PlanCards } from '@/components/owner/PlanCards';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Button, Field, MoneyInput, Segmented, TextInput } from '@/components/ui';
@@ -248,17 +248,17 @@ function BillingDetails({
 }) {
   const notify = useToast();
   const [picking, setPicking] = useState(!billing.plan);
-  const [plan, setPlan] = useState<Plan | null>(billing.plan);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState<Plan | null>(null);
   const paying = billing.status === 'active' || billing.status === 'trialing';
   const { pricing } = billing;
 
-  async function savePlan() {
-    if (!plan || saving) return;
-    setSaving(true);
+  // With a card on file it's a switch. Without one, choosing a plan goes on to adding a card.
+  async function choose(plan: Plan) {
+    setBusy(plan);
     try {
       const saved = await choosePlan(plan);
       onChange(saved);
+      if (!paying && saved.checkoutAvailable) return go(startCheckout);
       setPicking(false);
       notify(
         saved.nextPlan && saved.periodEnd
@@ -268,7 +268,7 @@ function BillingDetails({
     } catch (planError) {
       notify(errorMessage(planError));
     } finally {
-      setSaving(false);
+      setBusy(null);
     }
   }
 
@@ -310,20 +310,18 @@ function BillingDetails({
 
       {picking ? (
         <div className="flex flex-col gap-4">
-          <PlanPicker billing={billing} value={plan} onChange={setPlan} />
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={!plan || saving || plan === billing.plan}
-              onClick={() => void savePlan()}
-            >
-              {saving ? 'Saving…' : 'Save plan'}
+          <PlanCards
+            billing={billing}
+            current={billing.plan}
+            busy={busy}
+            onChoose={(plan) => void choose(plan)}
+            action={() => (paying ? 'Switch to this plan' : 'Choose this plan')}
+          />
+          {billing.plan && (
+            <Button variant="ghost" className="self-start" onClick={() => setPicking(false)}>
+              Keep my plan
             </Button>
-            {billing.plan && (
-              <Button variant="ghost" onClick={() => setPicking(false)}>
-                Cancel
-              </Button>
-            )}
-          </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">

@@ -79,10 +79,11 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await expect(page.getByLabel('Code from the email')).toBeVisible();
   await goLive.getByRole('link', { name: 'Finish going live' }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
-  const steps = page.getByRole('list', { name: 'Before you go live' });
-  await steps.getByRole('radio', { name: /when they say yes/ }).check();
-  await steps.getByRole('button', { name: 'Add a card' }).click();
-  await steps.getByRole('button', { name: 'Deploy your agent' }).click();
+  await page
+    .getByRole('listitem', { name: 'Pay when you win' })
+    .getByRole('button', { name: 'Start with 1% a job' })
+    .click();
+  await page.getByRole('button', { name: 'Deploy your agent' }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await visitor.reload();
   await expect(visitor.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
