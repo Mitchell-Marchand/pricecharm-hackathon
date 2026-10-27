@@ -174,7 +174,7 @@
     scroll-behavior: smooth;
   }
   /* Tailwind resets buttons to the arrow cursor. Anything you can click shows the hand. */
-  button:not(:disabled),
+  button:not(:disabled):not([aria-disabled='true']),
   [role='button']:not([aria-disabled='true']),
   select:not(:disabled),
   summary,

@@ -18,7 +18,6 @@ import { cx, uid } from '@/lib/util';
 /** The API's limits, so the visitor sees them before the server has to say no. */
 const MAX_TEXT = 300;
 const MAX_MESSAGES = 10;
-const NO_UPLOADS = 'File uploads are disabled in demo mode.';
 
 interface Line {
   id: string;
@@ -60,13 +59,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState('');
   const [chips, setChips] = useState<string[]>(services);
-  const [askPhoto, setAskPhoto] = useState(false);
   const [ready, setReady] = useState(false);
   const [serviceName, setServiceName] = useState('');
   const [quote, setQuote] = useState<Quote | null>(null);
   const [done, setDone] = useState(false);
   const [accepted, setAccepted] = useState(false);
-  const [notice, setNotice] = useState('');
   // The scripted version's place and answers.
   const [step, setStep] = useState<Step>('service');
   const [answers, setAnswers] = useState<{
@@ -137,7 +134,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       add({ from: 'bot', text: turn.reply });
       setServiceName(turn.serviceName);
       setReady(turn.ready);
-      setAskPhoto(turn.askPhoto && !turn.ready);
       setChips(
         turn.ready
           ? []
@@ -180,11 +176,9 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       later(() => {
         add({ from: 'bot', text: 'Could you send a photo or two? It helps price it right.' });
         setStep('photo');
-        setAskPhoto(true);
         setChips(['Skip photos']);
       }, 700);
     } else if (step === 'photo') {
-      setAskPhoto(false);
       if (!demo.extra) return toContact();
       later(() => {
         add({ from: 'bot', text: demo.extra!.ask });
@@ -203,7 +197,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     const trimmed = text.trim().slice(0, MAX_TEXT);
     if (!trimmed || busy || full || done) return;
     setDraft('');
-    setNotice('');
     add({ from: 'me', text: trimmed });
     stickToBottom();
     if (quote) {
@@ -278,13 +271,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     setBusy(false);
     setDraft('');
     setChips(services);
-    setAskPhoto(false);
     setReady(false);
     setServiceName('');
     setQuote(null);
     setDone(false);
     setAccepted(false);
-    setNotice('');
     setStep('service');
     setAnswers({});
   }
@@ -312,7 +303,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
         <Tag>Demo</Tag>
       </header>
       <p className="bg-canary-soft px-4 py-2 text-xs text-ink">
-        Sample prices. Your AI asks your questions and quotes your prices.
+        [DEMO] Your AI will actually chat and quote like you would.
       </p>
 
       {/* No overscroll containment: past the end of the chat, the page keeps scrolling. */}
@@ -345,7 +336,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
                           </PaperButton>
                           <PaperButton
                             onClick={() => {
-                              setNotice('');
                               document
                                 .getElementById(`demo-message-${demo.tradeId}`)
                                 ?.focus({ preventScroll: true });
@@ -399,11 +389,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
 
       <footer className="flex flex-col gap-2 border-t border-line bg-surface px-3 py-3">
         <div ref={human.slot} />
-        {(askPhoto || notice) && !busy && (
-          <p className="text-xs text-muted" role="status">
-            {notice || NO_UPLOADS}
-          </p>
-        )}
         {chips.length > 0 && !busy && !done && !quote && (
           <div className="flex flex-wrap gap-2">
             {chips.map((chip) => (
@@ -437,14 +422,26 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
               send(draft);
             }}
           >
-            <button
-              type="button"
-              onClick={() => setNotice(NO_UPLOADS)}
-              aria-label="Add a photo"
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-surface-2 hover:text-ink"
-            >
-              <Camera className="size-5" />
-            </button>
+            {/* Uploads are off in the demo. It stays focusable, so the tooltip shows on tab and tap too. */}
+            <span className="group relative shrink-0">
+              <button
+                type="button"
+                aria-disabled="true"
+                aria-label="Add a photo"
+                aria-describedby={`demo-uploads-${demo.tradeId}`}
+                onClick={(event) => event.preventDefault()}
+                className="inline-flex size-11 items-center justify-center rounded-full text-ink-2 opacity-40"
+              >
+                <Camera className="size-5" />
+              </button>
+              <span
+                id={`demo-uploads-${demo.tradeId}`}
+                role="tooltip"
+                className="pointer-events-none absolute bottom-full left-0 mb-2 w-max rounded-sm bg-ink px-2.5 py-1.5 text-xs font-medium text-on-ink opacity-0 shadow-2 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+              >
+                File uploads disabled for demo
+              </span>
+            </span>
             <label htmlFor={`demo-message-${demo.tradeId}`} className="sr-only">
               Message
             </label>
