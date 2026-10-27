@@ -32,7 +32,7 @@ export type Estimate = {
 };
 
 /** Points to trust a rate, and how far outside the sizes they've done it still holds. */
-const SOLID_POINTS = 3;
+export const SOLID_POINTS = 3;
 const STRETCH = { below: 0.5, above: 1.5 };
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -73,11 +73,21 @@ export function estimateFor(
   const rate = rates.find((item) => same(item.service, service) && item.unit === unit);
   if (!rate) return null;
   const cents = Math.round(Math.max(rate.floorCents, rate.centsPerUnit * quantity) / 100) * 100;
-  const solid =
-    rate.points >= SOLID_POINTS &&
-    quantity >= rate.smallest * STRETCH.below &&
-    quantity <= rate.largest * STRETCH.above;
+  const sizes = sizeRange(rate);
+  const solid = rate.points >= SOLID_POINTS && quantity >= sizes.from && quantity <= sizes.to;
   return { cents, quantity, unit, rate, solid };
+}
+
+/** The sizes a rate holds for: down to half its smallest job, up to half again its largest. */
+export function sizeRange(rate: Rate): { from: number; to: number } {
+  return { from: rate.smallest * STRETCH.below, to: rate.largest * STRETCH.above };
+}
+
+/** Why an estimate can't be held to: too few jobs, or a size far from the ones they've priced. */
+export function estimateGap(estimate: Estimate): 'few' | 'bigger' | 'smaller' | null {
+  if (estimate.solid) return null;
+  if (estimate.rate.points < SOLID_POINTS) return 'few';
+  return estimate.quantity > estimate.rate.largest ? 'bigger' : 'smaller';
 }
 
 const dollars = (cents: number) =>

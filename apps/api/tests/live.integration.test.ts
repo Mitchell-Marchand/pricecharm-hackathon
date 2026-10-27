@@ -5,7 +5,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
-import { closeDatabase, rows } from '../src/db.js';
+import { closeDatabase, mutate, rows } from '../src/db.js';
+import { json } from '../src/models.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
 const origin = 'http://localhost:3100';
@@ -33,8 +34,9 @@ test(
           area: 'Portland, OR',
         })
         .expect(200);
-      for (const priceCents of [25000, 27500, 30000])
-        await owner
+      const jobIds: string[] = [];
+      for (const priceCents of [25000, 27500, 30000]) {
+        const job = await owner
           .post('/api/v1/onboarding/jobs')
           .set('Origin', origin)
           .send({
@@ -44,6 +46,40 @@ test(
             size: '600 sq ft',
           })
           .expect(201);
+        jobIds.push(String(job.body.data.id));
+      }
+      // Two practice driveways where its guess matched the owner's, so Driveways is learned.
+      const [{ business_id: draftId }] = await rows(
+        'SELECT business_id FROM past_jobs WHERE id=?',
+        [jobIds[0]],
+      );
+      for (const position of [0, 1]) {
+        const lines = [{ id: 'a', label: 'Driveway wash', amountCents: 27500 }];
+        await mutate(
+          `INSERT INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,shadow_json,finished_at)
+           VALUES (?,?,?,'finished',?,'quote',?,?,UTC_TIMESTAMP(3))`,
+          [
+            randomUUID(),
+            draftId,
+            position,
+            JSON.stringify({
+              firstName: 'Dana',
+              lastInitial: 'R',
+              place: '',
+              serviceName: 'Driveways',
+              facts: [],
+            }),
+            JSON.stringify({ lines, discount: null, included: [], excluded: [], validDays: 14 }),
+            JSON.stringify({
+              decision: 'quote',
+              lines,
+              discount: null,
+              cents: 26000,
+              confidence: 'high',
+            }),
+          ],
+        );
+      }
       const signup = await owner
         .post('/api/v1/auth/register')
         .set('Origin', origin)
@@ -54,6 +90,12 @@ test(
           password: 'test password strong123',
         });
       assert.equal(signup.status, 201, JSON.stringify(signup.body));
+      const [created] = await rows('SELECT auto_send FROM businesses WHERE id=?', [draftId]);
+      assert.equal(
+        Boolean(created.auto_send),
+        true,
+        'A learned service sends on its own from signup',
+      );
       return {
         owner,
         id: String(signup.body.data.business.id),
@@ -82,12 +124,15 @@ test(
       return { id, token, base, call, test: started.body.data.chat.test as boolean };
     }
 
-    async function reachQuote(slug: string, agent?: ReturnType<typeof request.agent>) {
+    async function reachQuote(
+      slug: string,
+      agent?: ReturnType<typeof request.agent>,
+      job = { service: 'Driveways', size: 'About 600 sq ft, two cars.' },
+    ) {
       const customer = await chat(slug, agent);
-      let view = (await customer.call('post', '/messages', { text: 'Driveways' })).body.data;
+      let view = (await customer.call('post', '/messages', { text: job.service })).body.data;
       assert.match(view.messages.at(-1).text, /\[Demo\]/);
-      view = (await customer.call('post', '/messages', { text: 'About 600 sq ft, two cars.' })).body
-        .data;
+      view = (await customer.call('post', '/messages', { text: job.size })).body.data;
       assert.deepEqual(view.messages.at(-1).chips, ['Skip photos']);
       view = (await customer.call('post', '/messages', { text: 'Skip photos' })).body.data;
       assert.equal(
@@ -128,6 +173,21 @@ test(
       .set('Origin', origin)
       .send({});
     assert.equal(blocked.body.error?.code, 'BILLING_LIMIT', 'Approving needs billing too');
+    const approveLink = (text: string) => {
+      const found = /\/approve\/([0-9a-f-]{36})#token=([A-Za-z0-9_-]{43})/.exec(text);
+      assert.ok(found, text);
+      return { id: found[1], token: found[2] };
+    };
+    const unpaidLink = approveLink(decryptEmail(alert.payload_encrypted).text);
+    const blockedTap = await request(app)
+      .post(`/api/v1/approve/${unpaidLink.id}`)
+      .set('Origin', origin)
+      .send({ token: unpaidLink.token });
+    assert.equal(
+      blockedTap.body.error?.code,
+      'BILLING_LIMIT',
+      'The email’s link needs billing too',
+    );
 
     // The shop sets up billing the way an owner does: confirm the email, then add a card.
     const verification = await shop.owner
@@ -308,5 +368,104 @@ test(
       (item: { test: boolean }) => item.test,
     );
     assert.equal(listedTests.length, 1);
+
+    // 4. Automatic quotes on, but a size it hasn't priced or a service it hasn't learned waits.
+    await shop.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ autoSend: true })
+      .expect(200);
+    let lastReached: Awaited<ReturnType<typeof reachQuote>> | null = null;
+    async function waitsBecause(job: { service: string; size: string }) {
+      const reached = await reachQuote(shop.slug, undefined, job);
+      lastReached = reached;
+      const view = await reached.customer.call('post', '/verify', {
+        verificationId: reached.contact.verificationId,
+        code: reached.contact.devCode,
+      });
+      assert.equal(view.body.data.waitingForOwner, true, job.size);
+      const [quote] = await rows('SELECT checks_json FROM live_quotes WHERE chat_id=?', [
+        reached.customer.id,
+      ]);
+      return json<{ id: string; passed: boolean; detail: string }[]>(quote.checks_json, []);
+    }
+    const big = await waitsBecause({ service: 'Driveways', size: 'About 2,000 sq ft.' });
+    const bigRequest = lastReached!;
+    const bigChat = bigRequest.customer.id;
+    assert.ok(big.find((check) => check.id === 'learned')?.passed, 'Driveways is learned');
+    assert.match(
+      big.find((check) => check.id === 'size' && !check.passed)?.detail ?? '',
+      /much bigger than the Driveways jobs you’ve priced, which go up to 600 sq ft/,
+    );
+    const house = await waitsBecause({ service: 'House wash', size: 'About 2,000 sq ft.' });
+    assert.match(
+      house.find((check) => check.id === 'learned' && !check.passed)?.detail ?? '',
+      /needs 3 more House wash jobs with a size/,
+    );
+
+    // 5. The "needs your OK" email opens that one quote with an Approve button, no sign-in.
+    const [tappedQuote] = await rows('SELECT id,total_cents FROM live_quotes WHERE chat_id=?', [
+      bigChat,
+    ]);
+    const [tapEmail] = await rows('SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?', [
+      `owner-review:${bigChat}:once`,
+    ]);
+    const emailText = decryptEmail(tapEmail.payload_encrypted).text;
+    assert.match(
+      emailText,
+      /Approve it as it is, no sign-in needed \(this link works for 3 days\)/,
+    );
+    const tapLink = approveLink(emailText);
+    assert.equal(tapLink.id, tappedQuote.id);
+    const passerby = request.agent(app);
+    const tap = (path: string, body: object) =>
+      passerby.post(`/api/v1/approve/${path}`).set('Origin', origin).send(body);
+    const shown = await tap(`${tapLink.id}/view`, { token: tapLink.token });
+    assert.equal(shown.status, 200, JSON.stringify(shown.body));
+    assert.equal(shown.body.data.status, 'waiting');
+    assert.equal(shown.body.data.customer, 'Sam');
+    assert.equal(shown.body.data.totalCents, Number(tappedQuote.total_cents));
+    assert.ok(
+      shown.body.data.reasons.some((reason: string) => /much bigger/.test(reason)),
+      'It says why it waited',
+    );
+    assert.ok(!JSON.stringify(shown.body).includes('@example.test'), 'No contact details');
+    const otherToken = tapLink.token.replace(/^./, (first) => (first === 'A' ? 'B' : 'A'));
+    assert.equal((await tap(`${tapLink.id}/view`, { token: otherToken })).status, 404);
+    assert.equal(
+      (await tap(`${listed.id}/view`, { token: tapLink.token })).status,
+      404,
+      'Only the quote it was sent for',
+    );
+    assert.equal(
+      (await tap(tapLink.id, { token: tapLink.token, card: { lines: [] } })).status,
+      400,
+      'It can only send it as it is',
+    );
+    await mutate(
+      'UPDATE live_quotes SET approve_token_expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE) WHERE id=?',
+      [tapLink.id],
+    );
+    assert.equal(
+      (await tap(tapLink.id, { token: tapLink.token })).body.error?.code,
+      'LINK_EXPIRED',
+    );
+    await mutate(
+      'UPDATE live_quotes SET approve_token_expires_at=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY) WHERE id=?',
+      [tapLink.id],
+    );
+    const tappedSent = await tap(tapLink.id, { token: tapLink.token });
+    assert.equal(tappedSent.status, 200, JSON.stringify(tappedSent.body));
+    assert.equal(tappedSent.body.data.status, 'sent');
+    const [tappedUsage] = await rows('SELECT source FROM quote_usage WHERE quote_id=?', [
+      tapLink.id,
+    ]);
+    assert.equal(tappedUsage.source, 'live_owner', 'Billed like any quote the owner approves');
+    assert.equal((await bigRequest.customer.call('get', '')).body.data.status, 'sent');
+    assert.equal(
+      (await tap(tapLink.id, { token: tapLink.token })).body.error?.code,
+      'QUOTE_NOT_WAITING',
+      'Once sent, a second tap does nothing',
+    );
   },
 );

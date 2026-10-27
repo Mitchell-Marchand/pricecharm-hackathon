@@ -1,4 +1,6 @@
+import { createDecipheriv, createHash } from 'node:crypto';
 import { expect, request, type Browser, type Locator } from '@playwright/test';
+import mysql from 'mysql2/promise';
 
 export const OWNER_PASSWORD = 'test password strong123';
 
@@ -44,20 +46,29 @@ export async function createBusiness(
     await send('post', '/api/v1/auth/verify-email', { token: devToken });
     await send('post', '/api/v1/billing/checkout', {});
   }
+  const slug = String(account.business.slug);
+  const approveWaiting = async () => {
+    const response = await owner.get('/api/v1/app/quotes?filter=review');
+    const [waiting] = (await response.json()).data;
+    return send('post', `/api/v1/app/quotes/${waiting.id}/approve`, {});
+  };
   return {
-    slug: String(account.business.slug),
+    slug,
     email: String(account.user.email),
     context,
     autoSend: (on: boolean) => send('patch', '/api/v1/app/settings', { autoSend: on }),
-    approveWaiting: async () => {
-      const response = await owner.get('/api/v1/app/quotes?filter=review');
-      const [waiting] = (await response.json()).data;
-      return send('post', `/api/v1/app/quotes/${waiting.id}/approve`, {});
+    approveWaiting,
+    /** Two driveway quotes the owner sends as drafted, so driveway quotes can go out on their own. */
+    learnDriveways: async () => {
+      for (const name of ['Lee Park', 'Ana Ruiz']) {
+        await waitingQuote(baseURL, slug, name);
+        await approveWaiting();
+      }
     },
   };
 }
 
-/** A customer asks for a quote through the API, so it waits for the owner. */
+/** A customer asks for a quote through the API, so it waits for the owner. Returns the chat. */
 export async function waitingQuote(baseURL: string, slug: string, name: string) {
   const customer = await request.newContext({
     baseURL,
@@ -83,6 +94,41 @@ export async function waitingQuote(baseURL: string, slug: string, name: string) 
   });
   expect(verified.ok(), await verified.text()).toBe(true);
   await customer.dispose();
+  return String(started.chat.id);
+}
+
+/**
+ * The one-tap Approve link from the "needs your OK" email for a chat, read from the test
+ * database's outbox. Local runs encrypt queued email with a fixed key, never used in production.
+ */
+export async function approveLinkFor(chatId: string): Promise<string> {
+  const db = await mysql.createConnection({
+    host: process.env.DB_HOST ?? '127.0.0.1',
+    port: Number(process.env.DB_PORT ?? 3307),
+    user: process.env.DB_USER ?? 'quoting_engine',
+    password: process.env.DB_PASS ?? 'local-dev-only',
+    database: process.env.DB_NAME ?? 'quoting_test',
+  });
+  try {
+    const [found] = await db.query<mysql.RowDataPacket[]>(
+      'SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?',
+      [`owner-review:${chatId}:once`],
+    );
+    const bytes = Buffer.from(String(found[0].payload_encrypted), 'base64');
+    const key = createHash('sha256')
+      .update('quotient-local-email-provider-never-production')
+      .digest();
+    const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+    decipher.setAuthTag(bytes.subarray(12, 28));
+    const email = JSON.parse(
+      Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8'),
+    ) as { text: string };
+    const link = /https?:\/\/\S+\/approve\/\S+/.exec(email.text)?.[0];
+    expect(link, email.text).toBeTruthy();
+    return link!;
+  } finally {
+    await db.end();
+  }
 }
 
 /**

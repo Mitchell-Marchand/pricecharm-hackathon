@@ -101,8 +101,14 @@ export interface Billing {
 export const loadBilling = () => api<Billing>('/app/billing');
 export const saveSpendingCap = (spendingCapCents: number) =>
   api('/billing', { method: 'PATCH', ...json({ spendingCapCents }) });
-export const startCheckout = () =>
-  api<{ url: string }>('/billing/checkout', { method: 'POST', ...json({}) });
+/** Where to add a card. From setup, it comes back to setup's last screen. */
+export const startCheckout = (from?: 'setup') =>
+  api<{ url: string }>('/billing/checkout', {
+    method: 'POST',
+    ...json(from ? { from } : {}),
+  });
+/** Billing as Stripe has it right now, for coming back from adding a card. */
+export const syncBilling = () => api<Billing>('/app/billing/sync', { method: 'POST', ...json({}) });
 export const openBillingPortal = () =>
   api<{ url: string }>('/billing/portal', { method: 'POST', ...json({}) });
 export const deleteAccount = (password: string, confirmation: string) =>
@@ -116,3 +122,23 @@ export function feeText(tariff: Billing['tariff']): string {
     return `${money(tariff.minimumFeeCents)} for each quote`;
   return `${percent} of each quote, at least ${money(tariff.minimumFeeCents)} and at most ${money(tariff.maximumFeeCents)}`;
 }
+
+/** One waiting quote, as the one-tap link in a "needs your OK" email shows it. */
+export interface ApprovalView {
+  quoteId: string;
+  business: string;
+  customer: string;
+  serviceName: string;
+  status: 'waiting' | 'declined' | 'sent';
+  totalCents: number;
+  card: Quote;
+  details: string;
+  reasons: string[];
+  expiresAt: string;
+}
+
+export const viewApproval = (id: string, token: string) =>
+  api<ApprovalView>(`/approve/${id}/view`, { method: 'POST', ...json({ token }) });
+/** Sends it as it is. The link can't do anything else. */
+export const approveFromLink = (id: string, token: string) =>
+  api<ApprovalView>(`/approve/${id}`, { method: 'POST', ...json({ token }) });

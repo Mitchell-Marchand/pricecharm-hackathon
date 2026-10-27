@@ -138,11 +138,11 @@ export async function loadPricingData(
   );
   const points: PricePoint[] = [];
   for (const job of jobs) {
-    const size = parseQuantity(job.size) ?? parseQuantity(job.description);
-    if (size)
+    if (job.quantity && job.unit)
       points.push({
         service: job.serviceName,
-        ...size,
+        quantity: job.quantity,
+        unit: job.unit,
         cents: undiscounted(job.priceCents, job.discount),
         source: 'job',
       });

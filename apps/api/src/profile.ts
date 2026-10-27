@@ -4,8 +4,10 @@ import { ok } from './http.js';
 import { json } from './models.js';
 import { listPastJobs } from './past-jobs.js';
 import { practiceState } from './practice/engine.js';
-import { liveReady, liveRecord, LIVE_WINDOW } from './pricing/accuracy.js';
+import { liveRecord, LIVE_WINDOW } from './pricing/accuracy.js';
 import { loadPricingData } from './pricing/history.js';
+import { fitRates } from './pricing/rates.js';
+import { businessReadiness } from './pricing/readiness.js';
 import type { Insight, PracticeScenario, Quote } from './practice/types.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
@@ -65,12 +67,13 @@ export async function pricingProfile(businessId: string) {
       ? `Jobs more than ${radius} miles from ${area}`
       : 'Jobs outside your service area',
     'Services you don’t offer, or anything it hasn’t seen before',
+    'Jobs much bigger or smaller than ones you’ve priced',
   );
   const practice = await practiceState(businessId);
   const record = await liveRecord(businessId);
   const recent = record.slice(0, LIVE_WINDOW);
-  const ready = liveReady(record);
   const data = await loadPricingData(businessId);
+  const services = await businessReadiness(businessId, fitRates(data.points));
   return {
     asks: await questionChecklist(businessId),
     prices: prices.slice(0, 6),
@@ -78,13 +81,13 @@ export async function pricingProfile(businessId: string) {
     rates: data.history.rates.slice(0, 8),
     handoffs,
     results: practice.results,
-    /** Once enough real quotes are reviewed, their record decides; until then, practice does. */
-    autoSendReady: ready ?? practice.autoSendReady,
+    /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
+    services,
+    autoSendReady: services.some((item) => item.ready),
     live: {
       reviewed: record.length,
       considered: recent.length,
       agreed: recent.filter((item) => item.agree).length,
-      decides: ready !== null,
       recent: recent.slice(0, 5),
     },
     liveQuotesLearned: data.history.liveQuotes.length,

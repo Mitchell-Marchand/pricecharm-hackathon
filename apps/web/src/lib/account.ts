@@ -6,10 +6,29 @@ import type { Quote } from './quote';
 export interface ReviewedQuote {
   quoteId: string;
   customer: string;
+  service: string;
+  sentAt: string;
   draftCents: number | null;
   sentCents: number;
   gap: number | null;
   agree: boolean;
+}
+
+/** Whether one service's quotes can go out without the owner, and what it needs if not. */
+export interface ServiceReadiness {
+  service: string;
+  ready: boolean;
+  sizedPrices: number;
+  checked: number;
+  matched: number;
+  /** Sized jobs it still needs before its guesses can be checked. */
+  jobsToGo: number;
+  /** Close guesses it still needs among its latest ones. None once it's ready. */
+  matchesToGo: number;
+  /** "150 to 1,800 sq ft": the sizes it sends on its own. Bigger or smaller jobs wait. */
+  covers: string;
+  /** Why its quotes wait for the owner. Empty once it's ready. */
+  reason: string;
 }
 
 export interface Profile {
@@ -19,13 +38,14 @@ export interface Profile {
   rates: string[];
   handoffs: string[];
   results: PracticeResult[];
+  /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
+  services: ServiceReadiness[];
   autoSendReady: boolean;
-  /** The AI's record on real quotes. Once it `decides`, it replaces practice for auto-send. */
+  /** The AI's record on real quotes the owner checked before sending. */
   live: {
     reviewed: number;
     considered: number;
     agreed: number;
-    decides: boolean;
     recent: ReviewedQuote[];
   };
   liveQuotesLearned: number;
@@ -63,14 +83,24 @@ export const saveShare = (patch: { website?: string; widgetStyle?: Share['widget
 export const sendInstructions = (email: string) =>
   api('/share/instructions', { method: 'POST', ...json({ email }) });
 /** On a local run the API also returns the link's token, since no email is sent. */
+/** A new confirmation email, with a fresh code and link. Locally both come back here instead. */
 export const resendVerification = () =>
-  api<{ devToken?: string }>('/auth/request-verification', { method: 'POST', ...json({}) });
+  api<{ devToken?: string; devCode?: string | null }>('/auth/request-verification', {
+    method: 'POST',
+    ...json({}),
+  });
+export const confirmEmailCode = (code: string) =>
+  api('/auth/verify-email-code', { method: 'POST', ...json({ code }) });
 
 export function register(
   body: { firstName: string; lastName: string; email: string; password: string },
   headers: Record<string, string>,
 ) {
-  return api<Me>('/auth/register', { method: 'POST', headers, ...json(body) });
+  return api<Me & { devCode?: string | null }>('/auth/register', {
+    method: 'POST',
+    headers,
+    ...json(body),
+  });
 }
 
 export const login = (email: string, password: string) =>

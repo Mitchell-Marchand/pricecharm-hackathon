@@ -8,7 +8,6 @@ import type { PastJob } from '@/lib/jobs';
 import { useOnboarding } from '@/lib/onboarding';
 import { preparePractice } from '@/lib/practice';
 import { TRADES_BY_ID } from '@/lib/trades';
-import { cx } from '@/lib/util';
 
 export default function JobsStep() {
   const { state, goTo } = useOnboarding();
@@ -35,34 +34,19 @@ export default function JobsStep() {
       <main className="gutter mx-auto w-full max-w-[680px] flex-1 pt-10 pb-16 sm:pt-14">
         <h1 className="t-h1">Add a few jobs you've already done.</h1>
         <p className="mt-3 text-lg text-ink-2">
-          Real jobs teach it your prices. Photos help a lot. Three is a good start.
+          Start with three of different sizes for your main service, with what you charged. Photos
+          help a lot.
         </p>
         <div className="mt-8">
           <PastJobsEditor
             services={services}
             jobHint={trade?.jobHint}
+            sizeHint={trade?.sizeHint}
             onJobsChange={onJobsChange}
           />
         </div>
         {count > 0 && (
-          <div
-            className="mt-8 flex items-center gap-3"
-            aria-label={`${count} of 3 suggested jobs added`}
-          >
-            <div className="flex w-28 gap-1" aria-hidden>
-              {[0, 1, 2].map((slot) => (
-                <span
-                  key={slot}
-                  className={cx('h-1.5 flex-1 rounded-full', slot < count ? 'bg-ink' : 'bg-line')}
-                />
-              ))}
-            </div>
-            <p className="text-sm text-muted">
-              {count >= 3
-                ? 'Nice. That gives your AI plenty to go on.'
-                : `${count} added. ${3 - count} more will sharpen its quotes, or continue now.`}
-            </p>
-          </div>
+          <p className="mt-6 text-sm text-muted">You can continue now and add more later.</p>
         )}
       </main>
       <BottomBar

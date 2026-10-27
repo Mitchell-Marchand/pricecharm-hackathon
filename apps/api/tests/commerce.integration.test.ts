@@ -115,6 +115,45 @@ test(
         .expect(201);
       businesses.push(other.body.data.business.id);
       assert.equal(registered.body.data.user.emailVerified, false);
+
+      // The confirmation email has a code too, typed on the page the owner signed up on.
+      const signupCode = other.body.data.devCode as string;
+      assert.match(signupCode, /^\d{6}$/, 'Signup sends a code along with the link');
+      const confirm = (agent: typeof b, code: string) =>
+        agent.post('/api/v1/auth/verify-email-code').set('Origin', origin).send({ code });
+      const wrongCode = signupCode === '000000' ? '111111' : '000000';
+      assert.equal((await confirm(guest, signupCode)).status, 401, 'Only the signed-in owner');
+      assert.equal(
+        (await confirm(a, signupCode)).body.error?.code,
+        'CODE_INVALID',
+        'Codes are per owner',
+      );
+      assert.equal((await confirm(b, wrongCode)).body.error?.code, 'CODE_INVALID');
+      assert.equal((await confirm(b, '12345')).status, 400);
+      await confirm(b, signupCode).expect(200);
+      assert.equal((await b.get('/api/v1/auth/me')).body.data.user.emailVerified, true);
+      await confirm(b, signupCode).expect(200);
+      const resent = await a
+        .post('/api/v1/auth/request-verification')
+        .set('Origin', origin)
+        .send({})
+        .expect(200);
+      const retired = resent.body.data.devCode as string;
+      const fresh = await a
+        .post('/api/v1/auth/request-verification')
+        .set('Origin', origin)
+        .send({})
+        .expect(200);
+      if (retired !== fresh.body.data.devCode)
+        assert.equal((await confirm(a, retired)).status, 400, 'A new code retires the old one');
+      const freshWrong = fresh.body.data.devCode === '000000' ? '111111' : '000000';
+      for (let attempt = 0; attempt < 5; attempt++) await confirm(a, freshWrong).expect(400);
+      assert.equal(
+        (await confirm(a, fresh.body.data.devCode)).status,
+        400,
+        'Five wrong guesses use up a code',
+      );
+      assert.equal((await a.get('/api/v1/auth/me')).body.data.user.emailVerified, false);
       const verification = await a
         .post('/api/v1/auth/request-verification')
         .set('Origin', origin)
@@ -290,6 +329,15 @@ test(
         .send({})
         .expect(200);
       assert.match(checkout.body.data.url, /\/app\/settings\?billing=active$/);
+      const fromSetup = await b
+        .post('/api/v1/billing/checkout')
+        .set('Origin', origin)
+        .send({ from: 'setup' })
+        .expect(200);
+      assert.match(fromSetup.body.data.url, /\/start\/live\?billing=active$/, 'Back to setup');
+      const synced = await b.post('/api/v1/app/billing/sync').set('Origin', origin).send({});
+      assert.equal(synced.status, 200, JSON.stringify(synced.body));
+      assert.equal(synced.body.data.canSend, true, 'Setup can say they’re live straight away');
       await a
         .patch('/api/v1/billing')
         .set('Origin', origin)

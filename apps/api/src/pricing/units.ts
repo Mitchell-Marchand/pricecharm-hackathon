@@ -108,3 +108,10 @@ export function formatQuantity(quantity: number, unit: string): string {
   const amount = formatNumber(quantity);
   return amount === '1' && unit.endsWith('s') ? `1 ${unit.slice(0, -1)}` : `${amount} ${unit}`;
 }
+
+/** 2,350 becomes 2,400; 37 becomes 35. Sizes a customer would say, rounded up or down if asked. */
+export function roundSize(value: number, direction: 'nearest' | 'up' | 'down' = 'nearest'): number {
+  const step = value >= 1000 ? 100 : value >= 100 ? 50 : value >= 10 ? 5 : 1;
+  const round = direction === 'up' ? Math.ceil : direction === 'down' ? Math.floor : Math.round;
+  return Math.max(step, round(value / step) * step);
+}

@@ -14,9 +14,10 @@ import { ApiError, ok } from './http.js';
 import { isDisposableEmail } from './email-domains.js';
 import { businessById, type Row } from './models.js';
 import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './verification.js';
-import { hashingSecret } from './config.js';
+import { devTokensAllowed, hashingSecret } from './config.js';
+import { mailProvider } from './integrations/email.js';
 import { clearDraftCookie, draftFromRequest } from './workspace.js';
-import { practiceState } from './practice/engine.js';
+import { businessReadiness } from './pricing/readiness.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -225,6 +226,7 @@ export const register: RequestHandler = async (req, res) => {
   const userId = randomUUID();
   let businessId: string = randomUUID();
   let claimed = false;
+  let code: string | null = null;
   try {
     await transaction(async (connection) => {
       const draft = await draftFromRequest(req, connection, true);
@@ -234,8 +236,8 @@ export const register: RequestHandler = async (req, res) => {
       if (draft) {
         businessId = String(draft.id);
         claimed = true;
-        // Quotes go out on their own from day one if the AI's last two practice guesses matched.
-        const { autoSendReady } = await practiceState(businessId);
+        // Quotes go out on their own from day one only for a service it has already learned.
+        const autoSendReady = (await businessReadiness(businessId)).some((item) => item.ready);
         await mutate(
           "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',auto_send=?,draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
           [businessName, businessSlug(businessName, businessId), autoSendReady, businessId],
@@ -253,10 +255,10 @@ export const register: RequestHandler = async (req, res) => {
         connection,
       );
       await createSession(userId, res, connection);
-      await createOwnerToken(
+      ({ code } = await createOwnerToken(
         { userId, businessId, email: input.email, purpose: 'verify_email' },
         connection,
-      );
+      ));
     });
   } catch (error) {
     if ((error as { code?: string }).code === 'ER_DUP_ENTRY')
@@ -272,6 +274,8 @@ export const register: RequestHandler = async (req, res) => {
     ok({
       user: { id: userId, name, firstName, lastName, email: input.email, emailVerified: false },
       business: await businessById(businessId),
+      // Locally no email goes out, so tests and local setups read the code from here.
+      ...(mailProvider() === 'local' && devTokensAllowed(req) ? { devCode: code } : {}),
     }),
   );
 };

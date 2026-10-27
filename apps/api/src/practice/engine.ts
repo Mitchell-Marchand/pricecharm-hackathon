@@ -14,7 +14,7 @@ import { specFromScenario } from '../pricing/spec.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
 import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
-import { planSituation, type PracticeMiss } from './plan.js';
+import { focusSituation, planSituation, type PracticeMiss } from './plan.js';
 import {
   gapPercent,
   quoteDraftSchema,
@@ -51,13 +51,17 @@ export async function ensurePracticeRuns(businessId: string, count = PRACTICE_CO
 }
 
 /** Practice customers one business can have in all, setup's three included. */
-export const MAX_PRACTICE_RUNS = 50;
+export const MAX_PRACTICE_RUNS = { draft: 8, active: 50 };
 
 /**
- * Another practice customer after setup, for training whenever the owner likes. If one is still
- * being written or answered, that's the one: the AI never writes two at once for a business.
+ * Another practice customer once setup's three are done, for training whenever the owner likes,
+ * and for one service if they pick it. If one is still being written or answered, that's the one:
+ * the AI never writes two at once for a business.
  */
-export async function addPracticeRun(businessId: string): Promise<string> {
+export async function addPracticeRun(
+  businessId: string,
+  { focus = null, draft = false }: { focus?: string | null; draft?: boolean } = {},
+): Promise<string> {
   return transaction(async (connection) => {
     await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [businessId], connection);
     const runs = await rows(
@@ -67,17 +71,19 @@ export async function addPracticeRun(businessId: string): Promise<string> {
     );
     const open = runs.find((run) => run.status !== 'finished');
     if (open) return String(open.id);
-    if (runs.length >= MAX_PRACTICE_RUNS)
+    if (runs.length >= (draft ? MAX_PRACTICE_RUNS.draft : MAX_PRACTICE_RUNS.active))
       throw new ApiError(
         409,
         'PRACTICE_LIMIT',
-        'That’s a lot of practice. Your AI keeps learning from the quotes you send and the jobs you add.',
+        draft
+          ? 'That’s plenty for now. Create your account to keep practicing from the Train page.'
+          : 'That’s a lot of practice. Your AI keeps learning from the quotes you send and the jobs you add.',
       );
     const id = randomUUID();
     const position = runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1;
     await mutate(
-      'INSERT INTO practice_runs (id,business_id,position) VALUES (?,?,?)',
-      [id, businessId, position],
+      'INSERT INTO practice_runs (id,business_id,position,focus_service) VALUES (?,?,?,?)',
+      [id, businessId, position, focus],
       connection,
     );
     return id;
@@ -97,8 +103,14 @@ export async function kickPreparation(businessId: string) {
 }
 
 /** What the business has taught so far, for choosing what the next practice customer asks. */
-async function nextSituation(businessId: string, position: number, services: string[]) {
+async function nextSituation(
+  businessId: string,
+  position: number,
+  services: string[],
+  focus: string | null,
+) {
   const data = await loadPricingData(businessId);
+  if (focus) return focusSituation(focus, data.points);
   const runs = await rows(
     "SELECT scenario_json,outcome,quote_json,shadow_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
     [businessId, position],
@@ -127,9 +139,15 @@ async function nextSituation(businessId: string, position: number, services: str
   });
 }
 
-async function writeScenario(businessId: string, position: number): Promise<PracticeScenario> {
+async function writeScenario(
+  businessId: string,
+  position: number,
+  focus: string | null,
+): Promise<PracticeScenario> {
   const context = await businessContext(businessId);
-  if (aiMode === 'demo') return demoScenario(position, context.services);
+  const situation = await nextSituation(businessId, position, context.services, focus);
+  if (aiMode === 'demo')
+    return { ...demoScenario(position, focus ? [focus] : context.services), situation };
   const jobs = (await listPastJobs(businessId)).map((job) => ({
     service: job.serviceName,
     description: job.description,
@@ -144,7 +162,6 @@ async function writeScenario(businessId: string, position: number): Promise<Prac
     const scenario = json<PracticeScenario>(row.scenario_json, {} as PracticeScenario);
     return { name: scenario.firstName, service: scenario.serviceName };
   });
-  const situation = await nextSituation(businessId, position, context.services);
   const scenario = await withAiUsage(businessId, `practice:${position}`, () =>
     writePracticeScenario({
       trade: context.trade,
@@ -157,7 +174,8 @@ async function writeScenario(businessId: string, position: number): Promise<Prac
       earlier,
     }),
   );
-  return { ...scenario, situation };
+  // Practice for one service counts toward that service, whatever the AI called it.
+  return { ...scenario, serviceName: focus ?? scenario.serviceName, situation };
 }
 
 async function createPracticePhoto(
@@ -215,7 +233,11 @@ export async function preparePracticeRun(runId: string): Promise<void> {
   try {
     let scenario = json<PracticeScenario | null>(run.scenario_json, null);
     if (!scenario) {
-      scenario = await writeScenario(businessId, Number(run.position));
+      scenario = await writeScenario(
+        businessId,
+        Number(run.position),
+        run.focus_service ? String(run.focus_service) : null,
+      );
       await mutate('UPDATE practice_runs SET scenario_json=? WHERE id=? AND prepare_token=?', [
         JSON.stringify(scenario),
         runId,
@@ -303,6 +325,8 @@ function runView(run: Row, messages: Row[]) {
     failure: run.status === 'failed' ? String(run.failure || '') : null,
     customer: scenario ? customerOf(scenario, position) : null,
     serviceName: scenario?.serviceName ?? null,
+    /** The service the owner asked to practice, known before the customer is written. */
+    focus: run.focus_service ? String(run.focus_service) : null,
     suggestions: scenario?.suggestions ?? [],
     messages:
       run.status === 'preparing'
@@ -381,12 +405,6 @@ export function practiceResults(views: RunView[]): PracticeResult[] {
     });
 }
 
-/** Quotes go out on their own once the AI's last two guesses agreed with the owner. */
-export function autoSendReady(results: PracticeResult[]): boolean {
-  const lastTwo = results.slice(-2);
-  return lastTwo.length === 2 && lastTwo.every((result) => result.agree);
-}
-
 export async function practiceState(businessId: string) {
   const runs = await rows('SELECT * FROM practice_runs WHERE business_id=? ORDER BY position', [
     businessId,
@@ -409,7 +427,6 @@ export async function practiceState(businessId: string) {
     current: firstOpen === -1 ? Math.max(0, views.length - 1) : firstOpen,
     finished: views.filter((run) => run.finished).length,
     results,
-    autoSendReady: autoSendReady(results),
   };
 }
 

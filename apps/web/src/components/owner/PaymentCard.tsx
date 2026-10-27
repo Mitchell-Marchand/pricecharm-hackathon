@@ -44,7 +44,7 @@ export function PaymentCard({
       </p>
       {needsCard && !emailVerified && (
         <p className="mt-2 text-sm text-muted">
-          Confirm your email first. The link went to{' '}
+          Confirm your email first, with the code we sent to{' '}
           <span className="font-semibold text-ink">{email}</span>.
         </p>
       )}

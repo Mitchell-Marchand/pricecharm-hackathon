@@ -1,5 +1,5 @@
-import type { PricePoint } from '../pricing/rates.js';
-import { formatQuantity } from '../pricing/units.js';
+import { median, SOLID_POINTS, type PricePoint } from '../pricing/rates.js';
+import { formatQuantity, roundSize } from '../pricing/units.js';
 
 /** Setup's customers cover a different kind of job each, so the AI sees the range. */
 export const SITUATIONS = [
@@ -33,10 +33,34 @@ export type PlanInput = {
   finished: PracticeMiss[];
 };
 
-/** 2,350 becomes 2,400; 37 becomes 35. Sizes a customer would say. */
-function roundSize(value: number) {
-  const step = value >= 1000 ? 100 : value >= 100 ? 50 : value >= 10 ? 5 : 1;
-  return Math.max(step, Math.round(value / step) * step);
+/** The unit a service is most often priced by, and the sizes priced in it. */
+function pricedSizes(service: string, points: PricePoint[]) {
+  const sizes = points.filter((point) => point.service.toLowerCase() === service.toLowerCase());
+  if (!sizes.length) return null;
+  const units = new Map<string, number>();
+  for (const point of sizes) units.set(point.unit, (units.get(point.unit) ?? 0) + 1);
+  const [unit] = [...units.entries()].sort((a, b) => b[1] - a[1])[0];
+  return {
+    unit,
+    quantities: sizes.filter((point) => point.unit === unit).map((point) => point.quantity),
+  };
+}
+
+/**
+ * A practice customer for one service the owner picked, aimed at what it still needs before its
+ * quotes can go out on their own: a first price, then sizes it hasn't seen, then usual jobs that
+ * check its guesses against the owner's.
+ */
+export function focusSituation(service: string, points: PricePoint[]): string {
+  const priced = pricedSizes(service, points);
+  if (!priced)
+    return `A typical, clear job for their "${service}" service, sized like a usual job for it. Nothing unusual.`;
+  const { unit, quantities } = priced;
+  if (quantities.length === 1)
+    return `A "${service}" job a bit bigger than the one they've priced, around ${formatQuantity(roundSize(quantities[0] * 1.5), unit)}. Nothing else unusual.`;
+  if (quantities.length < SOLID_POINTS)
+    return `A smaller "${service}" job than they've priced so far, around ${formatQuantity(roundSize(Math.min(...quantities) * 0.6), unit)}. Nothing else unusual.`;
+  return `A usual "${service}" job, around ${formatQuantity(roundSize(median(quantities)), unit)}. Nothing unusual.`;
 }
 
 /**
@@ -66,14 +90,9 @@ export function planSituation(input: PlanInput): string {
     return `Another "${last.service}" job like the last one, but a different size, so the AI can see how they scale it.`;
 
   for (const service of input.services) {
-    const sizes = input.points.filter(
-      (point) => point.service.toLowerCase() === service.toLowerCase(),
-    );
-    if (!sizes.length) continue;
-    const units = new Map<string, number>();
-    for (const point of sizes) units.set(point.unit, (units.get(point.unit) ?? 0) + 1);
-    const [unit] = [...units.entries()].sort((a, b) => b[1] - a[1])[0];
-    const quantities = sizes.filter((point) => point.unit === unit).map((point) => point.quantity);
+    const priced = pricedSizes(service, input.points);
+    if (!priced) continue;
+    const { unit, quantities } = priced;
     const largest = Math.max(...quantities),
       smallest = Math.min(...quantities);
     const bigger = fresh(

@@ -19,6 +19,8 @@ export interface PracticeRun {
   failure: string | null;
   customer: { name: string; firstName: string; initials: string; place: string; tone: Tone } | null;
   serviceName: string | null;
+  /** The service the owner asked to practice, if they picked one. */
+  focus: string | null;
   suggestions: string[];
   messages: PracticeMessage[];
   outcome: 'quote' | 'site-visit' | null;
@@ -47,7 +49,6 @@ export interface PracticeState {
   current: number;
   finished: number;
   results: PracticeResult[];
-  autoSendReady: boolean;
 }
 
 export type QuoteDraft = {
@@ -87,11 +88,14 @@ export const retryPractice = (runId: string) =>
   api<PracticeState>(`/onboarding/practice/${runId}/retry`, { method: 'POST', ...json({}) });
 export const finishPractice = () =>
   api<PracticeState>('/onboarding/practice/done', { method: 'POST', ...json({}) });
-/** Another practice customer, once setup is done. An unfinished one comes back instead. */
-export const morePractice = () =>
+/**
+ * Another practice customer once setup's three are done, for one service if given. An unfinished
+ * one comes back instead.
+ */
+export const morePractice = (service?: string | null) =>
   api<{ runId: string; state: PracticeState }>('/onboarding/practice/more', {
     method: 'POST',
-    ...json({}),
+    ...json(service ? { service } : {}),
   });
 
 /** The practice runs, with one of them swapped for a newer copy. */

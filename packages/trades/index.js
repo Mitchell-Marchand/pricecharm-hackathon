@@ -15,7 +15,8 @@ export const TRADES = [
       "Commercial flatwork"
     ],
     "preselect": 4,
-    "jobHint": "Back patio and walkway, about 600 sq ft. Lots of moss in the joints."
+    "jobHint": "Back patio and walkway, about 600 sq ft. Lots of moss in the joints.",
+    "sizeHint": "600 sq ft"
   },
   {
     "id": "window-cleaning",
@@ -28,7 +29,8 @@ export const TRADES = [
       "Storefronts"
     ],
     "preselect": 3,
-    "jobHint": "Two-story house, 24 windows inside and out, screens included."
+    "jobHint": "Two-story house, 24 windows inside and out, screens included.",
+    "sizeHint": "24 windows"
   },
   {
     "id": "gutters",
@@ -40,7 +42,8 @@ export const TRADES = [
       "Gutter brightening"
     ],
     "preselect": 2,
-    "jobHint": "Single-story ranch, about 160 feet of gutter, two clogged downspouts."
+    "jobHint": "Single-story ranch, about 160 feet of gutter, two clogged downspouts.",
+    "sizeHint": "160 ft of gutter"
   },
   {
     "id": "house-cleaning",
@@ -52,7 +55,8 @@ export const TRADES = [
       "Recurring visits"
     ],
     "preselect": 3,
-    "jobHint": "Move-out clean, 3 bed 2 bath, oven and fridge included."
+    "jobHint": "Move-out clean, 3 bed 2 bath, oven and fridge included.",
+    "sizeHint": "3 bed, 2 bath"
   },
   {
     "id": "carpet",
@@ -64,7 +68,8 @@ export const TRADES = [
       "Stain removal"
     ],
     "preselect": 3,
-    "jobHint": "Four bedrooms and a hallway, pet stains in two rooms."
+    "jobHint": "Four bedrooms and a hallway, pet stains in two rooms.",
+    "sizeHint": "4 rooms"
   },
   {
     "id": "lawn",
@@ -76,7 +81,8 @@ export const TRADES = [
       "Leaf cleanup"
     ],
     "preselect": 3,
-    "jobHint": "Quarter-acre lot, weekly mowing and edging for the season."
+    "jobHint": "Quarter-acre lot, weekly mowing and edging for the season.",
+    "sizeHint": "Quarter-acre lot"
   },
   {
     "id": "landscaping",
@@ -89,7 +95,8 @@ export const TRADES = [
       "Seasonal cleanup"
     ],
     "preselect": 3,
-    "jobHint": "Front beds refreshed, 6 yards of mulch, 12 shrubs planted."
+    "jobHint": "Front beds refreshed, 6 yards of mulch, 12 shrubs planted.",
+    "sizeHint": "6 yards of mulch"
   },
   {
     "id": "trees",
@@ -101,7 +108,8 @@ export const TRADES = [
       "Storm cleanup"
     ],
     "preselect": 3,
-    "jobHint": "Removed a 40 ft maple near the house, hauled everything away."
+    "jobHint": "Removed a 40 ft maple near the house, hauled everything away.",
+    "sizeHint": "40 ft tree"
   },
   {
     "id": "painting",
@@ -113,7 +121,8 @@ export const TRADES = [
       "Decks & fences"
     ],
     "preselect": 2,
-    "jobHint": "Living room and hallway, walls and trim, two coats."
+    "jobHint": "Living room and hallway, walls and trim, two coats.",
+    "sizeHint": "2 rooms"
   },
   {
     "id": "handyman",
@@ -125,7 +134,8 @@ export const TRADES = [
       "Doors & trim"
     ],
     "preselect": 4,
-    "jobHint": "Hung three TVs and patched two drywall holes."
+    "jobHint": "Hung three TVs and patched two drywall holes.",
+    "sizeHint": "3 hours"
   },
   {
     "id": "junk",
@@ -137,7 +147,8 @@ export const TRADES = [
       "Construction debris"
     ],
     "preselect": 3,
-    "jobHint": "Half a truckload from a garage, including an old fridge."
+    "jobHint": "Half a truckload from a garage, including an old fridge.",
+    "sizeHint": "Half a truckload"
   },
   {
     "id": "moving",
@@ -149,7 +160,8 @@ export const TRADES = [
       "Specialty items"
     ],
     "preselect": 2,
-    "jobHint": "Two-bedroom apartment, second floor, moved 8 miles."
+    "jobHint": "Two-bedroom apartment, second floor, moved 8 miles.",
+    "sizeHint": "2-bedroom apartment"
   },
   {
     "id": "fencing",
@@ -161,7 +173,8 @@ export const TRADES = [
       "Staining"
     ],
     "preselect": 3,
-    "jobHint": "120 ft of 6 ft cedar privacy fence with one gate."
+    "jobHint": "120 ft of 6 ft cedar privacy fence with one gate.",
+    "sizeHint": "120 ft of fence"
   },
   {
     "id": "decks",
@@ -173,7 +186,8 @@ export const TRADES = [
       "Staining & sealing"
     ],
     "preselect": 3,
-    "jobHint": "Rebuilt the stairs on a 12 by 16 deck and replaced 9 boards."
+    "jobHint": "Rebuilt the stairs on a 12 by 16 deck and replaced 9 boards.",
+    "sizeHint": "12 by 16 deck"
   },
   {
     "id": "roofing",
@@ -185,7 +199,8 @@ export const TRADES = [
       "Gutters"
     ],
     "preselect": 2,
-    "jobHint": "Replaced 20 shingles after a storm and resealed the chimney flashing."
+    "jobHint": "Replaced 20 shingles after a storm and resealed the chimney flashing.",
+    "sizeHint": "1,800 sq ft of roof"
   },
   {
     "id": "flooring",
@@ -197,7 +212,8 @@ export const TRADES = [
       "Refinishing"
     ],
     "preselect": 3,
-    "jobHint": "450 sq ft of vinyl plank in the basement, old carpet removed."
+    "jobHint": "450 sq ft of vinyl plank in the basement, old carpet removed.",
+    "sizeHint": "450 sq ft"
   },
   {
     "id": "hvac",
@@ -209,7 +225,8 @@ export const TRADES = [
       "Duct cleaning"
     ],
     "preselect": 3,
-    "jobHint": "Spring tune-up on two AC units and one furnace."
+    "jobHint": "Spring tune-up on two AC units and one furnace.",
+    "sizeHint": "2 AC units"
   },
   {
     "id": "plumbing",
@@ -221,7 +238,8 @@ export const TRADES = [
       "Fixtures"
     ],
     "preselect": 3,
-    "jobHint": "Swapped a 50-gallon gas water heater, haul-away included."
+    "jobHint": "Swapped a 50-gallon gas water heater, haul-away included.",
+    "sizeHint": "2 hours"
   },
   {
     "id": "electrical",
@@ -233,7 +251,8 @@ export const TRADES = [
       "EV chargers"
     ],
     "preselect": 3,
-    "jobHint": "Installed a Level 2 EV charger, 30 ft run from the panel."
+    "jobHint": "Installed a Level 2 EV charger, 30 ft run from the panel.",
+    "sizeHint": "4 light fixtures"
   },
   {
     "id": "pools",
@@ -245,7 +264,8 @@ export const TRADES = [
       "Green-to-clean"
     ],
     "preselect": 2,
-    "jobHint": "Green-to-clean on a 15,000 gallon pool, three visits."
+    "jobHint": "Green-to-clean on a 15,000 gallon pool, three visits.",
+    "sizeHint": "15,000 gallons"
   },
   {
     "id": "pest",
@@ -257,7 +277,8 @@ export const TRADES = [
       "Mosquitoes"
     ],
     "preselect": 2,
-    "jobHint": "Quarterly perimeter treatment, 2,000 sq ft house."
+    "jobHint": "Quarterly perimeter treatment, 2,000 sq ft house.",
+    "sizeHint": "2,000 sq ft house"
   },
   {
     "id": "detailing",
@@ -269,7 +290,8 @@ export const TRADES = [
       "Ceramic coating"
     ],
     "preselect": 3,
-    "jobHint": "Full detail on a midsize SUV with dog hair everywhere."
+    "jobHint": "Full detail on a midsize SUV with dog hair everywhere.",
+    "sizeHint": "2 cars"
   },
   {
     "id": "photography",
@@ -281,7 +303,8 @@ export const TRADES = [
       "Headshots"
     ],
     "preselect": 2,
-    "jobHint": "Two-hour birthday party, 150 edited photos delivered."
+    "jobHint": "Two-hour birthday party, 150 edited photos delivered.",
+    "sizeHint": "2 hours"
   },
   {
     "id": "events",
@@ -293,7 +316,8 @@ export const TRADES = [
       "Planning"
     ],
     "preselect": 2,
-    "jobHint": "Backyard wedding for 80 guests, tables, chairs and a tent."
+    "jobHint": "Backyard wedding for 80 guests, tables, chairs and a tent.",
+    "sizeHint": "80 guests"
   }
 ];
 

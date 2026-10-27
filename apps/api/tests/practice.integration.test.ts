@@ -186,6 +186,13 @@ test(
     state = await practice();
     const third = state.runs[2];
     assert.equal(third.customer.name, 'Priya S.');
+    const more = (body: object = {}) =>
+      owner.post('/api/v1/onboarding/practice/more').set('Origin', origin).send(body);
+    assert.equal(
+      (await more()).body.error?.code,
+      'PRACTICE_SETUP',
+      'Setup’s three customers come first',
+    );
     await owner
       .post(`/api/v1/onboarding/practice/${third.id}/quote`)
       .set('Origin', origin)
@@ -202,11 +209,30 @@ test(
     );
     assert.equal((await owner.get('/api/v1/onboarding')).body.data.step, 'ready');
 
-    // More practice is for after signup, from the Train page.
-    const more = () =>
-      owner.post('/api/v1/onboarding/practice/more').set('Origin', origin).send({});
-    assert.equal((await more()).body.error?.code, 'PRACTICE_SETUP');
+    // From the Ready screen, before signup: a customer for one service the owner picks.
+    assert.equal((await more({ service: 'Gutters' })).body.error?.code, 'PRACTICE_SERVICE');
+    const focused = await more({ service: 'driveways' });
+    assert.equal(focused.status, 201, JSON.stringify(focused.body));
+    const focusedId = focused.body.data.runId as string;
+    state = await practice();
+    const focusedRun = state.runs[state.current];
+    assert.equal(focusedRun.id, focusedId);
+    assert.equal(focusedRun.focus, 'Driveways', 'Spelled the way the business has it');
+    assert.equal(focusedRun.serviceName, 'Driveways', 'It practices the service the owner picked');
+    const [planned] = await rows('SELECT scenario_json FROM practice_runs WHERE id=?', [focusedId]);
+    const scenario =
+      typeof planned.scenario_json === 'string'
+        ? JSON.parse(planned.scenario_json)
+        : planned.scenario_json;
+    assert.match(scenario.situation, /"Driveways" service.*usual job/, 'No Driveways prices yet');
     await owner
+      .post(`/api/v1/onboarding/practice/${focusedId}/quote`)
+      .set('Origin', origin)
+      .send({ lines: [{ id: 'a', label: 'Driveway wash, about 500 sq ft', amountCents: 20000 }] })
+      .expect(200);
+    assert.equal((await owner.get('/api/v1/onboarding')).body.data.step, 'ready');
+
+    const signup = await owner
       .post('/api/v1/auth/register')
       .set('Origin', origin)
       .send({
@@ -216,6 +242,14 @@ test(
         password: 'test password strong123',
       })
       .expect(201);
+    const [created] = await rows('SELECT auto_send FROM businesses WHERE id=?', [
+      signup.body.data.business.id,
+    ]);
+    assert.equal(
+      Boolean(created.auto_send),
+      false,
+      'One sized job is too few for quotes to go out on their own',
+    );
     const added = await more();
     assert.equal(added.status, 201, JSON.stringify(added.body));
     const extraId = added.body.data.runId as string;
@@ -225,16 +259,17 @@ test(
       'An unfinished practice customer is reused, never a second one written',
     );
     state = await practice();
-    assert.equal(state.runs.length, 4);
+    assert.equal(state.runs.length, 5);
     assert.equal(state.runs[state.current].id, extraId);
+    assert.equal(state.runs[state.current].focus, null, 'Practice from the Train page is any job');
     await owner
       .post(`/api/v1/onboarding/practice/${extraId}/quote`)
       .set('Origin', origin)
       .send({ lines: [{ id: 'a', label: 'Patio wash, about 550 sq ft', amountCents: 28000 }] })
       .expect(200);
     const extra = (await owner.get('/api/v1/onboarding/practice')).body.data;
-    assert.equal(extra.finished, 4);
-    assert.equal(extra.results.length, 4, 'Extra practice counts like setup practice');
+    assert.equal(extra.finished, 5);
+    assert.equal(extra.results.length, 5, 'Extra practice counts like setup practice');
     const another = (await more()).body.data.runId;
     assert.notEqual(another, extraId, 'Once done, the next one is new');
     // Let it finish writing, so nothing is still running when the test closes the database.

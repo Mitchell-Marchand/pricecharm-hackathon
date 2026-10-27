@@ -6,6 +6,8 @@ export interface Trade {
   preselect: number;
   /** Placeholder for describing a past job in this trade. */
   jobHint: string;
+  /** Placeholder for how big a past job was, in the way this trade usually sizes one. */
+  sizeHint: string;
 }
 
 export declare const TRADES: Trade[];

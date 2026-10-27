@@ -1,18 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareDraft, liveReady, type ReviewedQuote } from '../src/pricing/accuracy.js';
+import { compareDraft } from '../src/pricing/accuracy.js';
 import { ownerChange, similarHistory } from '../src/pricing/history.js';
 import { combineRates, MARKET_MIN_BUSINESSES } from '../src/pricing/market.js';
 import {
   describeRate,
   estimateFor,
+  estimateGap,
   fitRates,
   withinEstimate,
   type PricePoint,
 } from '../src/pricing/rates.js';
+import { serviceReadiness, type Comparison } from '../src/pricing/readiness.js';
 import { cleanSpec, describeSpec, specFromScenario } from '../src/pricing/spec.js';
-import { canonicalUnit, formatQuantity, parseQuantity } from '../src/pricing/units.js';
-import { planSituation, SITUATIONS, type PlanInput } from '../src/practice/plan.js';
+import { canonicalUnit, formatQuantity, parseQuantity, roundSize } from '../src/pricing/units.js';
+import { focusSituation, planSituation, SITUATIONS, type PlanInput } from '../src/practice/plan.js';
 import type { DraftedQuote, PracticeScenario, Quote } from '../src/practice/types.js';
 import { summarize } from '../src/replay.js';
 import type { PricingHistory } from '../src/ai/quote-engine.js';
@@ -41,6 +43,10 @@ test('sizes come out of the way people write them', () => {
   assert.equal(canonicalUnit('banana'), null);
   assert.equal(formatQuantity(1, 'acres'), '1 acre');
   assert.equal(formatQuantity(1200, 'sq ft'), '1,200 sq ft');
+  assert.equal(roundSize(2350), 2400);
+  assert.equal(roundSize(115, 'up'), 150);
+  assert.equal(roundSize(1830, 'down'), 1800);
+  assert.equal(roundSize(3.5, 'up'), 4, 'Whole windows, rooms and cars');
 });
 
 const points = (service: string, unit: string, pairs: [number, number][]): PricePoint[] =>
@@ -74,7 +80,11 @@ test('a rate card comes from the owner’s own prices, with a floor for small jo
     'Never under the floor',
   );
   assert.equal(estimateFor(rates, 'Driveways', 5000, 'sq ft')!.solid, false, 'Far bigger');
+  assert.equal(estimateGap(estimateFor(rates, 'Driveways', 5000, 'sq ft')!), 'bigger');
+  assert.equal(estimateGap(estimateFor(rates, 'Driveways', 100, 'sq ft')!), 'smaller');
+  assert.equal(estimateGap(usual), null);
   assert.equal(estimateFor(rates, 'Windows', 22, 'windows')!.solid, false, 'One job isn’t enough');
+  assert.equal(estimateGap(estimateFor(rates, 'Windows', 22, 'windows')!), 'few');
   assert.equal(estimateFor(rates, 'Driveways', 800, 'windows'), null);
   assert.equal(estimateFor(rates, 'Driveways', null, 'sq ft'), null);
   assert.ok(withinEstimate(40000, usual), 'Add-ons can take it up');
@@ -166,6 +176,23 @@ test('practice aims where the AI knows least', () => {
     planSituation({ ...covered, finished: afterBigger }),
     /small "Driveways" job, around 250 sq ft/,
   );
+
+  // Practice for one service the owner picked goes after what that service still needs.
+  assert.match(
+    focusSituation('House wash', base.points),
+    /"House wash" service, sized like a usual/,
+  );
+  assert.match(
+    focusSituation('Driveways', points('Driveways', 'sq ft', [[600, 25000]])),
+    /a bit bigger than the one they've priced, around 900 sq ft/,
+  );
+  assert.match(focusSituation('driveways', base.points), /smaller "driveways" job .* 300 sq ft/);
+  const three = [...base.points, ...points('Driveways', 'sq ft', [[1200, 42000]])];
+  assert.match(
+    focusSituation('Driveways', three),
+    /usual "Driveways" job, around 900 sq ft/,
+    'With enough sizes, a usual one checks its guess',
+  );
 });
 
 const draft = (cents: number, decision: 'quote' | 'site_visit' = 'quote'): DraftedQuote => ({
@@ -189,19 +216,6 @@ test('owner changes and the AI’s record on real quotes', () => {
 
   assert.deepEqual(compareDraft(draft(31000), 35000), { draftCents: 31000, gap: 11, agree: true });
   assert.equal(compareDraft(draft(31000, 'site_visit'), 35000).agree, false);
-  const record = (agreeing: number, total: number): ReviewedQuote[] =>
-    Array.from({ length: total }, (_, index) => ({
-      quoteId: String(index),
-      customer: 'A',
-      draftCents: 100,
-      sentCents: 100,
-      gap: 0,
-      agree: index < agreeing,
-    }));
-  assert.equal(liveReady(record(4, 4)), null, 'Too few to decide');
-  assert.equal(liveReady(record(8, 10)), true);
-  assert.equal(liveReady(record(7, 10)), false);
-  assert.equal(liveReady([...record(10, 10), ...record(0, 10)]), true, 'Only the latest ten');
 
   assert.deepEqual(
     summarize([
@@ -235,6 +249,72 @@ test('owner changes and the AI’s record on real quotes', () => {
     ]),
     { quotes: 3, priced: 2, agreed: 2, medianGap: 30 },
   );
+});
+
+test('each service sends on its own once it has learned the owner’s prices for it', () => {
+  const rates = fitRates([
+    ...points('Driveways', 'sq ft', [
+      [300, 15000],
+      [600, 25000],
+      [1000, 40000],
+    ]),
+    ...points('House wash', 'sq ft', [[2000, 45000]]),
+  ]);
+  // Oldest first: each one a day after the last.
+  const drafts = (service: string, agrees: boolean[]): Comparison[] =>
+    agrees.map((agree, index) => ({
+      service,
+      agree,
+      at: new Date(Date.UTC(2026, 9, 1 + index)).toISOString(),
+    }));
+  const check = (comparisons: Comparison[]) =>
+    serviceReadiness(['Driveways', 'House wash', 'Patios'], rates, comparisons);
+
+  let [driveways, house, patios] = check([]);
+  assert.equal(driveways.ready, false, 'Prices alone aren’t enough');
+  assert.equal(driveways.jobsToGo, 0);
+  assert.equal(driveways.matchesToGo, 2);
+  assert.equal(
+    driveways.covers,
+    '150 to 1,500 sq ft',
+    'Half its smallest job to half again its largest',
+  );
+  assert.deepEqual([house.jobsToGo, house.covers], [2, ''], 'No sizes to stand behind yet');
+  assert.equal(
+    driveways.reason,
+    'It needs to come within 15% of your price on 2 more Driveways jobs before it sends these on its own.',
+  );
+  assert.equal(
+    house.reason,
+    'It needs 2 more House wash jobs with a size before it sends these on its own.',
+  );
+  assert.equal(patios.sizedPrices, 0);
+
+  [driveways] = check(drafts('driveways', [true, true]));
+  assert.equal(driveways.ready, true, 'Two close drafts, any spelling of the service');
+  assert.equal(driveways.reason, '');
+  assert.equal(driveways.matchesToGo, 0);
+  [, house] = check(drafts('House wash', [true, true, true]));
+  assert.equal(house.ready, false, 'Close drafts can’t make up for too few sized prices');
+
+  [driveways] = check(drafts('Driveways', [true, true, false]));
+  assert.equal(driveways.ready, true, 'One miss among the last three keeps it going');
+  [driveways] = check(drafts('Driveways', [true, true, false, false]));
+  assert.equal(driveways.ready, false, 'Two misses take it back to the owner');
+  assert.equal(driveways.checked, 3);
+  assert.equal(driveways.matched, 1);
+  assert.equal(
+    driveways.reason,
+    'Its recent Driveways prices were off from yours. It needs to come within 15% of your price on 2 more Driveways jobs before it sends these on its own.',
+    'One more match would still leave two misses among the last three',
+  );
+  [driveways] = check(drafts('Driveways', [false, false, true, true]));
+  assert.equal(driveways.ready, true, 'Matching again brings it back');
+  [driveways, house] = check([
+    ...drafts('Driveways', [true, true]),
+    ...drafts('House wash', [false, false, false]),
+  ]);
+  assert.equal(driveways.ready, true, 'Another service’s misses don’t count against it');
 });
 
 test('a long history keeps the examples most like the request', () => {

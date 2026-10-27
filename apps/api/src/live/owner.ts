@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { mutate, rows, transaction } from '../db.js';
+import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError, ok, rateLimit } from '../http.js';
 import { queueEmail } from '../integrations/email.js';
-import { json } from '../models.js';
+import { json, type Row } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { owner } from '../auth.js';
+import { billingProvider, reconcileStripeCustomer } from '../billing.js';
+import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
@@ -146,6 +148,36 @@ ownerQuotesRouter.get('/app/quotes/:id', async (req, res) => {
 });
 
 /** Approve and send, with the owner's edits if they made any. The server redoes the math. */
+/**
+ * Sends a quote that's waiting for the owner, with their edits if they made any. The quote row
+ * (with its chat's source) has to be locked in this transaction.
+ */
+export async function sendWaitingQuote(
+  connection: Sql,
+  quote: Row,
+  edits: Partial<Quote> | null,
+): Promise<void> {
+  if (quote.status !== 'review')
+    throw new ApiError(409, 'QUOTE_NOT_WAITING', 'This quote has already gone out.');
+  if (edits) {
+    const card = { ...json<Quote>(quote.quote_json, {} as Quote), ...edits };
+    const total = quoteTotal(card);
+    if (total <= 0) throw new ApiError(422, 'QUOTE_EMPTY', 'Add at least one priced line.');
+    await mutate(
+      'UPDATE live_quotes SET quote_json=?,total_cents=? WHERE id=?',
+      [JSON.stringify(card), total, quote.id],
+      connection,
+    );
+  } else if (Number(quote.total_cents) <= 0)
+    throw new ApiError(422, 'QUOTE_EMPTY', 'Add a price before sending this quote.');
+  await markSent(connection, {
+    businessId: String(quote.business_id),
+    quoteId: String(quote.id),
+    sentBy: 'owner',
+    test: quote.source === 'test',
+  });
+}
+
 ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (req, res) => {
   const { businessId } = owner(req);
   const quoteId = z.uuid().parse(req.params.id);
@@ -158,25 +190,7 @@ ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (
       connection,
     );
     if (!quote) throw new ApiError(404, 'QUOTE_NOT_FOUND', 'That quote isn’t here.');
-    if (quote.status !== 'review')
-      throw new ApiError(409, 'QUOTE_NOT_WAITING', 'This quote has already gone out.');
-    if (edits) {
-      const card = { ...json<Quote>(quote.quote_json, {} as Quote), ...edits };
-      const total = quoteTotal(card);
-      if (total <= 0) throw new ApiError(422, 'QUOTE_EMPTY', 'Add at least one priced line.');
-      await mutate(
-        'UPDATE live_quotes SET quote_json=?,total_cents=? WHERE id=?',
-        [JSON.stringify(card), total, quoteId],
-        connection,
-      );
-    } else if (Number(quote.total_cents) <= 0)
-      throw new ApiError(422, 'QUOTE_EMPTY', 'Add a price before sending this quote.');
-    await markSent(connection, {
-      businessId,
-      quoteId,
-      sentBy: 'owner',
-      test: quote.source === 'test',
-    });
+    await sendWaitingQuote(connection, quote, edits);
   });
   res.json(ok(await quoteDetail(businessId, quoteId)));
 });
@@ -275,6 +289,22 @@ ownerQuotesRouter.post('/app/quotes/:id/decline', rateLimit(30, 60_000), async (
 
 ownerQuotesRouter.get('/app/billing', async (req, res) => {
   res.json(ok(await liveBillingSummary(owner(req).businessId)));
+});
+
+/**
+ * Back from adding a card: reads the subscription from Stripe now, rather than waiting for its
+ * webhook, so setup can say they're live straight away.
+ */
+ownerQuotesRouter.post('/app/billing/sync', async (req, res) => {
+  const { businessId } = owner(req);
+  await consumeAuthRateLimit(`billing-sync:${businessId}`, 30, 3600_000);
+  const [account] = await rows(
+    'SELECT stripe_customer_id FROM billing_accounts WHERE business_id=?',
+    [businessId],
+  );
+  if (billingProvider() === 'stripe' && account?.stripe_customer_id)
+    await reconcileStripeCustomer(String(account.stripe_customer_id));
+  res.json(ok(await liveBillingSummary(businessId)));
 });
 
 ownerQuotesRouter.get('/app/profile', async (req, res) => {

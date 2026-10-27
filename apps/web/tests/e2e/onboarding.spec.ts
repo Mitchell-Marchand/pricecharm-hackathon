@@ -77,62 +77,104 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   await expect(page.locator('#contact')).toContainText(site.operatorName);
 });
 
-test('step 2 saves past jobs with photos, and edits and removes them', async ({ page }) => {
+test('step 2 asks for a small, a usual and a big job, and edits and removes them', async ({
+  page,
+}) => {
   await finishStepOne(page, 'Moss & Stone Exterior Care');
   const next = page.getByRole('button', { name: 'Continue' });
   await expect(next).toBeDisabled();
-  await page.getByRole('button', { name: 'Add a job' }).click();
+  await expect(page.getByRole('region', { name: 'Driveways' })).toContainText('0 of 3 with a size');
+  await expect(page.getByRole('button', { name: 'Add a Patios & pavers job' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add a usual Driveways job' }).click();
   const sheet = page.getByRole('dialog', { name: 'Add a job' });
+  await expect(sheet).toContainText('A usual Driveways job, the kind you do most.');
   await sheet.locator('input[type=file]').setInputFiles(photo);
   await expect(sheet.getByRole('img', { name: 'Job photo 1' })).toBeVisible();
   await sheet.getByRole('button', { name: 'Patios & pavers' }).click();
-  await sheet.getByLabel('What was the job?').fill('Back patio and walkway, about 600 sq ft.');
+  await sheet.getByLabel('What was the job?').fill('Back patio and walkway.');
   await sheet.getByLabel('What did you charge?').fill('275');
-  await sheet.getByRole('button', { name: 'More details' }).click();
+  await expect(sheet.getByLabel('How big was it?')).toHaveAttribute('placeholder', '600 sq ft');
   await sheet.getByLabel('How big was it?').fill('600 sq ft');
+  await sheet.getByRole('button', { name: 'More details' }).click();
   await sheet.getByLabel('Discount amount').fill('25');
   await sheet.getByPlaceholder('Why? For example: repeat customer').fill('Repeat customer');
   await sheet.getByRole('button', { name: 'Save job' }).click();
   await expect(sheet).toBeHidden();
 
+  const patios = page.getByRole('region', { name: 'Patios & pavers' });
+  await expect(patios).toContainText('1 of 3 with a size');
   const card = page.getByRole('listitem').filter({ hasText: 'Back patio and walkway' });
+  await expect(card).toContainText('Usual');
   await expect(card).toContainText('$275');
   await expect(card).toContainText('Patios & pavers · 600 sq ft');
   await expect(card).toContainText('$25 off, repeat customer');
   await expect(card.locator('img')).toBeVisible();
+  await expect(patios.getByRole('button', { name: 'Add a big Patios & pavers job' })).toBeVisible();
   await expect(next).toBeEnabled();
 
   await page.reload();
   await card.getByRole('button', { name: 'Edit' }).click();
   const edit = page.getByRole('dialog', { name: 'Edit job' });
   await edit.getByLabel('What did you charge?').fill('290');
+  await edit.getByLabel('How big was it?').fill('');
   await edit.getByRole('button', { name: 'Remove photo 1' }).click();
   await edit.getByRole('button', { name: 'Save job' }).click();
   await expect(card).toContainText('$290');
   await expect(card).toContainText('No photos');
+  await expect(card).toContainText('Usual', { ignoreCase: false });
+  await expect(card).toContainText(
+    'Add how big it was, like 600 sq ft, so it can learn your rate.',
+  );
+  await expect(patios).toContainText('0 of 3 with a size');
 
   await card.getByRole('button', { name: 'Remove' }).click();
-  await expect(page.getByText('Start with a job you remember well')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add a Patios & pavers job' })).toBeVisible();
+  await expect(next).toBeDisabled();
 });
 
-test('an uploaded invoice fills in a job for the owner to check', async ({ page }) => {
+test('several old invoices are read in the background and saved together', async ({ page }) => {
   await finishStepOne(page, 'Driveway Pros');
-  await page.getByRole('button', { name: 'Upload an old quote or invoice' }).click();
-  await page
-    .getByRole('dialog', { name: 'Upload a quote or invoice' })
-    .locator('input[type=file]')
-    .setInputFiles({
+  await page.locator('input[type=file][multiple][accept*="application/pdf"]').setInputFiles([
+    {
       name: 'invoice-1187.pdf',
       mimeType: 'application/pdf',
       buffer: Buffer.from('%PDF-1.4 fixture'),
-    });
-  const check = page.getByRole('dialog', { name: 'Check this job' });
-  await expect(check).toContainText('We filled this in from invoice-1187.pdf');
-  await expect(check.getByLabel('What did you charge?')).toHaveValue('320');
-  await check.getByRole('button', { name: 'Save job' }).click();
-  await expect(page.getByRole('listitem').filter({ hasText: 'Driveway wash' })).toContainText(
-    '$20 off, repeat customer',
+    },
+    {
+      name: 'invoice-1188.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 second fixture'),
+    },
+  ]);
+  const list = page.getByRole('list', { name: 'Jobs from your files' });
+  const first = list.getByRole('listitem', { name: 'Job from invoice-1187.pdf' });
+  const second = list.getByRole('listitem', { name: 'Job from invoice-1188.pdf' });
+  await expect(first.getByLabel('What did you charge?')).toHaveValue('320', { timeout: 15_000 });
+  await expect(first).toContainText(
+    'Also on it: 3 hours · $25 materials · $20 off, repeat customer',
   );
+  await expect(second.getByLabel('What did you charge?')).toHaveValue('320');
+
+  // Everything is checked before anything is saved.
+  await second.getByLabel('What did you charge?').fill('');
+  await page.getByRole('button', { name: 'Save 2 jobs' }).click();
+  await expect(second).toContainText('Add what you charged.');
+  await second.getByLabel('What did you charge?').fill('410');
+  await second.getByLabel('Service').selectOption('House wash');
+  await page.getByRole('button', { name: 'Save 2 jobs' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Check these jobs' })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole('list', { name: 'Your Driveways jobs' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Driveway wash' }),
+  ).toContainText('$20 off, repeat customer');
+  await expect(page.getByRole('list', { name: 'Your House wash jobs' })).toContainText('$410');
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Check these jobs' })).toHaveCount(0);
 });
 
 test('step 3 runs three practice customers and learns from each one', async ({ page }) => {
@@ -199,6 +241,39 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page.getByText(/^Charges about \$0\.51 per sq ft for patios$/)).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Dana R.' })).toBeVisible();
   await expect(page.getByText('Anything over $1,500')).toBeVisible();
+  await expect(
+    page.getByText(/^You.ll approve each quote for now\.$/),
+    'One past job is too few for any service to send on its own',
+  ).toBeVisible();
+  const services = page.getByRole('list', { name: 'Your services' });
+  const driveways = services.getByRole('listitem').filter({ hasText: 'Driveways' });
+  await expect(driveways).toContainText(
+    'Checks with you until it has 2 more Driveways jobs with a size.',
+  );
+  await expect(services.getByRole('listitem').filter({ hasText: 'House wash' })).toContainText(
+    'Checks with you until it has 3 House wash jobs with a size.',
+  );
+
+  // Each gap is one tap away: a job to add here, or a practice customer for that service.
+  await driveways.getByRole('button', { name: 'Add a Driveways job' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Add a job' });
+  await sheet.getByLabel('What was the job?').fill('Long gravel-edged driveway.');
+  await sheet.getByLabel('What did you charge?').fill('400');
+  await sheet.getByLabel('How big was it?').fill('1,000 sq ft');
+  await sheet.getByRole('button', { name: 'Save job' }).click();
+  await expect(driveways).toContainText(
+    'Checks with you until it has 1 more Driveways job with a size.',
+  );
+  await driveways.getByRole('button', { name: 'Practice a Driveways job' }).click();
+  await expect(page).toHaveURL(/\/start\/practice$/);
+  await expect(page.getByRole('heading', { name: 'Practice a Driveways job' })).toBeVisible();
+  await expect(page.getByText('Dana R. · Eastgate')).toBeVisible({ timeout: 15_000 });
+  await quote('Driveway wash, about 800 sq ft', '330');
+  await page.getByRole('button', { name: 'See what your AI learned' }).click();
+  await expect(page).toHaveURL(/\/start\/ready$/);
+  await expect(
+    page.getByText('It learned from 2 past jobs and 4 practice customers.', { exact: false }),
+  ).toBeVisible();
 
   await page.getByRole('button', { name: 'Create your free account' }).click();
   await expect(page).toHaveURL(/\/start\/account$/);
@@ -210,8 +285,27 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await page.getByLabel('Password', { exact: true }).fill('test password strong123');
   await page.getByRole('button', { name: 'Create account' }).click();
 
+  // The email is confirmed with a code on this same page, then a card, then they're live.
+  await expect(page.getByRole('heading', { name: 'Two quick steps to go live.' })).toBeVisible();
+  await expect(page).toHaveURL(/\/start\/account$/);
+  const steps = page.getByRole('list', { name: 'Before you go live' });
+  await expect(steps.getByRole('button', { name: 'Add a payment method' })).toHaveCount(0);
+  const codeField = page.getByLabel('Code from the email');
+  await codeField.fill('000000');
+  await expect(page.getByText(/That code didn.t work/)).toBeVisible();
+  const sent = await page.getByText(/^Local test: the code is \d{6}\.$/).textContent();
+  await codeField.fill(sent!.match(/\d{6}/)![0]);
+  await expect(steps.getByRole('button', { name: 'Add a payment method' })).toBeVisible();
+  await expect(codeField).toHaveCount(0);
+
+  // Skipping the card leaves them a step short, and the live page says so.
+  await page.getByRole('button', { name: /I.ll finish this later/ }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
+  await expect(page.getByRole('heading', { name: 'Almost live.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
+  await steps.getByRole('button', { name: 'Add a payment method' }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
+  await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByText(/You.re all set, Maya/)).toBeVisible();
   await expect(page.getByText(/\/q\/moss-and-stone-exterior-care-[0-9a-f]{8}$/)).toBeVisible();
   await expect(

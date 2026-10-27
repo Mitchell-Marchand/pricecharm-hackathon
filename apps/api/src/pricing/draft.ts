@@ -6,7 +6,7 @@ import type { DraftEngine, DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
 import { marketPricesEnabled, marketRate } from './market.js';
-import { describeRate, estimateFor, fitRates, median, type Estimate } from './rates.js';
+import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
 import { describeSpec, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
 
@@ -22,7 +22,13 @@ const money = (cents: number) =>
     maximumFractionDigits: cents < 1000 ? 2 : 0,
   }).format(cents / 100);
 
-export type DraftResult = { drafted: DraftedQuote; engine: DraftEngine; estimate: Estimate | null };
+export type DraftResult = {
+  drafted: DraftedQuote;
+  engine: DraftEngine;
+  estimate: Estimate | null;
+  /** Every rate it worked out, which the live checks hold the draft to. */
+  rates: Rate[];
+};
 
 /** Demo mode: the owner's usual rate for this size, or else the middle of their similar jobs. */
 export function demoDraft(
@@ -107,12 +113,8 @@ export async function draftForBusiness(input: {
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
-  const estimate = estimateFor(
-    fitRates(data.points),
-    serviceName,
-    spec?.quantity ?? null,
-    spec?.unit ?? '',
-  );
+  const rates = fitRates(data.points);
+  const estimate = estimateFor(rates, serviceName, spec?.quantity ?? null, spec?.unit ?? '');
 
   let startingPoint: DraftRequest['startingPoint'];
   if (!examplesFor(data.history, serviceName) && marketPricesEnabled() && data.tradeId) {
@@ -179,6 +181,7 @@ export async function draftForBusiness(input: {
   return {
     drafted,
     estimate,
+    rates,
     engine: {
       provider: aiProvider,
       model: aiMode === 'demo' ? null : (input.model ?? modelFor('draft_quote') ?? null),

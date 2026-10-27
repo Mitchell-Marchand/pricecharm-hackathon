@@ -1,15 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
-import multer from 'multer';
-import sharp from 'sharp';
 import { z } from 'zod';
-import { tradeName } from '@quotefolk/trades';
-import { readPastJob } from './ai/past-job-reader.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok, rateLimit } from './http.js';
+import { parseQuantity } from './pricing/units.js';
 import { deletePhoto, getPhoto } from './storage.js';
 import { imageUpload, saveImage, uploadSlot } from './uploads.js';
-import { withAiUsage } from './usage.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
 /** The jobs an owner has done. They teach the AI what this business charges. */
@@ -18,12 +14,20 @@ export const pastJobsRouter = Router();
 const MAX_PHOTOS_PER_JOB = 8;
 const MAX_JOBS = { draft: 30, active: 300 };
 
+export const SIZE_SLOTS = ['small', 'usual', 'big'] as const;
+export type SizeSlot = (typeof SIZE_SLOTS)[number];
+
 export type PastJob = {
   id: string;
   serviceName: string;
   description: string;
   priceCents: number;
   size: string;
+  /** The size as pricing reads it, from the size or else the description. Null if neither has one. */
+  quantity: number | null;
+  unit: string | null;
+  /** The one the owner meant to add for this service: a small one, a usual one or a big one. */
+  slot: SizeSlot | null;
   duration: string;
   when: string;
   materialsCents: number | null;
@@ -39,12 +43,16 @@ export function photoUrl(id: string) {
 }
 
 function mapJob(row: Record<string, any>, photos: { id: string }[]): PastJob {
+  const measured = parseQuantity(row.size) ?? parseQuantity(row.description);
   return {
     id: row.id,
     serviceName: row.service_name,
     description: row.description,
     priceCents: Number(row.price_cents),
     size: row.size,
+    quantity: measured?.quantity ?? null,
+    unit: measured?.unit ?? null,
+    slot: SIZE_SLOTS.includes(row.size_slot) ? row.size_slot : null,
     duration: row.duration,
     when: row.performed,
     materialsCents: row.materials_cents === null ? null : Number(row.materials_cents),
@@ -78,7 +86,7 @@ export async function listPastJobs(businessId: string, connection?: Sql): Promis
 }
 
 const cents = z.number().int().min(0).max(100_000_000);
-const jobInput = z
+export const jobInput = z
   .object({
     serviceName: z.string().trim().max(80),
     description: z.string().trim().min(4, 'Describe the job in a few words.').max(2000),
@@ -101,10 +109,11 @@ const jobInput = z
       .default(null),
     notes: z.string().trim().max(2000).default(''),
     source: z.enum(['manual', 'invoice']).default('manual'),
+    slot: z.enum(SIZE_SLOTS).nullable().default(null),
     photoIds: z.array(z.uuid()).max(MAX_PHOTOS_PER_JOB).default([]),
   })
   .strict();
-type JobInput = z.infer<typeof jobInput>;
+export type JobInput = z.infer<typeof jobInput>;
 
 /** Attaches the listed photos to the job and returns the ones it no longer uses. */
 async function attachPhotos(
@@ -153,6 +162,7 @@ function jobValues(input: JobInput) {
     input.discount?.reason ?? '',
     input.notes,
     input.source,
+    input.slot,
   ];
 }
 
@@ -160,27 +170,39 @@ pastJobsRouter.get('/onboarding/jobs', requireWorkspace, async (req, res) => {
   res.json(ok(await listPastJobs(workspace(req).businessId)));
 });
 
+/**
+ * Adds jobs inside the caller's transaction, after checking they fit under the business's limit.
+ * Locks the business so two requests can't both squeeze in the last one.
+ */
+export async function insertPastJobs(
+  connection: Sql,
+  business: { businessId: string; draft: boolean },
+  jobs: { id: string; input: JobInput }[],
+) {
+  await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [business.businessId], connection);
+  const [count] = await rows(
+    'SELECT COUNT(*) AS count FROM past_jobs WHERE business_id=?',
+    [business.businessId],
+    connection,
+  );
+  const limit = business.draft ? MAX_JOBS.draft : MAX_JOBS.active;
+  if (Number(count.count) + jobs.length > limit)
+    throw new ApiError(422, 'JOB_LIMIT', `You can add up to ${limit} jobs here.`);
+  for (const { id, input } of jobs) {
+    await mutate(
+      'INSERT INTO past_jobs (service_name,description,price_cents,size,duration,performed,materials_cents,discount_kind,discount_value,discount_reason,notes,source,size_slot,id,business_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [...jobValues(input), id, business.businessId],
+      connection,
+    );
+    await attachPhotos(connection, business.businessId, id, input.photoIds);
+  }
+}
+
 pastJobsRouter.post('/onboarding/jobs', requireWorkspace, async (req, res) => {
   const input = jobInput.parse(req.body);
   const current = workspace(req);
   const id = randomUUID();
-  await transaction(async (connection) => {
-    await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [current.businessId], connection);
-    const [count] = await rows(
-      'SELECT COUNT(*) AS count FROM past_jobs WHERE business_id=?',
-      [current.businessId],
-      connection,
-    );
-    const limit = current.draft ? MAX_JOBS.draft : MAX_JOBS.active;
-    if (Number(count.count) >= limit)
-      throw new ApiError(422, 'JOB_LIMIT', `You can add up to ${limit} jobs here.`);
-    await mutate(
-      'INSERT INTO past_jobs (service_name,description,price_cents,size,duration,performed,materials_cents,discount_kind,discount_value,discount_reason,notes,source,id,business_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      [...jobValues(input), id, current.businessId],
-      connection,
-    );
-    await attachPhotos(connection, current.businessId, id, input.photoIds);
-  });
+  await transaction((connection) => insertPastJobs(connection, current, [{ id, input }]));
   const job = (await listPastJobs(current.businessId)).find((item) => item.id === id);
   res.status(201).json(ok(job));
 });
@@ -191,7 +213,7 @@ pastJobsRouter.put('/onboarding/jobs/:id', requireWorkspace, async (req, res) =>
   const current = workspace(req);
   const dropped = await transaction(async (connection) => {
     const updated = await mutate(
-      'UPDATE past_jobs SET service_name=?,description=?,price_cents=?,size=?,duration=?,performed=?,materials_cents=?,discount_kind=?,discount_value=?,discount_reason=?,notes=?,source=? WHERE id=? AND business_id=?',
+      'UPDATE past_jobs SET service_name=?,description=?,price_cents=?,size=?,duration=?,performed=?,materials_cents=?,discount_kind=?,discount_value=?,discount_reason=?,notes=?,source=?,size_slot=? WHERE id=? AND business_id=?',
       [...jobValues(input), id, current.businessId],
       connection,
     );
@@ -244,82 +266,6 @@ pastJobsRouter.get('/onboarding/photos/:id', requireWorkspace, async (req, res) 
   res.set('Cache-Control', 'private, max-age=86400, immutable');
   res.type('image/jpeg').send(await getPhoto(photo.storage_key));
 });
-
-const documentUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
-}).single('file');
-
-/** Reads an old quote or invoice into the job form. Nothing is saved until the owner checks it. */
-pastJobsRouter.post(
-  '/onboarding/jobs/read',
-  rateLimit(10, 15 * 60_000),
-  requireWorkspace,
-  uploadSlot,
-  (req, res, next) =>
-    documentUpload(req, res, (error) => {
-      if (error instanceof multer.MulterError)
-        return next(new ApiError(413, 'UPLOAD_LIMIT', 'Choose one file smaller than 10 MB.'));
-      next(error);
-    }),
-  async (req, res) => {
-    const file = req.file;
-    if (!file) throw new ApiError(400, 'FILE_REQUIRED', 'Choose a PDF or a photo of the document.');
-    const bytes = file.buffer;
-    const pdf = bytes.subarray(0, 5).toString('ascii') === '%PDF-';
-    let input: Parameters<typeof readPastJob>[0]['file'];
-    if (pdf) {
-      if (bytes.length > 4 * 1024 * 1024)
-        throw new ApiError(
-          413,
-          'PDF_TOO_LARGE',
-          'PDFs can be up to 4 MB. Try a photo of it instead.',
-        );
-      input = {
-        document: {
-          filename: file.originalname.slice(0, 180) || 'document.pdf',
-          mimeType: 'application/pdf',
-          dataBase64: bytes.toString('base64'),
-        },
-      };
-    } else {
-      let image: Buffer;
-      try {
-        image = await sharp(bytes, { limitInputPixels: 40_000_000, animated: false })
-          .rotate()
-          .resize({ width: 1800, height: 1800, fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 80, mozjpeg: true })
-          .toBuffer();
-      } catch {
-        throw new ApiError(415, 'UNSUPPORTED_FILE', 'Upload a PDF, or a JPG, PNG or WebP photo.');
-      }
-      if (image.length > 1024 * 1024)
-        throw new ApiError(
-          413,
-          'IMAGE_TOO_LARGE',
-          'This photo is too detailed to read. Try a smaller one.',
-        );
-      input = { image: { mimeType: 'image/jpeg', dataBase64: image.toString('base64') } };
-    }
-    const current = workspace(req);
-    const [business] = await rows('SELECT trade_id,custom_trade FROM businesses WHERE id=?', [
-      current.businessId,
-    ]);
-    const services = (
-      await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [
-        current.businessId,
-      ])
-    ).map((row) => String(row.name));
-    const result = await withAiUsage(current.businessId, 'read-past-job', () =>
-      readPastJob({
-        trade: tradeName(business?.trade_id, business?.custom_trade),
-        services,
-        file: input,
-      }),
-    );
-    res.json(ok(result));
-  },
-);
 
 /** Photos picked for a job that was never saved. */
 export async function cleanupUnattachedJobPhotos(): Promise<void> {

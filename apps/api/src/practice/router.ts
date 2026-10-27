@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { ApiError, ok, rateLimit } from '../http.js';
 import { mutate } from '../db.js';
+import { businessContext } from '../pricing/history.js';
 import { requireWorkspace, workspace } from '../workspace.js';
 import {
   addPracticeRun,
@@ -10,6 +11,7 @@ import {
   editInsight,
   ensurePracticeRuns,
   kickPreparation,
+  PRACTICE_COUNT,
   practiceState,
   retryPracticeRun,
   sendOwnerMessage,
@@ -31,16 +33,30 @@ practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req
   res.json(ok(await practiceState(businessId)));
 });
 
-/** Another practice customer, from the Train page once setup is done. */
+/**
+ * Another practice customer once setup's three are done: from the Train page, or from the Ready
+ * screen for a service that isn't sending on its own yet.
+ */
 practiceRouter.post(
   '/onboarding/practice/more',
   rateLimit(10, 60_000),
   requireWorkspace,
   async (req, res) => {
+    const { service } = z
+      .object({ service: z.string().trim().min(1).max(80).optional() })
+      .strict()
+      .parse(req.body ?? {});
     const { businessId, draft } = workspace(req);
-    if (draft)
-      throw new ApiError(409, 'PRACTICE_SETUP', 'Finish setting up before practicing more.');
-    const id = await addPracticeRun(businessId);
+    if (draft && (await practiceState(businessId)).finished < PRACTICE_COUNT)
+      throw new ApiError(409, 'PRACTICE_SETUP', 'Finish the three practice customers first.');
+    const focus = service
+      ? (await businessContext(businessId)).services.find(
+          (name) => name.toLowerCase() === service.toLowerCase(),
+        )
+      : null;
+    if (service && !focus)
+      throw new ApiError(422, 'PRACTICE_SERVICE', 'That isn’t one of your services.');
+    const id = await addPracticeRun(businessId, { focus, draft });
     await kickPreparation(businessId);
     res.status(201).json(ok({ runId: id, state: await practiceState(businessId) }));
   },

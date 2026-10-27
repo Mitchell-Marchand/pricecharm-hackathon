@@ -5,9 +5,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Mail } from 'lucide-react';
 import { Logo } from '@/components/Logo';
-import { ToastProvider, useToast } from '@/components/Toast';
+import { EmailCode } from '@/components/owner/EmailCode';
+import { ToastProvider } from '@/components/Toast';
 import { Button } from '@/components/ui';
-import { loadMe, resendVerification, type Me } from '@/lib/account';
+import { loadMe, type Me } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
 import { cx } from '@/lib/util';
 
@@ -101,7 +102,7 @@ function SignedIn({ children }: { children: ReactNode }) {
             ))}
           </nav>
         </header>
-        {!me.user.emailVerified && <VerifyBanner email={me.user.email} />}
+        {!me.user.emailVerified && <VerifyBanner email={me.user.email} onConfirmed={reload} />}
         <main className="gutter mx-auto max-w-6xl pt-8 pb-24 sm:pt-10">{children}</main>
       </div>
     </OwnerContext.Provider>
@@ -123,40 +124,19 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
   );
 }
 
-function VerifyBanner({ email }: { email: string }) {
-  const notify = useToast();
-  const [localLink, setLocalLink] = useState('');
+/** Until the owner confirms their email, with the code we sent or the link beside it. */
+function VerifyBanner({ email, onConfirmed }: { email: string; onConfirmed: () => void }) {
   return (
     <div className="border-b border-line bg-canary-soft">
-      <div className="gutter mx-auto flex max-w-6xl flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="flex gap-2.5 text-[15px]">
+      <div className="gutter mx-auto flex max-w-6xl flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between">
+        <p className="flex gap-2.5 text-[15px] sm:pt-1.5">
           <Mail className="mt-0.5 size-5 shrink-0" aria-hidden />
           <span>
-            Confirm <span className="font-semibold">{email}</span> so we can email you when a quote
-            needs you.
+            Enter the code we sent to <span className="font-semibold">{email}</span>, so we can
+            email you when a quote needs you.
           </span>
         </p>
-        {localLink ? (
-          <a href={localLink} className="text-sm font-semibold text-accent underline">
-            Local test: confirm it now
-          </a>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="-ml-3 self-start sm:ml-0 sm:self-auto"
-            onClick={() =>
-              resendVerification()
-                .then((sent) => {
-                  if (sent.devToken) setLocalLink(`/verify-email#token=${sent.devToken}`);
-                  else notify(`Sent. Check ${email}.`);
-                })
-                .catch((sendError) => notify(errorMessage(sendError)))
-            }
-          >
-            Send the link again
-          </Button>
-        )}
+        <EmailCode email={email} onConfirmed={onConfirmed} compact />
       </div>
     </div>
   );

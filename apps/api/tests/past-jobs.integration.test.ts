@@ -59,6 +59,7 @@ test(
       materialsCents: 1800,
       discount: { kind: 'percent', value: 10, reason: 'Neighbor discount' },
       notes: 'Had to haul water',
+      slot: 'big',
       photoIds: [first.body.data.id, second.body.data.id],
     };
     const created = await owner.post('/api/v1/onboarding/jobs').set('Origin', origin).send(job);
@@ -66,7 +67,7 @@ test(
     const saved = created.body.data;
     const { photoIds, ...fields } = job;
     const { id: _id, createdAt: _createdAt, photos: savedPhotos, ...savedFields } = saved;
-    assert.deepEqual(savedFields, { ...fields, source: 'manual' });
+    assert.deepEqual(savedFields, { ...fields, source: 'manual', quantity: 600, unit: 'sq ft' });
     assert.deepEqual(
       savedPhotos.map((item: { id: string }) => item.id),
       photoIds,
@@ -80,6 +81,7 @@ test(
       { ...job, priceCents: 0, photoIds: [] },
       { ...job, description: 'ok', photoIds: [] },
       { ...job, discount: { kind: 'percent', value: 120, reason: '' }, photoIds: [] },
+      { ...job, slot: 'huge', photoIds: [] },
     ]) {
       const rejected = await owner.post('/api/v1/onboarding/jobs').set('Origin', origin).send(bad);
       assert.equal(rejected.status, 400, JSON.stringify(bad));
@@ -88,9 +90,17 @@ test(
     const edited = await owner
       .put(`/api/v1/onboarding/jobs/${saved.id}`)
       .set('Origin', origin)
-      .send({ ...job, priceCents: 29000, discount: null, photoIds: [second.body.data.id] });
+      .send({
+        ...job,
+        priceCents: 29000,
+        size: '',
+        discount: null,
+        photoIds: [second.body.data.id],
+      });
     assert.equal(edited.status, 200, JSON.stringify(edited.body));
     assert.equal(edited.body.data.priceCents, 29000);
+    assert.equal(edited.body.data.slot, 'big');
+    assert.equal(edited.body.data.quantity, 600, 'With no size, it reads one from the description');
     assert.equal(edited.body.data.discount, null);
     assert.deepEqual(
       edited.body.data.photos.map((item: { id: string }) => item.id),
@@ -111,26 +121,94 @@ test(
     assert.equal(listed.body.data.length, 1);
     assert.equal((await stranger.get('/api/v1/onboarding/jobs')).body.data.length, 0);
 
-    const read = await owner
-      .post('/api/v1/onboarding/jobs/read')
-      .set('Origin', origin)
-      .attach('file', Buffer.from('%PDF-1.4 fixture'), {
-        filename: 'invoice.pdf',
-        contentType: 'application/pdf',
-      });
-    assert.equal(read.status, 200, JSON.stringify(read.body));
-    assert.equal(read.body.data.found, true);
-    assert.equal(
-      read.body.data.job.serviceName,
-      'Driveways',
-      'It picks one of the setup’s services',
+    // Several old quotes and invoices at once: each is read in the background, then the owner
+    // checks them on one list and saves them together.
+    const send = (agent: typeof owner, bytes: Buffer, filename: string, contentType: string) =>
+      agent
+        .post('/api/v1/onboarding/imports')
+        .set('Origin', origin)
+        .attach('file', bytes, { filename, contentType });
+    const pdf = await send(
+      owner,
+      Buffer.from('%PDF-1.4 fixture'),
+      'invoice.pdf',
+      'application/pdf',
     );
-    assert.match(read.body.data.issues[0], /Demo mode/);
-    const unreadable = await owner
-      .post('/api/v1/onboarding/jobs/read')
+    assert.equal(pdf.status, 201, JSON.stringify(pdf.body));
+    assert.equal(pdf.body.data.filename, 'invoice.pdf');
+    const snapshot = await send(
+      owner,
+      await photo({ r: 250, g: 250, b: 250 }),
+      'quote.jpg',
+      'image/jpeg',
+    );
+    assert.equal(snapshot.status, 201, JSON.stringify(snapshot.body));
+    const notes = await send(owner, Buffer.from('not a document'), 'notes.txt', 'text/plain');
+    assert.equal(notes.status, 415);
+    async function readAll() {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const list = (await owner.get('/api/v1/onboarding/imports')).body.data;
+        if (list.every((item: { status: string }) => item.status !== 'reading')) return list;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('The files were never read.');
+    }
+    const read = await readAll();
+    assert.deepEqual(
+      read.map((item: { filename: string; status: string }) => [item.filename, item.status]),
+      [
+        ['invoice.pdf', 'ready'],
+        ['quote.jpg', 'ready'],
+      ],
+    );
+    assert.equal(read[0].job.serviceName, 'Driveways', 'It picks one of the setup’s services');
+    assert.match(read[0].issues[0], /Demo mode/);
+    const [stored] = await rows('SELECT storage_key FROM job_imports WHERE id=?', [read[0].id]);
+    assert.equal(stored.storage_key, null, 'The file goes once it has been read');
+    assert.equal((await stranger.get('/api/v1/onboarding/imports')).body.data.length, 0);
+
+    const save = (agent: typeof owner, jobs: object[]) =>
+      agent.post('/api/v1/onboarding/imports/save').set('Origin', origin).send({ jobs });
+    const checked = (item: { id: string; job: object }, changes: object = {}) => ({
+      importId: item.id,
+      job: { ...item.job, ...changes },
+    });
+    assert.equal((await save(stranger, [checked(read[0])])).status, 404, 'Only their own files');
+    assert.equal((await save(owner, [checked(read[0], { priceCents: 0 })])).status, 400);
+    assert.equal((await save(owner, [checked(read[0]), checked(read[0])])).status, 400);
+    const savedAll = await save(owner, [
+      checked(read[0]),
+      checked(read[1], { serviceName: 'Patios & pavers', priceCents: 41000, size: '1,200 sq ft' }),
+    ]);
+    assert.equal(savedAll.status, 200, JSON.stringify(savedAll.body));
+    assert.deepEqual(savedAll.body.data.imports, [], 'Saved files leave the list');
+    const fromFiles = savedAll.body.data.jobs.filter(
+      (job: { source: string }) => job.source === 'invoice',
+    );
+    assert.deepEqual(
+      fromFiles.map((job: { serviceName: string; priceCents: number; quantity: number }) => [
+        job.serviceName,
+        job.priceCents,
+        job.quantity,
+      ]),
+      [
+        ['Driveways', 32000, 900],
+        ['Patios & pavers', 41000, 1200],
+      ],
+    );
+    assert.equal(fromFiles[0].discount.reason, 'Repeat customer', 'What it read comes along');
+
+    const skipped = await send(owner, Buffer.from('%PDF-1.4 again'), 'old.pdf', 'application/pdf');
+    await owner
+      .delete(`/api/v1/onboarding/imports/${skipped.body.data.id}`)
       .set('Origin', origin)
-      .attach('file', Buffer.from('not a document'), { filename: 'notes.txt' });
-    assert.equal(unreadable.status, 415);
+      .expect(200);
+    await owner
+      .delete(`/api/v1/onboarding/imports/${skipped.body.data.id}`)
+      .set('Origin', origin)
+      .expect(404);
+    for (const job of fromFiles)
+      await owner.delete(`/api/v1/onboarding/jobs/${job.id}`).set('Origin', origin).expect(200);
 
     const removed = await owner.delete(`/api/v1/onboarding/jobs/${saved.id}`).set('Origin', origin);
     assert.equal(removed.status, 200);

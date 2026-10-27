@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { devTokensAllowed } from './config.js';
@@ -84,6 +84,14 @@ export async function clearAuthRateLimits(keys: string[], connection?: Sql): Pro
   );
 }
 
+/** Wrong codes allowed before a code stops working and the owner needs a new one. */
+const CODE_ATTEMPTS = 5;
+const codeHash = (tokenId: string, code: string) => hashToken(`${tokenId}:${code}`);
+
+/**
+ * A single-use link, emailed. Confirming an email also gets a 6-digit code in the same email, for
+ * the page the owner signed up on: no switching to a mail app's browser where they aren't signed in.
+ */
 export async function createOwnerToken(
   input: {
     userId: string;
@@ -92,8 +100,11 @@ export async function createOwnerToken(
     purpose: 'verify_email' | 'reset_password';
   },
   connection?: Sql,
-): Promise<string> {
+): Promise<{ token: string; code: string | null }> {
   const token = newToken();
+  const tokenId = randomUUID();
+  const code =
+    input.purpose === 'verify_email' ? String(randomInt(0, 1_000_000)).padStart(6, '0') : null;
   const save = async (sql: Sql) => {
     const [business] = await rows(
       'SELECT id FROM businesses WHERE id=? AND deletion_requested_at IS NULL FOR UPDATE',
@@ -112,35 +123,36 @@ export async function createOwnerToken(
       sql,
     );
     await mutate(
-      'INSERT INTO identity_tokens(id,business_id,user_id,purpose,token_hash,expires_at) VALUES (?,?,?,?,?,?)',
+      'INSERT INTO identity_tokens(id,business_id,user_id,purpose,token_hash,code_hash,expires_at) VALUES (?,?,?,?,?,?,?)',
       [
-        randomUUID(),
+        tokenId,
         input.businessId,
         input.userId,
         input.purpose,
         hashToken(token),
+        code ? codeHash(tokenId, code) : null,
         new Date(Date.now() + (input.purpose === 'reset_password' ? 30 : 1440) * 60_000),
       ],
       sql,
     );
     const route = input.purpose === 'reset_password' ? '/reset-password' : '/verify-email';
+    const link = `${applicationOrigin()}${route}#token=${encodeURIComponent(token)}`;
     await queueEmail(
       {
         businessId: input.businessId,
         dedupeKey: `${input.purpose}:${hashToken(token)}`,
         to: input.email,
-        subject:
-          input.purpose === 'reset_password'
-            ? 'Reset your Quotefolk password'
-            : 'Verify your Quotefolk email',
-        text: `${input.purpose === 'reset_password' ? 'Reset your password' : 'Verify your email address'} using this single-use link:\n${applicationOrigin()}${route}#token=${encodeURIComponent(token)}\n\nIf you did not request this, you can ignore this email.`,
+        subject: code ? `${code} is your Quotefolk code` : 'Reset your Quotefolk password',
+        text: code
+          ? `Your Quotefolk code is ${code}. Enter it on the page where you signed up to confirm your email.\n\nOr confirm with this link:\n${link}\n\nIf you did not sign up for Quotefolk, you can ignore this email.`
+          : `Reset your password using this single-use link:\n${link}\n\nIf you did not request this, you can ignore this email.`,
       },
       sql,
     );
   };
   if (connection) await save(connection);
   else await transaction(save);
-  return token;
+  return { token, code };
 }
 
 export const forgotPassword: RequestHandler = async (req, res) => {
@@ -148,12 +160,14 @@ export const forgotPassword: RequestHandler = async (req, res) => {
   await consumeAuthRateLimit(`forgot:${email}:${req.ip}`, 5, 3600_000);
   const [user] = await rows('SELECT id,business_id,email FROM users WHERE email=?', [email]);
   const token = user
-    ? await createOwnerToken({
-        userId: user.id,
-        businessId: user.business_id,
-        email,
-        purpose: 'reset_password',
-      })
+    ? (
+        await createOwnerToken({
+          userId: user.id,
+          businessId: user.business_id,
+          email,
+          purpose: 'reset_password',
+        })
+      ).token
     : undefined;
   res.json(
     ok({
@@ -173,7 +187,7 @@ export const requestOwnerVerification: RequestHandler = async (req, res) => {
     res.json(ok({ ok: true, delivery: mailProvider() === 'local' ? 'local' : 'email' }));
     return;
   }
-  const token = await createOwnerToken({
+  const { token, code } = await createOwnerToken({
     userId: context.userId,
     businessId: context.businessId,
     email: context.email,
@@ -183,9 +197,72 @@ export const requestOwnerVerification: RequestHandler = async (req, res) => {
     ok({
       ok: true,
       delivery: mailProvider() === 'local' ? 'local' : 'email',
-      ...(mailProvider() === 'local' && devTokensAllowed(req) ? { devToken: token } : {}),
+      ...(mailProvider() === 'local' && devTokensAllowed(req)
+        ? { devToken: token, devCode: code }
+        : {}),
     }),
   );
+};
+
+/** The owner types the code from the confirmation email, on the page they signed up on. */
+export const verifyOwnerCode: RequestHandler = async (req, res) => {
+  const context = owner(req);
+  const { code } = z
+    .object({
+      code: z
+        .string()
+        .trim()
+        .regex(/^\d{6}$/, 'Enter the 6-digit code from the email.'),
+    })
+    .strict()
+    .parse(req.body);
+  await consumeAuthRateLimit(`verify-code:${context.userId}`, 20, 3600_000);
+  const verified = await transaction(async (connection) => {
+    const [user] = await rows(
+      'SELECT email_verified_at FROM users WHERE id=? AND business_id=? FOR UPDATE',
+      [context.userId, context.businessId],
+      connection,
+    );
+    if (user?.email_verified_at) return true;
+    // Only the latest code works: asking for a new one retires the old.
+    const [item] = await rows(
+      "SELECT * FROM identity_tokens WHERE user_id=? AND purpose='verify_email' AND used_at IS NULL AND code_hash IS NOT NULL ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+      [context.userId],
+      connection,
+    );
+    if (
+      !item ||
+      Number(item.code_attempts) >= CODE_ATTEMPTS ||
+      new Date(item.expires_at).getTime() <= Date.now()
+    )
+      return false;
+    await mutate(
+      'UPDATE identity_tokens SET code_attempts=code_attempts+1 WHERE id=?',
+      [item.id],
+      connection,
+    );
+    const expected = Buffer.from(String(item.code_hash), 'hex');
+    if (!timingSafeEqual(expected, Buffer.from(codeHash(String(item.id), code), 'hex')))
+      return false;
+    await mutate(
+      'UPDATE users SET email_verified_at=UTC_TIMESTAMP(3) WHERE id=?',
+      [context.userId],
+      connection,
+    );
+    await mutate(
+      "UPDATE identity_tokens SET used_at=UTC_TIMESTAMP(3) WHERE user_id=? AND purpose='verify_email' AND used_at IS NULL",
+      [context.userId],
+      connection,
+    );
+    return true;
+  });
+  if (!verified)
+    throw new ApiError(
+      400,
+      'CODE_INVALID',
+      'That code didn’t work. Check it, or send yourself a new one.',
+    );
+  res.json(ok({ ok: true }));
 };
 async function consumeOwnerToken(
   token: string,

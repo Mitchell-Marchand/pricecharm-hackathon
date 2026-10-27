@@ -141,7 +141,11 @@ test(
     const profile = (await owner.get('/api/v1/app/profile')).body.data;
     assert.equal(profile.live.reviewed, 1);
     assert.equal(profile.live.agreed, 1, '$275 is within 15% of $300');
-    assert.equal(profile.live.decides, false, 'One reviewed quote is too few to decide');
+    type Readiness = { service: string; ready: boolean; matched: number; reason: string };
+    const driveways = (body: { services: Readiness[] }) =>
+      body.services.find((item) => item.service === 'Driveways')!;
+    assert.equal(driveways(profile).ready, false, 'One close draft is too few');
+    assert.match(driveways(profile).reason, /within 15% of your price on 1 more Driveways job /);
 
     // 3. The customer isn't going ahead, and says why. The owner hears, and the AI learns it.
     const lost = await first.call('post', '/decline', { reason: 'price' });
@@ -165,6 +169,9 @@ test(
       .set('Origin', origin)
       .send({})
       .expect(200);
+    const learned = (await owner.get('/api/v1/app/profile')).body.data;
+    assert.equal(driveways(learned).ready, true, 'Two close drafts and Driveways can send alone');
+    assert.equal(learned.autoSendReady, true);
     await mutate(
       'UPDATE live_quotes SET sent_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 4 DAY) WHERE id=?',
       [second.quote.id],

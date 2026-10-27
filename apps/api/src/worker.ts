@@ -18,6 +18,7 @@ import { deliverEmail, validateEmailConfiguration } from './integrations/email.j
 import { json } from './models.js';
 import { flushErrorReports, reportError, startErrorReporting } from './error-reporting.js';
 import { scheduleExpiredDraftDeletion } from './workspace.js';
+import { cleanupStaleJobImports } from './job-imports.js';
 import { cleanupUnattachedJobPhotos } from './past-jobs.js';
 import { followUpQuotes } from './live/followup.js';
 
@@ -119,6 +120,7 @@ async function maintenance(): Promise<void> {
     }
   });
   await cleanupUnattachedJobPhotos();
+  await cleanupStaleJobImports();
   await followUpQuotes();
 }
 async function processJob(job: Job): Promise<void> {

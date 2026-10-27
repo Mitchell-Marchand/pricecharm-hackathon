@@ -34,6 +34,7 @@ test('a customer gets a quote on the link, comes back to it, and accepts it', as
   baseURL,
 }) => {
   const shop = await createBusiness(browser, baseURL!);
+  await shop.learnDriveways();
   await shop.autoSend(true);
   await page.goto(`/q/${shop.slug}`);
   await expect(page).toHaveTitle(/Get a quote from Moss & Stone Exterior Care/);

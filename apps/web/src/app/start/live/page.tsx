@@ -1,41 +1,94 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, Mail, MessageSquareText, Receipt } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SetupLoading } from '@/components/SetupLoading';
-import { PaymentCard } from '@/components/owner/PaymentCard';
+import { EmailCode } from '@/components/owner/EmailCode';
+import { GoLiveSteps } from '@/components/owner/GoLive';
 import { ShareSections } from '@/components/share/ShareSections';
-import { useToast } from '@/components/Toast';
-import { Button, ButtonLink } from '@/components/ui';
-import { loadMe, loadShare, resendVerification, type Me, type Share } from '@/lib/account';
+import { ButtonLink } from '@/components/ui';
+import { loadMe, loadShare, type Me, type Share } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
-import { loadBilling, type Billing } from '@/lib/owner';
+import { loadBilling, syncBilling, type Billing } from '@/lib/owner';
 
+/** Checks of the card after coming back from adding it, two seconds apart. */
+const CARD_CHECKS = 10;
+
+/**
+ * Setup's last screen. It says they're live only once quotes can reach customers; until then it
+ * shows what's left, the same two steps as right after signing up.
+ */
 export default function LiveStep() {
   const { state } = useOnboarding();
-  const notify = useToast();
   const [me, setMe] = useState<Me | null>(null);
   const [share, setShare] = useState<Share | null>(null);
   const [billing, setBilling] = useState<Billing | null>(null);
-  const [localLink, setLocalLink] = useState('');
+  const [checkingCard, setCheckingCard] = useState(false);
+  const [error, setError] = useState('');
+  const fromCheckout = useRef<boolean | null>(null);
 
-  useEffect(() => {
-    loadMe()
-      .then(setMe)
-      .catch(() => {});
-    loadShare()
-      .then(setShare)
-      .catch(() => {});
-    loadBilling()
-      .then(setBilling)
-      .catch(() => {});
+  const refresh = useCallback(() => {
+    Promise.all([loadMe(), loadBilling()])
+      .then(([nextMe, nextBilling]) => {
+        setMe(nextMe);
+        setBilling(nextBilling);
+      })
+      .catch((loadError) => setError(errorMessage(loadError)));
   }, []);
 
-  if (!state || !share) return <SetupLoading />;
+  useEffect(() => {
+    loadShare()
+      .then(setShare)
+      .catch((loadError) => setError(errorMessage(loadError)));
+    fromCheckout.current ??=
+      new URLSearchParams(window.location.search).get('billing') === 'active';
+    if (!fromCheckout.current) return refresh();
+    // Back from adding a card. Stripe can take a few seconds to confirm it.
+    window.history.replaceState(null, '', window.location.pathname);
+    loadMe()
+      .then(setMe)
+      .catch((loadError) => setError(errorMessage(loadError)));
+    setCheckingCard(true);
+    let stopped = false;
+    void (async () => {
+      for (let check = 0; check < CARD_CHECKS && !stopped; check++) {
+        try {
+          const fresh = await syncBilling();
+          if (stopped) return;
+          setBilling(fresh);
+          if (fresh.canSend) break;
+        } catch (syncError) {
+          setError(errorMessage(syncError));
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (!stopped) setCheckingCard(false);
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [refresh]);
+
+  if (error)
+    return (
+      <div className="min-h-dvh">
+        <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
+          <Logo href="/app" />
+        </header>
+        <main className="gutter mx-auto max-w-5xl pt-4 pb-20">
+          <p className="text-stop" role="alert">
+            {error}
+          </p>
+        </main>
+      </div>
+    );
+  if (!state || !share || !me || !billing) return <SetupLoading />;
   const business = state.business.name || 'Your business';
-  const firstName = me?.user.firstName || me?.user.name.split(' ')[0] || 'there';
+  const firstName = me.user.firstName || me.user.name.split(' ')[0] || 'there';
+  const live = billing.canSend;
 
   return (
     <div className="min-h-dvh">
@@ -44,56 +97,50 @@ export default function LiveStep() {
       </header>
 
       <main className="gutter mx-auto max-w-5xl pt-4 pb-20">
-        {me && !me.user.emailVerified && (
-          <div className="mb-8 flex flex-col gap-3 rounded-md border border-line bg-canary-soft px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        {live && !me.user.emailVerified && (
+          <div className="mb-8 flex flex-col gap-3 rounded-md border border-line bg-canary-soft px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
             <p className="flex gap-2.5 text-[15px]">
               <Mail className="mt-0.5 size-5 shrink-0" aria-hidden />
               <span>
-                We sent a link to <span className="font-semibold">{me.user.email}</span>. Open it to
-                confirm your email, so we can send you every quote.
+                Enter the code we sent to <span className="font-semibold">{me.user.email}</span>, so
+                we can send you every quote.
               </span>
             </p>
-            {localLink ? (
-              <a href={localLink} className="text-sm font-semibold text-accent underline">
-                Local test: confirm it now
-              </a>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  resendVerification()
-                    .then((sent) => {
-                      if (sent.devToken) setLocalLink(`/verify-email#token=${sent.devToken}`);
-                      else notify(`Sent. Check ${me.user.email}.`);
-                    })
-                    .catch((error) => notify(errorMessage(error)))
-                }
-              >
-                Resend
-              </Button>
-            )}
+            <EmailCode email={me.user.email} onConfirmed={refresh} compact />
           </div>
         )}
 
-        <p className="inline-flex items-center gap-2 font-semibold text-go">
-          <span className="inline-flex size-6 items-center justify-center rounded-full bg-go text-surface">
-            <Check className="size-4" aria-hidden />
-          </span>
-          You&apos;re all set, {firstName}
-        </p>
-        <h1 className="t-hero mt-4">You&apos;re live.</h1>
-        <p className="mt-5 max-w-xl text-lg text-ink-2">
-          Customers can ask {business} for a quote right now. Share your link, add it to your
-          website, or both.
-        </p>
-        {billing && me && (
-          <PaymentCard
-            billing={billing}
-            email={me.user.email}
-            emailVerified={me.user.emailVerified}
-            className="mt-8"
-          />
+        {live ? (
+          <>
+            <p className="inline-flex items-center gap-2 font-semibold text-go">
+              <span className="inline-flex size-6 items-center justify-center rounded-full bg-go text-surface">
+                <Check className="size-4" aria-hidden />
+              </span>
+              You&apos;re all set, {firstName}
+            </p>
+            <h1 className="t-hero mt-4">You&apos;re live.</h1>
+            <p className="mt-5 max-w-xl text-lg text-ink-2">
+              Customers can ask {business} for a quote right now. Share your link, add it to your
+              website, or both.
+            </p>
+          </>
+        ) : checkingCard ? (
+          <div role="status">
+            <h1 className="t-hero">Checking your card…</h1>
+            <p className="mt-5 max-w-xl text-lg text-ink-2">This takes a few seconds.</p>
+          </div>
+        ) : (
+          <>
+            <p className="font-semibold text-ink-2">Your account is saved, {firstName}</p>
+            <h1 className="t-hero mt-4">Almost live.</h1>
+            <p className="mt-5 max-w-xl text-lg text-ink-2">
+              Your quote link is ready, but quotes can&apos;t reach customers until these are done.
+              Anyone who asks before then waits for you.
+            </p>
+            <div className="mt-8 max-w-[560px]">
+              <GoLiveSteps me={me} billing={billing} onConfirmed={refresh} />
+            </div>
+          </>
         )}
 
         <div className="mt-12">

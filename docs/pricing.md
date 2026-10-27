@@ -33,7 +33,22 @@ Customers can accept, ask for a site visit, or say they're not going ahead and w
 
 ## Knowing when it's ready
 
-Practice gives a first answer: quotes can go out on their own once the AI's last two guesses were within 15% of the owner's. After five real quotes the owner reviewed, their record takes over: at least 8 of the last 10 drafts have to be within 15% of what the owner sent (`src/pricing/accuracy.ts`). The Train page shows both.
+Each service earns sending on its own separately (`src/pricing/readiness.ts`). A service is ready once:
+
+- it has three prices with a size, from past jobs, practice or real quotes, so its rate can be held to, and
+- at least two of its last three drafts came within 15% of what the owner charged. Those drafts are practice guesses and real quotes the owner reviewed. A practice customer the owner wanted to see first only counts if the AI would have priced it, and then as a miss.
+
+Two misses among the last three and the service goes back to waiting for the owner, until it matches them again. Nothing has to switch it back: readiness is worked out again for every quote.
+
+Even for a ready service, a quote waits when the size is unknown, or far outside the sizes the owner has priced (under half the smallest, or over one and a half times the largest).
+
+At signup, quotes go out on their own only if at least one service is already ready. The owner can still turn sending on or off in Settings, and it only ever applies to ready services.
+
+The Ready page and the Train page list every service with where it stands: the sizes it sends on its own, or what it still needs. A service that's short of sized prices offers "Add a job". Any service that isn't ready offers "Practice one", a practice customer for that service only (`focusSituation` in `src/practice/plan.ts`). That customer goes after what the service still needs: a first job, then a size it hasn't seen, then a usual job to check its guess. Owners can do this from the Ready page before they sign up, up to eight practice customers in all.
+
+Setup asks for past jobs the same way. The main service, and any service with a job, shows three slots: a small one, a usual one and a big one. A job remembers the slot it was added to (`past_jobs.size_slot`). Jobs with no readable size, or sized in a different unit from the service's other jobs, say what to fix, because they don't count toward its rate.
+
+Owners can also drop in old quotes and invoices, as many as they like (`src/job-imports.ts`). Each file is stored as it arrives and read in the background, so they can keep going. The jobs it finds wait on one list, where the owner checks the service, description, price and size and saves them together. A file is deleted as soon as it has been read, because invoices carry customers' names and addresses. Up to 20 files can wait on the list at once, and any left there for a week are cleared.
 
 ## Choosing the model
 

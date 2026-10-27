@@ -1,29 +1,51 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, CircleCheckBig, Hand, MessageSquareText, Receipt } from 'lucide-react';
+import { JobSheet, newJob, type Editing } from '@/components/jobs/PastJobs';
 import { Logo } from '@/components/Logo';
 import { QuoteForm } from '@/components/QuoteForm';
+import { ServiceList, ServicesIntro } from '@/components/ServiceList';
 import { SetupLoading } from '@/components/SetupLoading';
+import { useToast } from '@/components/Toast';
 import { Button } from '@/components/ui';
 import { loadProfile, type Profile } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
-import { tradeName } from '@/lib/trades';
+import { morePractice } from '@/lib/practice';
+import { tradeName, TRADES_BY_ID } from '@/lib/trades';
 import { money } from '@/lib/util';
 
 export default function ReadyStep() {
   const { state, goTo } = useOnboarding();
+  const notify = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => {
+  const [adding, setAdding] = useState<Editing | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
+  const refresh = useCallback(() => {
     loadProfile()
       .then(setProfile)
       .catch((loadError) => setError(errorMessage(loadError)));
   }, []);
+  useEffect(refresh, [refresh]);
   if (!state) return <SetupLoading />;
   const business = state.business.name || 'Your business';
   const trade = tradeName(state.business.tradeId, state.business.customTrade).toLowerCase();
+  const tradeHints = state.business.tradeId ? TRADES_BY_ID[state.business.tradeId] : null;
+  const services = state.business.services.length ? state.business.services : ['General'];
+
+  // A practice customer for one service, in setup's practice screen, then back here.
+  async function practice(service: string) {
+    setStarting(service);
+    try {
+      await morePractice(service);
+      await goTo('practice');
+    } catch (startError) {
+      notify(errorMessage(startError));
+      setStarting(null);
+    }
+  }
 
   return (
     <div className="min-h-dvh">
@@ -82,6 +104,20 @@ export default function ReadyStep() {
         )}
         {profile && (
           <>
+            <section className="mt-16 border-t border-line pt-12" aria-labelledby="services-title">
+              <h2 id="services-title" className="t-h2">
+                Your services
+              </h2>
+              <ServicesIntro services={profile.services} autoSend />
+              <ServiceList
+                services={profile.services}
+                autoSend
+                busy={starting}
+                onAddJob={(service) => setAdding(newJob(service))}
+                onPractice={(service) => void practice(service)}
+              />
+            </section>
+
             <div className="mt-16 grid gap-10 border-t border-line pt-12 md:grid-cols-3 md:gap-8">
               <section>
                 <h2 className="t-h3 flex items-center gap-2">
@@ -170,27 +206,22 @@ export default function ReadyStep() {
                   </tbody>
                 </table>
               </div>
-              <p className="mt-5 max-w-2xl text-ink-2">
-                {profile.autoSendReady ? (
-                  <>
-                    <span className="font-semibold text-ink">Quotes will go out on their own.</span>{' '}
-                    Its last two answers matched yours, so quotes inside your usual range send
-                    automatically. Anything unusual waits for your OK.
-                  </>
-                ) : (
-                  <>
-                    <span className="font-semibold text-ink">
-                      You&apos;ll approve each quote for now.
-                    </span>{' '}
-                    Its guesses aren&apos;t close enough yet, so every quote waits for a one-tap OK.
-                    You can let them go out on their own later, once it matches you more often.
-                  </>
-                )}
-              </p>
             </section>
           </>
         )}
       </main>
+      <JobSheet
+        key={adding ? adding.fields.serviceName : 'closed'}
+        editing={adding}
+        services={services}
+        placeholder={tradeHints?.jobHint ?? 'What you did, how big it was, anything unusual.'}
+        sizeHint={tradeHints?.sizeHint}
+        onClose={() => setAdding(null)}
+        onSaved={() => {
+          setAdding(null);
+          refresh();
+        }}
+      />
     </div>
   );
 }

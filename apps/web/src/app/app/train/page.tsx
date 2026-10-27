@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Hand, MessageSquareText, Receipt } from 'lucide-react';
 import { buttonClass } from '@/components/button-class';
 import { PastJobsEditor } from '@/components/jobs/PastJobs';
+import { ServiceList, ServicesIntro } from '@/components/ServiceList';
 import { api, errorMessage } from '@/lib/api';
 import type { Profile } from '@/lib/account';
 import type { Onboarding } from '@/lib/onboarding';
@@ -13,9 +15,11 @@ import { money } from '@/lib/util';
 import { TRADES_BY_ID } from '@/lib/trades';
 
 export default function TrainPage() {
+  const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [business, setBusiness] = useState<Onboarding['business'] | null>(null);
   const [error, setError] = useState('');
+  const [addRequest, setAddRequest] = useState<{ service: string; at: number } | null>(null);
 
   const refresh = useCallback(() => {
     loadOwnerProfile()
@@ -96,9 +100,24 @@ export default function TrainPage() {
         <div className="shimmer mt-10 h-40 rounded-md" aria-busy="true" />
       )}
 
-      {profile && profile.live.reviewed > 0 && (
-        <LiveRecord live={profile.live} ready={profile.autoSendReady} />
+      {profile && profile.services.length > 0 && (
+        <section className="mt-14 border-t border-line pt-10" aria-labelledby="services-title">
+          <h2 id="services-title" className="t-h2">
+            Your services
+          </h2>
+          <ServicesIntro services={profile.services} autoSend={profile.autoSend} />
+          <ServiceList
+            services={profile.services}
+            autoSend={profile.autoSend}
+            onAddJob={(service) => setAddRequest({ service, at: Date.now() })}
+            onPractice={(service) =>
+              router.push(`/app/train/practice?service=${encodeURIComponent(service)}`)
+            }
+          />
+        </section>
       )}
+
+      {profile && profile.live.reviewed > 0 && <LiveRecord live={profile.live} />}
 
       <section className="mt-14 border-t border-line pt-10" aria-labelledby="practice-title">
         <h2 id="practice-title" className="t-h2">
@@ -125,7 +144,9 @@ export default function TrainPage() {
             <PastJobsEditor
               services={services}
               jobHint={trade?.jobHint}
+              sizeHint={trade?.sizeHint}
               onJobsChange={onJobsChange}
+              addRequest={addRequest}
             />
           )}
         </div>
@@ -135,8 +156,7 @@ export default function TrainPage() {
 }
 
 /** How close its drafts came to what the owner sent real customers. */
-function LiveRecord({ live, ready }: { live: Profile['live']; ready: boolean }) {
-  const toGo = Math.max(0, 5 - live.reviewed);
+function LiveRecord({ live }: { live: Profile['live'] }) {
   return (
     <section className="mt-14 border-t border-line pt-10" aria-labelledby="record-title">
       <h2 id="record-title" className="t-h2">
@@ -144,12 +164,8 @@ function LiveRecord({ live, ready }: { live: Profile['live']; ready: boolean }) 
       </h2>
       <p className="mt-2 max-w-xl text-ink-2">
         Of the last {live.considered} {live.considered === 1 ? 'quote' : 'quotes'} you checked
-        before sending, its draft was within 15% of what you sent on {live.agreed}.{' '}
-        {live.decides
-          ? ready
-            ? 'That’s close enough to let quotes go out on their own. You can turn that on in Settings.'
-            : 'It needs 8 of the last 10 before quotes go out on their own. Every change you make teaches it.'
-          : `After ${toGo} more, this record decides when quotes can go out on their own, instead of practice.`}
+        before sending, its draft was within 15% of what you sent on {live.agreed}. Every change you
+        make teaches it.
       </p>
       <ul className="mt-5 flex max-w-xl flex-col gap-2 text-[15px]">
         {live.recent.map((item) => (

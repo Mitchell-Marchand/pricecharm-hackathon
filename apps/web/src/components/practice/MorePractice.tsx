@@ -11,8 +11,17 @@ import { buttonClass } from '@/components/button-class';
 import { errorMessage } from '@/lib/api';
 import { loadPractice, morePractice, withRun, type PracticeState } from '@/lib/practice';
 
-/** Practice after setup, from the Train page: one customer at a time, as many as the owner likes. */
-export function MorePractice({ runId: requested }: { runId: string | null }) {
+/**
+ * Practice after setup, from the Train page: one customer at a time, as many as the owner likes,
+ * and all for one service if they came here to practice that one.
+ */
+export function MorePractice({
+  runId: requested,
+  service,
+}: {
+  runId: string | null;
+  service: string | null;
+}) {
   const { me } = useOwner();
   const notify = useToast();
   const [practice, setPractice] = useState<PracticeState | null>(null);
@@ -25,10 +34,11 @@ export function MorePractice({ runId: requested }: { runId: string | null }) {
     async (another = false) => {
       setStarting(true);
       try {
-        const added = await morePractice();
+        const added = await morePractice(service);
         setPractice(added.state);
         setRunId(added.runId);
-        window.history.replaceState(null, '', `/app/train/practice?run=${added.runId}`);
+        const focus = service ? `&service=${encodeURIComponent(service)}` : '';
+        window.history.replaceState(null, '', `/app/train/practice?run=${added.runId}${focus}`);
         window.scrollTo({ top: 0 });
       } catch (startError) {
         // Asking for another happens at the bottom of the page, so say so there.
@@ -38,7 +48,7 @@ export function MorePractice({ runId: requested }: { runId: string | null }) {
         setStarting(false);
       }
     },
-    [notify],
+    [notify, service],
   );
 
   useEffect(() => {
@@ -79,7 +89,9 @@ export function MorePractice({ runId: requested }: { runId: string | null }) {
             </Link>
             {fresh && (
               <>
-                <h1 className="t-h1 mt-4">Practice with a customer</h1>
+                <h1 className="t-h1 mt-4">
+                  {run?.focus ? `Practice a ${run.focus} job` : 'Practice with a customer'}
+                </h1>
                 <p className="mt-3 text-lg text-ink-2">
                   Same as in setup. Answer like it&apos;s a real lead, then quote it or ask to see
                   it first. Your AI picks up how you handle it.

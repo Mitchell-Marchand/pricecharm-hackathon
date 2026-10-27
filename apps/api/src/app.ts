@@ -10,6 +10,7 @@ import {
   forgotPassword,
   resetPassword,
   requestOwnerVerification,
+  verifyOwnerCode,
   verifyOwnerEmail,
 } from './verification.js';
 import {
@@ -20,9 +21,11 @@ import {
 } from './billing.js';
 import { validateEmailConfiguration } from './integrations/email.js';
 import { accountRouter } from './accounts.js';
-import { validateRuntimeConfiguration } from './config.js';
+import { isDeployed, validateRuntimeConfiguration } from './config.js';
 import { requireHuman } from './human-check.js';
 import { onboardingRouter } from './onboarding.js';
+import { jobImportsRouter } from './job-imports.js';
+import { approveLinkRouter } from './live/approve-link.js';
 import { pastJobsRouter } from './past-jobs.js';
 import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
@@ -30,6 +33,15 @@ import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
+
+/**
+ * Requests one address may make to the API in a minute. The browser tests make a lot from one
+ * address, so a local run can raise it with LOCAL_REQUESTS_PER_MINUTE. Deployed servers ignore that.
+ */
+function requestsPerMinute(): number {
+  const local = Number(process.env.LOCAL_REQUESTS_PER_MINUTE);
+  return local > 0 && process.env.NODE_ENV !== 'production' && !isDeployed() ? local : 300;
+}
 
 export function createApp() {
   validateRuntimeConfiguration();
@@ -101,7 +113,7 @@ export function createApp() {
     stripeWebhook,
   );
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/v1', rateLimit(300, 60_000));
+  app.use('/api/v1', rateLimit(requestsPerMinute(), 60_000));
   app.use('/api/v1', createUploadRouter());
   app.get('/api/v1/pricing', pricingHandler);
   app.get('/api/v1/site', (_req, res) =>
@@ -121,6 +133,7 @@ export function createApp() {
     '/api/v1',
     onboardingRouter,
     pastJobsRouter,
+    jobImportsRouter,
     practiceRouter,
     profileRouter,
     chatRouter,
@@ -134,6 +147,14 @@ export function createApp() {
   app.post('/api/v1/auth/reset-password', rateLimit(15, 15 * 60_000), resetPassword);
   app.post('/api/v1/auth/request-verification', requireOwner, requestOwnerVerification);
   app.post('/api/v1/auth/verify-email', rateLimit(30, 15 * 60_000), verifyOwnerEmail);
+  app.post(
+    '/api/v1/auth/verify-email-code',
+    rateLimit(30, 15 * 60_000),
+    requireOwner,
+    verifyOwnerCode,
+  );
+  // The one-tap link in an owner's email works without signing in, for that one quote.
+  app.use('/api/v1', approveLinkRouter);
   app.use('/api/v1', requireOwner, billingRouter, accountRouter, shareRouter, ownerQuotesRouter);
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
   app.use(errorHandler);

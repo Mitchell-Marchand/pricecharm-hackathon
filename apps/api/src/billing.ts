@@ -236,9 +236,12 @@ billingRouter.patch('/billing', async (req, res) => {
 });
 billingRouter.post('/billing/checkout', async (req, res) => {
   const context = owner(req);
-  z.object({})
+  // From setup, the owner comes back to setup's last screen, which says when they're live.
+  const { from } = z
+    .object({ from: z.enum(['setup']).optional() })
     .strict()
     .parse(req.body ?? {});
+  const back = from === 'setup' ? '/start/live' : '/app/settings';
   if (!context.emailVerified)
     throw new ApiError(
       409,
@@ -255,7 +258,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         connection,
       );
     });
-    res.json(ok({ url: `${appOrigin()}/app/settings?billing=active` }));
+    res.json(ok({ url: `${appOrigin()}${back}?billing=active` }));
     return;
   }
   await validateMeteredPrice();
@@ -297,8 +300,8 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         line_items: [{ price: process.env.STRIPE_PRICE_ID! }],
         client_reference_id: context.businessId,
         subscription_data: { metadata: { businessId: context.businessId } },
-        success_url: `${appOrigin()}/app/settings?billing=active`,
-        cancel_url: `${appOrigin()}/app/settings`,
+        success_url: `${appOrigin()}${back}?billing=active`,
+        cancel_url: `${appOrigin()}${back}`,
       },
       {
         idempotencyKey: `quotient-checkout:${context.businessId}:${Math.floor(Date.now() / 3600000)}`,

@@ -13,12 +13,20 @@ export interface JobPhoto {
   url: string;
 }
 
+/** Which of a service's jobs the owner meant to add: a small one, a usual one or a big one. */
+export type SizeSlot = 'small' | 'usual' | 'big';
+export const SIZE_SLOTS: SizeSlot[] = ['small', 'usual', 'big'];
+
 export interface PastJob {
   id: string;
   serviceName: string;
   description: string;
   priceCents: number;
   size: string;
+  /** The size as pricing reads it. Null when neither the size nor the description has one. */
+  quantity: number | null;
+  unit: string | null;
+  slot: SizeSlot | null;
   duration: string;
   when: string;
   materialsCents: number | null;
@@ -29,14 +37,24 @@ export interface PastJob {
   createdAt: string;
 }
 
-export type JobFields = Omit<PastJob, 'id' | 'photos' | 'createdAt' | 'priceCents'> & {
+export type JobFields = Omit<
+  PastJob,
+  'id' | 'photos' | 'createdAt' | 'priceCents' | 'quantity' | 'unit'
+> & {
   priceCents: number | null;
 };
 
-export interface ReadResult {
-  found: boolean;
-  job: Omit<JobFields, 'source'>;
+/** A job as read from an old quote or invoice, for the owner to check. */
+export type ReadJob = Omit<JobFields, 'source' | 'slot'>;
+
+/** One dropped file: being read, read, or not readable. It waits on the list until saved or dropped. */
+export interface JobImport {
+  id: string;
+  filename: string;
+  status: 'reading' | 'ready' | 'empty' | 'failed';
+  job: ReadJob | null;
   issues: string[];
+  failure: string | null;
 }
 
 export const listJobs = () => api<PastJob[]>('/onboarding/jobs');
@@ -59,8 +77,19 @@ export async function uploadJobPhoto(file: File): Promise<JobPhoto> {
   return api<JobPhoto>('/onboarding/photos', { method: 'POST', body });
 }
 
-export function readDocument(file: File) {
+export const listImports = () => api<JobImport[]>('/onboarding/imports');
+
+/** Sends one file. It's read on the server, so it shows as reading until the list says otherwise. */
+export function uploadImport(file: File) {
   const body = new FormData();
   body.append('file', file);
-  return api<ReadResult>('/onboarding/jobs/read', { method: 'POST', body });
+  return api<JobImport>('/onboarding/imports', { method: 'POST', body });
 }
+
+export const removeImport = (id: string) => api(`/onboarding/imports/${id}`, { method: 'DELETE' });
+
+export const saveImports = (jobs: { importId: string; job: ReadJob }[]) =>
+  api<{ jobs: PastJob[]; imports: JobImport[] }>('/onboarding/imports/save', {
+    method: 'POST',
+    ...json({ jobs }),
+  });

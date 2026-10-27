@@ -83,6 +83,8 @@ export default function PracticeStep() {
   const count = practice?.count ?? 3;
   const finishedCount = practice?.finished ?? 0;
   const last = index === null || index >= count - 1;
+  // One more for a single service, started from the Ready screen once setup's three are done.
+  const extra = index !== null && index >= count;
 
   async function next() {
     if (!practice || index === null) return;
@@ -105,7 +107,7 @@ export default function PracticeStep() {
   return (
     <div className="flex min-h-dvh flex-col">
       <WizardHeader step={3}>
-        <PracticeProgress index={index ?? 0} finished={finishedCount} count={count} />
+        {!extra && <PracticeProgress index={index ?? 0} finished={finishedCount} count={count} />}
       </WizardHeader>
 
       <PracticeSession
@@ -117,6 +119,28 @@ export default function PracticeStep() {
         className="pt-8 pb-10"
         intro={
           <>
+            {extra && (
+              <div className="mb-8">
+                <button
+                  type="button"
+                  onClick={() => void goTo('ready')}
+                  className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+                >
+                  <ArrowLeft className="size-4" aria-hidden /> Your results
+                </button>
+                {(run?.messages.length ?? 0) <= 1 && (
+                  <>
+                    <h1 className="t-h1 mt-4">
+                      {run?.focus ? `Practice a ${run.focus} job` : 'One more practice customer'}
+                    </h1>
+                    <p className="mt-3 text-lg text-ink-2">
+                      Answer it like a real lead. If your price comes within 15% of its guess, that
+                      counts toward sending these on its own.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
             {index === 0 && (run?.messages.length ?? 0) <= 1 && (
               <div className="mb-8">
                 <button
@@ -143,9 +167,11 @@ export default function PracticeStep() {
         done={
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted">
-              {last
-                ? `All ${count === 3 ? 'three' : count} done.`
-                : `${count - finishedCount} to go. The next one is ready.`}
+              {extra
+                ? 'Done. See where it stands now.'
+                : last
+                  ? `All ${count === 3 ? 'three' : count} done.`
+                  : `${count - finishedCount} to go. The next one is ready.`}
             </p>
             <Button size="lg" onClick={() => void next()}>
               {last ? 'See what your AI learned' : 'Next practice request'}{' '}

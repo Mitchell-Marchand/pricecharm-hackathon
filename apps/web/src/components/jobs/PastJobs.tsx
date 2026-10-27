@@ -1,36 +1,56 @@
 'use client';
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import {
-  Camera,
-  ChevronDown,
-  FileText,
-  ImagePlus,
-  LoaderCircle,
-  Plus,
-  Upload,
-  X,
-} from 'lucide-react';
+import { Camera, ChevronDown, LoaderCircle, Plus, X } from 'lucide-react';
+import { JobImports } from '@/components/jobs/JobImports';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Button, Chip, Field, MoneyInput, Segmented, TextArea, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
   listJobs,
-  readDocument,
   removeJob,
   saveJob,
+  SIZE_SLOTS,
   uploadJobPhoto,
   type Discount,
   type JobFields,
   type JobPhoto,
   type PastJob,
+  type SizeSlot,
 } from '@/lib/jobs';
 import { cx, money, moneyInput, parseMoney } from '@/lib/util';
 
 const MAX_PHOTOS = 8;
+/** Jobs with a size a service needs before its guesses can be checked against your prices. */
+const SIZED_JOBS = 3;
 
-function blankFields(serviceName: string): JobFields {
+/** What each slot asks for, on the empty slot and at the top of the sheet it opens. */
+const SLOTS: Record<
+  SizeSlot,
+  { label: string; add: string; hint: string; sheet: (service: string) => string }
+> = {
+  small: {
+    label: 'Small',
+    add: 'A small one',
+    hint: 'Near the low end of what you do',
+    sheet: (service) => `A small ${service} job, near the low end of what you do.`,
+  },
+  usual: {
+    label: 'Usual',
+    add: 'A usual one',
+    hint: 'The kind you do most',
+    sheet: (service) => `A usual ${service} job, the kind you do most.`,
+  },
+  big: {
+    label: 'Big',
+    add: 'A big one',
+    hint: 'One of your biggest',
+    sheet: (service) => `One of your bigger ${service} jobs.`,
+  },
+};
+
+export function blankFields(serviceName: string, slot: SizeSlot | null = null): JobFields {
   return {
     serviceName,
     description: '',
@@ -42,16 +62,48 @@ function blankFields(serviceName: string): JobFields {
     discount: null,
     notes: '',
     source: 'manual',
+    slot,
   };
 }
 
-type Editing = {
+export type Editing = {
   id: string | null;
   fields: JobFields;
   photos: JobPhoto[];
-  banner?: string;
-  issues?: string[];
 };
+
+/** A new job for a service, for the slot it's meant to fill. */
+export const newJob = (service: string, slot: SizeSlot | null = null): Editing => ({
+  id: null,
+  fields: blankFields(service, slot),
+  photos: [],
+});
+
+/**
+ * A service's jobs in its small, usual and big slots: each in the slot the owner added it to,
+ * then the rest by size. Jobs past the three are listed after them.
+ */
+function fillSlots(jobs: PastJob[]) {
+  const slots: Record<SizeSlot, PastJob | null> = { small: null, usual: null, big: null };
+  const rest: PastJob[] = [];
+  for (const job of jobs) {
+    if (job.slot && !slots[job.slot]) slots[job.slot] = job;
+    else rest.push(job);
+  }
+  const open = SIZE_SLOTS.filter((slot) => !slots[slot]);
+  // Smallest first so sizes line up with the slots. Jobs without a size go last.
+  const chosen = rest
+    .slice(0, open.length)
+    .sort((a, b) => (a.quantity ?? Number.MAX_VALUE) - (b.quantity ?? Number.MAX_VALUE));
+  // One job takes the middle of the open slots, two take the ends.
+  const targets =
+    chosen.length === 1 ? [open[Math.floor((open.length - 1) / 2)]] : [open[0], open.at(-1)];
+  chosen.forEach((job, index) => {
+    const slot = chosen.length === open.length ? open[index] : targets[index];
+    if (slot) slots[slot] = job;
+  });
+  return { slots, extra: rest.slice(open.length) };
+}
 
 function discountText(discount: Discount): string {
   const amount =
@@ -59,12 +111,34 @@ function discountText(discount: Discount): string {
   return discount.reason ? `${amount}, ${discount.reason.toLowerCase()}` : amount;
 }
 
+/** The unit most of a service's jobs are sized in. Its rate is worked out in that one. */
+function mainUnit(jobs: PastJob[]) {
+  const counts = new Map<string, number>();
+  for (const job of jobs) if (job.unit) counts.set(job.unit, (counts.get(job.unit) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
+/** Why a job doesn't teach it the service's rate yet, if it doesn't. */
+function sizeNote(job: PastJob, example: string, unit: string | null) {
+  if (!job.quantity)
+    return job.size
+      ? `It can’t read a size from “${job.size}”. Try something like ${example}.`
+      : `Add how big it was, like ${example}, so it can learn your rate.`;
+  if (unit && job.unit !== unit)
+    return `It read this one as ${job.quantity} ${job.unit}, but your other ${job.serviceName} jobs are in ${unit}. Add its size in ${unit}.`;
+  return '';
+}
+
 function JobCard({
   job,
+  label,
+  note,
   onEdit,
   onRemove,
 }: {
   job: PastJob;
+  label?: string;
+  note: string;
   onEdit: () => void;
   onRemove: () => void;
 }) {
@@ -84,12 +158,14 @@ function JobCard({
         </span>
       )}
       <div className="min-w-0 flex-1">
+        {label && <p className="text-xs font-semibold text-muted uppercase">{label}</p>}
         <div className="flex items-start justify-between gap-3">
           <p className="line-clamp-2 font-semibold">{job.description}</p>
           <p className="tabular shrink-0 font-mono font-semibold">{money(job.priceCents)}</p>
         </div>
         {facts && <p className="mt-1 text-sm text-muted">{facts}</p>}
         {job.discount && <p className="mt-1 text-sm text-go">{discountText(job.discount)}</p>}
+        {note && <p className="mt-1 text-sm text-ink-2">{note}</p>}
         <div className="mt-2 flex gap-4 text-sm">
           <button
             type="button"
@@ -107,21 +183,58 @@ function JobCard({
   );
 }
 
-/** The owner's past jobs: the list, adding and editing one, and reading one from an invoice. */
+function EmptySlot({
+  slot,
+  service,
+  onAdd,
+}: {
+  slot: SizeSlot;
+  service: string;
+  onAdd: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onAdd}
+        aria-label={`Add a ${slot} ${service} job`}
+        className="flex w-full items-center gap-3 rounded-md border border-dashed border-line-strong bg-surface px-4 py-3.5 text-left transition-colors hover:border-ink/40"
+      >
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+          <Plus className="size-4" aria-hidden />
+        </span>
+        <span>
+          <span className="block font-semibold">{SLOTS[slot].add}</span>
+          <span className="block text-sm text-muted">{SLOTS[slot].hint}</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/**
+ * The owner's past jobs, by service: a small, a usual and a big one for each service they've
+ * started on, plus adding, editing, and reading one from an invoice.
+ */
 export function PastJobsEditor({
   services,
   jobHint,
+  sizeHint,
   onJobsChange,
+  addRequest,
 }: {
   services: string[];
   jobHint?: string;
+  sizeHint?: string;
   onJobsChange?: (jobs: PastJob[]) => void;
+  /** Opens the sheet for this service's next empty slot, each time `at` changes. */
+  addRequest?: { service: string; at: number } | null;
 }) {
   const notify = useToast();
   const [jobs, setJobs] = useState<PastJob[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [editing, setEditing] = useState<Editing | null>(null);
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const sizeExample = sizeHint ?? '600 sq ft';
 
   useEffect(() => {
     listJobs()
@@ -131,8 +244,14 @@ export function PastJobsEditor({
   useEffect(() => {
     if (jobs) onJobsChange?.(jobs);
   }, [jobs, onJobsChange]);
+  const handled = useRef(0);
+  useEffect(() => {
+    if (!addRequest || !jobs || handled.current === addRequest.at) return;
+    handled.current = addRequest.at;
+    const { slots } = fillSlots(jobs.filter((job) => job.serviceName === addRequest.service));
+    setEditing(newJob(addRequest.service, SIZE_SLOTS.find((slot) => !slots[slot]) ?? null));
+  }, [addRequest, jobs]);
 
-  const count = jobs?.length ?? 0;
   const remove = async (job: PastJob) => {
     setJobs((current) => current?.filter((item) => item.id !== job.id) ?? null);
     try {
@@ -142,6 +261,25 @@ export function PastJobsEditor({
       notify(errorMessage(error));
     }
   };
+  const card = (job: PastJob, unit: string | null, label?: string) => (
+    <JobCard
+      key={job.id}
+      job={job}
+      label={label}
+      note={sizeNote(job, sizeExample, unit)}
+      onEdit={() => setEditing({ id: job.id, fields: job, photos: job.photos })}
+      onRemove={() => void remove(job)}
+    />
+  );
+
+  // The main service always shows its slots. Others do once they have a job.
+  const groups = [...new Set([...services, ...(jobs ?? []).map((job) => job.serviceName)])].map(
+    (service, index) => {
+      const own = (jobs ?? []).filter((job) => job.serviceName === service);
+      return { service, jobs: own, open: index === 0 || own.length > 0 };
+    },
+  );
+  const others = groups.filter((group) => !group.open);
 
   return (
     <>
@@ -153,55 +291,93 @@ export function PastJobsEditor({
         <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading your jobs">
           <div className="shimmer h-28 rounded-md" />
         </div>
-      ) : count === 0 ? (
-        <div className="rounded-md border border-dashed border-line-strong bg-surface p-6">
-          <ImagePlus className="size-7 text-accent" aria-hidden />
-          <h2 className="t-h3 mt-3">Start with a job you remember well</h2>
-          <p className="mt-1 text-ink-2">
-            What it was, what you charged, and a photo or two if you have them.
-          </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button
-              onClick={() => setEditing({ id: null, fields: blankFields(services[0]), photos: [] })}
-            >
-              <Plus aria-hidden /> Add a job
-            </Button>
-            <Button variant="secondary" onClick={() => setInvoiceOpen(true)}>
-              <Upload aria-hidden /> Upload an old quote or invoice
-            </Button>
-          </div>
-        </div>
       ) : (
-        <>
-          <ul className="flex flex-col gap-3" aria-label="Your past jobs">
-            {jobs.map((job) => (
-              <JobCard
-                key={job.id}
-                job={job}
-                onEdit={() => setEditing({ id: job.id, fields: job, photos: job.photos })}
-                onRemove={() => void remove(job)}
-              />
-            ))}
-          </ul>
-          <div className="mt-4 flex flex-wrap gap-2">
+        <div className="flex flex-col gap-8">
+          {groups
+            .filter((group) => group.open)
+            .map(({ service, jobs: own }) => {
+              const { slots, extra } = fillSlots(own);
+              const unit = mainUnit(own);
+              const sized = own.filter((job) => job.unit && job.unit === unit).length;
+              return (
+                <section key={service} aria-label={service}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <h2 className="t-h3">{service}</h2>
+                    <p className={cx('text-sm', sized >= SIZED_JOBS ? 'text-go' : 'text-muted')}>
+                      {sized >= SIZED_JOBS
+                        ? `${sized} with a size`
+                        : `${sized} of ${SIZED_JOBS} with a size`}
+                    </p>
+                  </div>
+                  <ul className="mt-3 flex flex-col gap-3" aria-label={`Your ${service} jobs`}>
+                    {SIZE_SLOTS.map((slot) => {
+                      const job = slots[slot];
+                      return job ? (
+                        card(job, unit, SLOTS[slot].label)
+                      ) : (
+                        <EmptySlot
+                          key={slot}
+                          slot={slot}
+                          service={service}
+                          onAdd={() => setEditing(newJob(service, slot))}
+                        />
+                      );
+                    })}
+                    {extra.map((job) => card(job, unit))}
+                  </ul>
+                </section>
+              );
+            })}
+
+          {others.length > 0 && (
+            <section aria-labelledby="other-services">
+              <h2 id="other-services" className="font-semibold">
+                Your other services
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                Add these whenever you like. Until then, it checks with you before quoting them.
+              </p>
+              <ul className="mt-3 divide-y divide-line border-y border-line">
+                {others.map(({ service }) => (
+                  <li key={service} className="flex items-center justify-between gap-3 py-2.5">
+                    <span>{service}</span>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(newJob(service))}
+                      aria-label={`Add a ${service} job`}
+                      className="text-sm font-semibold text-accent hover:underline"
+                    >
+                      Add a job
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {jobs.length > 0 && (
             <Button
               variant="secondary"
-              onClick={() => setEditing({ id: null, fields: blankFields(services[0]), photos: [] })}
+              className="self-start"
+              onClick={() => setEditing(newJob(services[0]))}
             >
               <Plus aria-hidden /> Add another job
             </Button>
-            <Button variant="ghost" onClick={() => setInvoiceOpen(true)}>
-              <Upload aria-hidden /> Upload an invoice
-            </Button>
-          </div>
-        </>
+          )}
+          <JobImports services={services} sizeHint={sizeHint} onSaved={setJobs} />
+        </div>
       )}
 
       <JobSheet
-        key={editing ? `${editing.id ?? 'new'}-${editing.banner ?? ''}` : 'closed'}
+        key={
+          editing
+            ? `${editing.id ?? 'new'}-${editing.fields.serviceName}-${editing.fields.slot ?? ''}`
+            : 'closed'
+        }
         editing={editing}
         services={services}
         placeholder={jobHint ?? 'What you did, how big it was, anything unusual.'}
+        sizeHint={sizeHint}
         onClose={() => setEditing(null)}
         onSaved={(job) => {
           setJobs((current) => {
@@ -213,40 +389,23 @@ export function PastJobsEditor({
           setEditing(null);
         }}
       />
-      <InvoiceSheet
-        open={invoiceOpen}
-        onClose={() => setInvoiceOpen(false)}
-        onRead={(filename, result) => {
-          setInvoiceOpen(false);
-          setEditing({
-            id: null,
-            fields: {
-              ...result.job,
-              serviceName: services.includes(result.job.serviceName)
-                ? result.job.serviceName
-                : services[0],
-              source: 'invoice',
-            },
-            photos: [],
-            banner: `We filled this in from ${filename}. Check it over, then save.`,
-            issues: result.issues,
-          });
-        }}
-      />
     </>
   );
 }
 
-function JobSheet({
+/** Adding or editing one job. A job added for a slot says which size it's after. */
+export function JobSheet({
   editing,
   services,
   placeholder,
+  sizeHint,
   onClose,
   onSaved,
 }: {
   editing: Editing | null;
   services: string[];
   placeholder: string;
+  sizeHint?: string;
   onClose: () => void;
   onSaved: (job: PastJob) => void;
 }) {
@@ -259,14 +418,7 @@ function JobSheet({
   const [description, setDescription] = useState(start.description);
   const [price, setPrice] = useState(moneyInput(start.priceCents));
   const [more, setMore] = useState(
-    Boolean(
-      start.size ||
-      start.duration ||
-      start.when ||
-      start.discount ||
-      start.notes ||
-      start.materialsCents,
-    ),
+    Boolean(start.duration || start.when || start.discount || start.notes || start.materialsCents),
   );
   const [size, setSize] = useState(start.size);
   const [duration, setDuration] = useState(start.duration);
@@ -343,6 +495,7 @@ function JobSheet({
               : null,
           notes: notes.trim(),
           source: start.source,
+          slot: start.slot,
         },
         photos.map((photo) => photo.id),
       );
@@ -358,8 +511,12 @@ function JobSheet({
     <Sheet
       open={Boolean(editing)}
       onClose={onClose}
-      title={editing?.banner ? 'Check this job' : editing?.id ? 'Edit job' : 'Add a job'}
-      subtitle="Only you and your AI see this."
+      title={editing?.id ? 'Edit job' : 'Add a job'}
+      subtitle={
+        start.slot && !editing?.id
+          ? `${SLOTS[start.slot].sheet(serviceName)} Only you and your AI see this.`
+          : 'Only you and your AI see this.'
+      }
       footer={
         <div className="flex items-center justify-between gap-3">
           <p className={cx('text-sm', saveError ? 'text-stop' : 'text-muted')} role="status">
@@ -377,22 +534,6 @@ function JobSheet({
       }
     >
       <div className="flex flex-col gap-6">
-        {editing?.banner && (
-          <div className="flex gap-2.5 rounded-sm bg-accent-soft px-3.5 py-3 text-sm text-ink">
-            <FileText className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
-            <div>
-              <p>{editing.banner}</p>
-              {editing.issues && editing.issues.length > 0 && (
-                <ul className="mt-1.5 list-disc pl-4 text-ink-2">
-                  {editing.issues.map((issue) => (
-                    <li key={issue}>{issue}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-
         <div>
           <p className="text-sm font-semibold">Photos</p>
           <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -497,6 +638,20 @@ function JobSheet({
           />
         </Field>
 
+        <Field
+          label="How big was it?"
+          htmlFor="job-size"
+          hint="However you price it. This is how it learns your rate."
+        >
+          <TextInput
+            id="job-size"
+            placeholder={sizeHint ?? 'Sq ft, rooms, hours'}
+            value={size}
+            onChange={(event) => setSize(event.target.value)}
+            className="max-w-[320px]"
+          />
+        </Field>
+
         <div className="border-t border-line pt-5">
           <button
             type="button"
@@ -507,7 +662,7 @@ function JobSheet({
             <span>
               <span className="block font-semibold">More details</span>
               <span className="block text-sm text-muted">
-                Size, time, materials, discounts. All optional.
+                Time, materials, discounts. All optional.
               </span>
             </span>
             <ChevronDown
@@ -521,14 +676,6 @@ function JobSheet({
           {more && (
             <div className="fade-up mt-5 flex flex-col gap-5">
               <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="How big was it?" htmlFor="job-size">
-                  <TextInput
-                    id="job-size"
-                    placeholder="600 sq ft"
-                    value={size}
-                    onChange={(event) => setSize(event.target.value)}
-                  />
-                </Field>
                 <Field label="How long did it take?" htmlFor="job-duration">
                   <TextInput
                     id="job-duration"
@@ -620,85 +767,6 @@ function JobSheet({
           )}
         </div>
       </div>
-    </Sheet>
-  );
-}
-
-function InvoiceSheet({
-  open,
-  onClose,
-  onRead,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onRead: (filename: string, result: Awaited<ReturnType<typeof readDocument>>) => void;
-}) {
-  const [reading, setReading] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const fileInput = useRef<HTMLInputElement>(null);
-  const read = async (file: File) => {
-    setReading(file.name);
-    setError('');
-    try {
-      const result = await readDocument(file);
-      if (!result.found) {
-        setError(
-          `We couldn’t find a job in ${file.name}. Try another file, or add the job yourself.`,
-        );
-        return;
-      }
-      onRead(file.name, result);
-    } catch (readError) {
-      setError(errorMessage(readError));
-    } finally {
-      setReading(null);
-    }
-  };
-  return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title="Upload a quote or invoice"
-      subtitle="A PDF or a photo of one. We'll pull out the job and the price for you to check."
-    >
-      {reading ? (
-        <div className="flex flex-col gap-4" role="status">
-          <p className="font-semibold">Reading {reading}…</p>
-          <div className="shimmer h-4 w-3/4 rounded-xs" />
-          <div className="shimmer h-4 w-1/2 rounded-xs" />
-          <div className="shimmer h-4 w-2/3 rounded-xs" />
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          <button
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            className="flex flex-col items-start gap-2 rounded-md border border-dashed border-line-strong bg-surface-2 p-6 text-left hover:border-ink/40"
-          >
-            <Upload className="size-6 text-accent" aria-hidden />
-            <span className="font-semibold">Choose a file</span>
-            <span className="text-sm text-muted">A PDF up to 4 MB, or a JPG or PNG photo</span>
-          </button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="application/pdf,image/jpeg,image/png,image/webp"
-            className="sr-only"
-            tabIndex={-1}
-            aria-hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void read(file);
-              event.target.value = '';
-            }}
-          />
-          {error && (
-            <p className="text-sm text-stop" role="alert">
-              {error}
-            </p>
-          )}
-        </div>
-      )}
     </Sheet>
   );
 }

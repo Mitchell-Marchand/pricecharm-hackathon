@@ -15,8 +15,16 @@ import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
 import { draftForBusiness } from '../pricing/draft.js';
-import { withinEstimate, type Estimate } from '../pricing/rates.js';
+import { businessReadiness } from '../pricing/readiness.js';
+import {
+  estimateGap,
+  SOLID_POINTS,
+  withinEstimate,
+  type Estimate,
+  type Rate,
+} from '../pricing/rates.js';
 import type { JobSpec } from '../pricing/spec.js';
+import { formatQuantity } from '../pricing/units.js';
 import { questionChecklist } from '../profile.js';
 import { getPhoto } from '../storage.js';
 import { withAiUsage, withCustomerAiUsage } from '../usage.js';
@@ -45,6 +53,24 @@ export async function chatEmailLink(connection: Sql | undefined, slug: string, c
   return { link: `${appOrigin()}/q/${slug}#chat=${chatId}&token=${token}`, days: EMAIL_LINK_DAYS };
 }
 const MAX_MESSAGES = 60;
+
+/** How long the one-tap approval link in a "needs your OK" email works. */
+export const APPROVE_LINK_DAYS = 3;
+
+/**
+ * A link to one waiting quote with an Approve button, for an owner reading email on their phone.
+ * It needs no sign-in, and all it can do is show that quote and send it as it is. Each email gets
+ * a new one; the token is only in the email, with its hash here.
+ */
+async function approveLink(connection: Sql | undefined, quoteId: string) {
+  const token = newToken();
+  await mutate(
+    'UPDATE live_quotes SET approve_token_hash=?,approve_token_expires_at=? WHERE id=?',
+    [hashToken(token), new Date(Date.now() + APPROVE_LINK_DAYS * 86_400_000), quoteId],
+    connection,
+  );
+  return `${appOrigin()}/approve/${quoteId}#token=${token}`;
+}
 
 export function appOrigin() {
   return (process.env.APP_ORIGIN || 'http://localhost:3100').split(',')[0].trim();
@@ -503,6 +529,24 @@ export async function verifyContact(req: Request, input: { verificationId: strin
 
 type Check = { id: string; passed: boolean; detail: string };
 
+/** Why the job's size keeps the draft from being held to the owner's rate, if it does. */
+function sizeProblem(service: string, spec: JobSpec | null, estimate: Estimate | null) {
+  if (!spec?.quantity || !spec.unit) return 'It couldn’t tell how big the job is.';
+  const per = spec.unit.replace(/s$/, '') || spec.unit;
+  if (!estimate) return `You haven’t priced ${service} by the ${per} before.`;
+  const { rate } = estimate;
+  switch (estimateGap(estimate)) {
+    case 'few':
+      return `It has only ${rate.points} ${service} ${rate.points === 1 ? 'job' : 'jobs'} priced by the ${per}.`;
+    case 'bigger':
+      return `It’s much bigger than the ${service} jobs you’ve priced, which go up to ${formatQuantity(rate.largest, rate.unit)}.`;
+    case 'smaller':
+      return `It’s much smaller than the ${service} jobs you’ve priced, which start at ${formatQuantity(rate.smallest, rate.unit)}.`;
+    default:
+      return '';
+  }
+}
+
 /** The server's checks on the AI's draft. Any failure sends the quote to the owner first. */
 async function checkDraft(
   business: Row,
@@ -510,6 +554,7 @@ async function checkDraft(
   drafted: DraftedQuote,
   totalCents: number,
   estimate: Estimate | null,
+  rates?: Rate[],
 ) {
   const checks: Check[] = [];
   const add = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
@@ -545,6 +590,20 @@ async function checkDraft(
       totalCents >= low * 0.5 && totalCents <= high * 2,
       `It’s far from what you charged for similar jobs (${money(low)} to ${money(high)}).`,
     );
+  }
+  // Each service sends alone only once it has learned the owner's prices for it.
+  const service = String(chat.service_name || '');
+  const learned = (await businessReadiness(String(business.id), rates)).find(
+    (item) => service && item.service.toLowerCase() === service.toLowerCase(),
+  );
+  // A service they don't offer already fails above.
+  if (learned) add('learned', learned.ready, learned.reason);
+  else if (!service) add('learned', false, 'It couldn’t tell which of your services this is.');
+  // The size has to be one it can hold to the owner's rate: known, and near jobs they've priced.
+  // Without enough sized prices for the service, the reason above already says what to add.
+  if (learned && learned.sizedPrices >= SOLID_POINTS) {
+    const size = sizeProblem(service, json<JobSpec | null>(chat.spec_json, null), estimate);
+    add('size', !size, size);
   }
   // With the size known and enough jobs at that size, the total has to match the owner's rate.
   if (estimate?.solid && drafted.lines.length)
@@ -590,9 +649,10 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
   const spec = json<JobSpec | null>(chat.spec_json, null);
   let drafted: DraftedQuote;
   let estimate: Estimate | null = null;
+  let rates: Rate[] | undefined;
   let engine: unknown = null;
   try {
-    ({ drafted, estimate, engine } = await withChatUsage(req, business, chat, async () =>
+    ({ drafted, estimate, rates, engine } = await withChatUsage(req, business, chat, async () =>
       draftForBusiness({
         businessId,
         serviceName: String(chat.service_name),
@@ -620,7 +680,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     };
   }
   const totalCents = quoteTotal(drafted);
-  const checks = await checkDraft(business, chat, drafted, totalCents, estimate);
+  const checks = await checkDraft(business, chat, drafted, totalCents, estimate, rates);
   const terms = await usualTerms(businessId, String(chat.service_name));
   const test = chat.source === 'test';
   await transaction(async (connection) => {
@@ -814,10 +874,15 @@ export async function notifyOwner(
   const service = String(chat.service_name || '').toLowerCase();
   const total = quote ? money(Number(quote.total_cents)) : '';
   const link = quote ? `${appOrigin()}/app/quotes/${quote.id}` : `${appOrigin()}/app`;
+  // A quote with no price can't go out as it is, so it only gets the link to change it.
+  const approve =
+    event === 'review' && quote && Number(quote.total_cents) > 0
+      ? `\n\nApprove it as it is, no sign-in needed (this link works for ${APPROVE_LINK_DAYS} days):\n${await approveLink(connection, String(quote.id))}\n\nOr look it over and change it first:\n${link}`
+      : `\n${link}`;
   const message: Record<OwnerEvent, { subject: string; text: string }> = {
     review: {
       subject: `${first} wants a ${service || 'quote'}${service ? ' quote' : ''}. It needs your OK.`,
-      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your AI drafted it, and it’s waiting for you to approve or change it:\n${link}${why}`,
+      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your AI drafted it${Number(quote?.total_cents) > 0 ? ` for ${total}` : ''}, and it’s waiting for you to approve or change it.${approve}${why}`,
     },
     sent: {
       subject: `Quote sent: ${total} to ${first}`,
