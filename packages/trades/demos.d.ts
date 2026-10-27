@@ -12,6 +12,23 @@ export interface DemoExtra {
   add?: { label: string; amountCents: number };
 }
 
+/** A sample photo a demo visitor can send. */
+export interface DemoPhoto {
+  /** The photo is apps/web/public/demo-photos/{key}.jpg. */
+  key: string;
+  /** What it shows. The assistant reads this instead of looking at the photo. */
+  caption: string;
+}
+
+/** The photos a demo visitor can send instead of their own, since the demo takes no uploads. */
+export interface DemoPhotos {
+  /** The services they're photos of. For other services, the demo doesn't ask for photos. */
+  services: string[];
+  items: DemoPhoto[];
+  /** When the photos answer the extra question: that answer, and what the assistant says. */
+  shows?: { answer: string; reply: string };
+}
+
 /** A quote a customer already accepted, for the rotating example at the top of the home page. */
 export interface HeroExample {
   number: number;
@@ -32,6 +49,8 @@ export interface Demo {
   prices: Record<string, number>;
   size: { ask: string; options: DemoOption[] };
   extra?: { ask: string; options: DemoExtra[] };
+  /** Trades without them don't ask for photos in the demo. */
+  photos?: DemoPhotos;
   start: string;
   duration: string;
   included: string[];

@@ -20,6 +20,8 @@ import { withDemoAiUsage } from './usage.js';
  * - short messages and short chats
  * - the business, its services and prices coming from the server's own sample data, never the
  *   visitor, and quote totals added up here
+ * - no uploads: a visitor can send the sample business's own photos, by name, and the assistant
+ *   reads what they show from the server's captions
  * - replies and quote lines carrying links, emails or phone numbers being replaced
  */
 export const demoRouter = Router();
@@ -71,6 +73,11 @@ const message = z
       .string()
       .transform((value) => value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim())
       .pipe(z.string().min(1).max(600)),
+    /** Sample photo keys the visitor sent with this message. */
+    photos: z
+      .array(z.string().regex(/^[a-z0-9-]{1,60}$/))
+      .max(2)
+      .optional(),
   })
   .strict();
 const chatSchema = z
@@ -92,6 +99,8 @@ const chatSchema = z
       context.addIssue({ code: 'custom', message: 'Keep messages under 300 characters.' });
     if (value.messages.at(-1)?.from !== 'customer')
       context.addIssue({ code: 'custom', message: 'The customer speaks last.' });
+    if (value.messages.some((item) => item.from !== 'customer' && item.photos?.length))
+      context.addIssue({ code: 'custom', message: 'Only the customer sends photos.' });
   });
 
 function chatFrom(req: Request) {
@@ -109,18 +118,44 @@ function chatFrom(req: Request) {
     services.find((name) => name === input.serviceName) ??
     services.find((name) => customerText.includes(name.toLowerCase())) ??
     '';
+  // Photos are the sample business's own, named by key. Their captions stand in for the pictures.
+  const captions = new Map(demo.photos?.items.map((photo) => [photo.key, photo.caption]));
+  const sent = input.messages.flatMap((item) => item.photos ?? []);
+  if (sent.some((key) => !captions.has(key)))
+    throw new ApiError(400, 'DEMO_PHOTO', 'Those photos aren’t part of this demo.');
+  const sentWith = (item: (typeof input.messages)[number], describe: boolean) => {
+    const keys = item.photos ?? [];
+    if (!keys.length) return item.text;
+    const what = keys.length === 1 ? 'a photo' : `${keys.length} photos`;
+    if (!describe) return `${item.text} [sent ${what}]`;
+    const shown = keys.map((key, index) => `Photo ${index + 1}: ${captions.get(key)}`);
+    return `${item.text}\n[The customer sent ${what}. ${shown.join(' ')}]`;
+  };
   return {
     demo,
     sessionId,
     services,
     serviceName,
-    messages: input.messages,
+    messages: input.messages.map((item) => ({ from: item.from, text: sentWith(item, false) })),
+    /** With what the photos show written in, for the quote. */
+    described: input.messages.map((item) => ({ from: item.from, text: sentWith(item, true) })),
+    photoNotes: sent.map((key) => captions.get(key) ?? ''),
+    photosSent: sent.length,
+    // The demo asks for photos only where it has some of the right kind of job to send.
+    photosAllowed: Boolean(demo.photos?.services.includes(serviceName)),
     usage: { sessionId, ip: req.ip || req.socket.remoteAddress || 'unknown' },
   };
 }
 
+/** The extra question's answer the visitor's photos gave, when they sent the sample photos. */
+function photoAnswer(demo: Demo, photosSent: number) {
+  const answer = photosSent ? demo.photos?.shows?.answer : undefined;
+  return demo.extra?.options.find((option) => option.label === answer);
+}
+
 /** The sample business's prices, written up as past jobs, so the quote engine prices from them. */
-function sampleHistory(demo: Demo): PricingHistory {
+function sampleHistory(demo: Demo, photosSent = 0): PricingHistory {
+  const shown = photoAnswer(demo, photosSent);
   const trade = TRADES_BY_ID[demo.tradeId];
   return {
     business: {
@@ -153,6 +188,11 @@ function sampleHistory(demo: Demo): PricingHistory {
           (option) =>
             `When the customer asks "${demo.extra?.ask}" and answers "${option.label}", add a separate line "${option.add?.label}" for ${option.add?.amountCents} cents.`,
         ),
+      ...(shown
+        ? [
+            `The customer's photos answer "${demo.extra?.ask}" with "${shown.label}", so price it as that answer.`,
+          ]
+        : []),
       `Usually starts ${demo.start.toLowerCase()} and takes about ${demo.duration}.`,
     ],
   };
@@ -171,21 +211,45 @@ demoRouter.post('/demo/start', rateLimit(10, 10 * 60_000), async (req, res) => {
 demoRouter.post('/demo/turn', async (req, res) => {
   const chat = chatFrom(req);
   const { demo } = chat;
+  // Once the photos have answered the extra question, it isn't asked again.
+  const checklist = [
+    demo.size.ask,
+    ...(demo.extra && !photoAnswer(demo, chat.photosSent) ? [demo.extra.ask] : []),
+  ];
   const turn = await withDemoAiUsage(chat.usage, () =>
     intakeTurn(
       {
         business: sampleHistory(demo).business,
-        checklist: [demo.size.ask, ...(demo.extra ? [demo.extra.ask] : [])],
+        checklist,
         serviceName: chat.serviceName,
         conversation: chat.messages,
-        photosReceived: 0,
+        photosReceived: chat.photosSent,
+        photosAllowed: chat.photosAllowed,
+        shortChat: true,
+        photoNotes: [
+          ...chat.photoNotes,
+          // What the photos settle, so it isn't asked as well.
+          ...(photoAnswer(demo, chat.photosSent)
+            ? [
+                `So "${demo.extra?.ask}" is already answered: ${photoAnswer(demo, chat.photosSent)?.label}.`,
+              ]
+            : []),
+        ],
       },
       [],
     ),
   );
+  // The photo buttons go only under a reply that really asks for photos.
+  const askPhoto =
+    turn.askPhoto &&
+    chat.photosAllowed &&
+    !chat.photosSent &&
+    /photo|picture|pic\b/i.test(turn.reply);
   const customerCount = chat.messages.filter((item) => item.from === 'customer').length;
-  // A demo chat doesn't go on forever: past a handful of answers, it quotes what it has.
-  const ready = turn.ready || customerCount >= MAX_CUSTOMER_MESSAGES - 2;
+  // A demo chat stays short: once there's been a message for the service, the photos and each
+  // question, plus one to spare, it quotes what it has rather than think up more questions.
+  const enough = 1 + Number(chat.photosAllowed) + checklist.length + 1;
+  const ready = turn.ready || customerCount >= Math.min(enough, MAX_CUSTOMER_MESSAGES - 2);
   const reply = clean(
     turn.reply,
     'Thanks! Tell me a little more about the job and I’ll put your quote together.',
@@ -197,8 +261,11 @@ demoRouter.post('/demo/turn', async (req, res) => {
         ready && reply.trim().endsWith('?')
           ? 'Thanks, that’s everything I need to put your quote together.'
           : reply,
-      chips: turn.chips.filter((chip) => !hasContactDetails(chip)).slice(0, 4),
-      askPhoto: turn.askPhoto,
+      // The page adds its own photo answers: send the sample photos, or skip them.
+      chips: turn.chips
+        .filter((chip) => !hasContactDetails(chip) && !/photo|pic|skip/i.test(chip))
+        .slice(0, 4),
+      askPhoto: !ready && askPhoto,
       ready,
       serviceName: turn.serviceName || chat.serviceName,
     }),
@@ -210,6 +277,7 @@ demoRouter.post('/demo/quote', async (req, res) => {
   const chat = chatFrom(req);
   const { demo } = chat;
   const serviceName = chat.serviceName || chat.services[0];
+  const shown = photoAnswer(demo, chat.photosSent);
   const drafted =
     aiMode === 'demo'
       ? {
@@ -220,6 +288,7 @@ demoRouter.post('/demo/quote', async (req, res) => {
               label: `${serviceName}, ${demo.size.options.find((option) => option.factor === 1)?.line ?? 'as described'}`,
               amountCents: demo.prices[serviceName],
             },
+            ...(shown?.add ? [shown.add] : []),
           ],
           discount: null,
           start: demo.start,
@@ -227,10 +296,10 @@ demoRouter.post('/demo/quote', async (req, res) => {
         }
       : await withDemoAiUsage(chat.usage, () =>
           draftQuote({
-            history: sampleHistory(demo),
+            history: sampleHistory(demo, chat.photosSent),
             request: {
               serviceName,
-              conversation: chat.messages.map((item) => ({
+              conversation: chat.described.map((item) => ({
                 from: item.from === 'customer' ? ('customer' as const) : ('owner' as const),
                 text: item.text,
               })),

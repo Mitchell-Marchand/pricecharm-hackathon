@@ -27,6 +27,12 @@ export type IntakeInput = {
   serviceName: string;
   conversation: { from: 'customer' | 'assistant'; text: string }[];
   photosReceived: number;
+  /** False where the customer has no way to send photos, like parts of the public demo. */
+  photosAllowed?: boolean;
+  /** What the customer's photos show, where they come as descriptions, like the demo's samples. */
+  photoNotes?: string[];
+  /** The public demo: wrap up once the checklist is covered, instead of asking more. */
+  shortChat?: boolean;
 };
 
 const intakeJson = {
@@ -62,11 +68,23 @@ export async function intakeTurn(input: IntakeInput, images: AiImage[]): Promise
 You talk with a customer who wants a quote from ${input.business.name}, a ${input.business.trade} business. Gather what the owner needs to price the job. The app asks for their name and email afterwards, so never ask for contact details.
 - Ask one question at a time, in a friendly, plain way, like a helpful person at the business. Keep replies to one or two short sentences.
 - Work from the owner's checklist, most important first, and skip anything the customer already told you or that the photos show.
-- Ask for a photo or two early on and set askPhoto when you do. The customer can skip it.
+${
+  input.photosAllowed === false
+    ? "- This chat can't take photos. Never ask for them, and keep askPhoto false."
+    : '- Ask for a photo or two early on and set askPhoto when you do. The customer can skip it.'
+}${
+      input.photoNotes?.length
+        ? "\n- photoNotes say what the customer's photos show. Treat them as photos you can see: don't ask about anything they show or answer, like the size, the material or the condition. When you thank the customer for the photos, mention in a few words what you noticed that matters for the job."
+        : ''
+    }
 - chips: up to four short answers the customer could tap, when the question has obvious ones (like "Concrete", "Pavers", "Not sure"). Otherwise none.
 - serviceName: the business's service this is for, exactly as listed, once it's clear. Otherwise empty.
 - Never mention a price, a range, a rate or a discount, even if asked. Say you'll put the quote together once you have the details.
-- ready: true once you have enough for the owner to price it, or the customer can't answer more. Then reply with a short thanks and say you'll put their quote together. Don't keep asking once you're ready.
+- ready: true once you have enough for the owner to price it, or the customer can't answer more. Then reply with a short thanks and say you'll put their quote together. Don't keep asking once you're ready.${
+      input.shortChat
+        ? "\n- Keep this chat short: once the checklist is covered, by the customer's answers or the photos, you have enough, so set ready. Don't add questions of your own."
+        : ''
+    }
 - outOfScope: a few plain words when it's clearly not a job this business does or it's outside their area; otherwise empty. Stay polite and still set ready.
 - summary: one or two sentences describing the job so far, for the owner.`,
     input,
@@ -107,7 +125,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       summary,
       outOfScope: '',
     };
-  if (asked === 2 && input.photosReceived === 0)
+  if (asked === 2 && input.photosReceived === 0 && input.photosAllowed !== false)
     return {
       reply: '[Demo] Could you send a photo or two? It helps us price it right.',
       chips: ['Skip photos'],

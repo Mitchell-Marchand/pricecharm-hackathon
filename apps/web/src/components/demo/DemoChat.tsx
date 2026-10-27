@@ -3,11 +3,12 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowUp, Camera, Check, RotateCcw } from 'lucide-react';
 import { CustomerMessage, Typing } from '@/components/Chat';
+import { PhotoGrid } from '@/components/Photos';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
 import { Avatar, Button, Tag, TextInput } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { greeting } from '@/lib/chat';
-import { requestDemoQuote, requestDemoTurn, startDemoChat } from '@/lib/demo-api';
+import { requestDemoQuote, requestDemoTurn, startDemoChat, type DemoMessage } from '@/lib/demo-api';
 import { demoQuote, type Demo, type DemoExtra, type DemoOption } from '@/lib/demos';
 import { useHumanCheck } from '@/lib/human-check';
 import type { Quote } from '@/lib/quote';
@@ -18,13 +19,20 @@ import { cx, uid } from '@/lib/util';
 /** The API's limits, so the visitor sees them before the server has to say no. */
 const MAX_TEXT = 300;
 const MAX_MESSAGES = 10;
+/** The answers the page adds when the assistant asks for photos. */
+const SEND_PHOTOS = 'Send sample photos';
+const SKIP_PHOTOS = 'Skip photos';
 
 interface Line {
   id: string;
   from: 'bot' | 'me' | 'note';
   text?: string;
+  /** Sample photo keys the visitor sent. */
+  photos?: string[];
   quote?: boolean;
 }
+
+const photoUrl = (key: string) => `/demo-photos/${key}.jpg`;
 /** The scripted version's steps, used when the live demo is busy or unavailable. */
 type Step = 'service' | 'size' | 'photo' | 'extra' | 'contact';
 
@@ -40,7 +48,8 @@ const initialsOf = (name: string) =>
  * What a customer sees on a business's quote link, with a sample business. The visitor types or
  * taps answers; the live demo's assistant replies and quotes from the sample prices on the
  * server. If the live demo is busy, it carries on as a short scripted version instead.
- * Nothing the visitor types is saved, and there are no uploads.
+ * Nothing the visitor types is saved, and there are no uploads: where the sample business has
+ * photos of the job, the visitor can send those instead.
  */
 export function DemoChat({ demo, className }: { demo: Demo; className?: string }) {
   const services = TRADE_DATA_BY_ID[demo.tradeId]?.services ?? Object.keys(demo.prices);
@@ -87,18 +96,20 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   };
   const asked = lines.filter((line) => line.from === 'me').length;
   const full = asked >= MAX_MESSAGES && !quote;
+  const samplePhotos = demo.photos?.items.map((photo) => photo.key) ?? [];
+  /** The answers to a request for photos: the sample photos, where they fit the job. */
+  const photoChips = (service: string) =>
+    demo.photos?.services.includes(service) ? [SEND_PHOTOS, SKIP_PHOTOS] : [];
 
   /** The chat so far, as the API reads it. */
-  function transcript(extra: string): { from: 'customer' | 'assistant'; text: string }[] {
-    return [
-      ...lines
-        .filter((line) => line.text && (line.from === 'bot' || line.from === 'me'))
-        .map((line) => ({
-          from: line.from === 'me' ? ('customer' as const) : ('assistant' as const),
-          text: line.text!.slice(0, 600),
-        })),
-      { from: 'customer', text: extra },
-    ];
+  function transcript(next: Pick<Line, 'text' | 'photos'>): DemoMessage[] {
+    return [...lines, { ...next, from: 'me' as const }]
+      .filter((line) => line.text && (line.from === 'bot' || line.from === 'me'))
+      .map((line) => ({
+        from: line.from === 'me' ? ('customer' as const) : ('assistant' as const),
+        text: line.text!.slice(0, 600),
+        ...(line.photos?.length ? { photos: line.photos } : {}),
+      }));
   }
 
   /** The live demo can't go on: say why, and carry on with the scripted version. */
@@ -121,7 +132,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     if (services.some((name) => name.toLowerCase() === text.toLowerCase())) sendScripted(text);
   }
 
-  async function sendLive(text: string) {
+  async function sendLive(text: string, photos?: string[]) {
     setBusy(true);
     try {
       if (!pass.current) pass.current = (await startDemoChat(await human.headers())).pass;
@@ -129,7 +140,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
         tradeId: demo.tradeId,
         pass: pass.current,
         serviceName,
-        messages: transcript(text),
+        messages: transcript({ text, photos }),
       });
       add({ from: 'bot', text: turn.reply });
       setServiceName(turn.serviceName);
@@ -137,8 +148,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       setChips(
         turn.ready
           ? []
-          : turn.askPhoto && !turn.chips.some((chip) => /skip/i.test(chip))
-            ? [...turn.chips, 'Skip photos']
+          : turn.askPhoto
+            ? [...turn.chips, ...photoChips(turn.serviceName)]
             : turn.chips,
       );
       setBusy(false);
@@ -150,7 +161,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   }
 
   /** The scripted version: the same questions, answered by tapping. */
-  function sendScripted(text: string) {
+  function sendScripted(text: string, photos?: string[]) {
     const pick = <T extends { label: string }>(options: T[]) =>
       options.find((option) => option.label.toLowerCase() === text.toLowerCase());
     const toContact = () =>
@@ -160,6 +171,14 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
         setChips([]);
         setReady(true);
       }, 700);
+    const askExtra = (before = '') => {
+      if (!demo.extra) return toContact();
+      later(() => {
+        add({ from: 'bot', text: `${before}${demo.extra!.ask}` });
+        setStep('extra');
+        setChips(demo.extra!.options.map((option) => option.label));
+      }, 700);
+    };
     if (step === 'service') {
       const service = services.find((name) => name.toLowerCase() === text.toLowerCase());
       if (!service) return add({ from: 'note', text: 'Tap one of the answers below.' });
@@ -173,18 +192,25 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       const size = pick(demo.size.options);
       if (!size) return add({ from: 'note', text: 'Tap one of the answers below.' });
       setAnswers((current) => ({ ...current, size }));
+      // Only where there are sample photos of this kind of job to send.
+      if (!photoChips(answers.service ?? '').length) return askExtra();
       later(() => {
         add({ from: 'bot', text: 'Could you send a photo or two? It helps price it right.' });
         setStep('photo');
-        setChips(['Skip photos']);
+        setChips(photoChips(answers.service ?? ''));
       }, 700);
     } else if (step === 'photo') {
-      if (!demo.extra) return toContact();
+      const shown =
+        photos?.length && demo.photos?.shows
+          ? demo.extra?.options.find((option) => option.label === demo.photos?.shows?.answer)
+          : undefined;
+      if (!shown) return askExtra(photos?.length ? 'Thanks, those help. ' : '');
+      // The photos already answer the last question.
+      setAnswers((current) => ({ ...current, extra: shown }));
       later(() => {
-        add({ from: 'bot', text: demo.extra!.ask });
-        setStep('extra');
-        setChips(demo.extra!.options.map((option) => option.label));
-      }, 700);
+        add({ from: 'bot', text: demo.photos!.shows!.reply });
+        toContact();
+      }, 900);
     } else if (step === 'extra') {
       const extra = pick(demo.extra?.options ?? []);
       if (!extra) return add({ from: 'note', text: 'Tap one of the answers below.' });
@@ -193,11 +219,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     }
   }
 
-  function send(text: string) {
+  function send(text: string, photos?: string[]) {
     const trimmed = text.trim().slice(0, MAX_TEXT);
     if (!trimmed || busy || full || done) return;
     setDraft('');
-    add({ from: 'me', text: trimmed });
+    add({ from: 'me', text: trimmed, photos });
     stickToBottom();
     if (quote) {
       // After the quote, a real customer's messages go to the owner, not the assistant.
@@ -212,8 +238,13 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       return;
     }
     setChips([]);
-    if (mode === 'live') void sendLive(trimmed);
-    else sendScripted(trimmed);
+    if (mode === 'live') void sendLive(trimmed, photos);
+    else sendScripted(trimmed, photos);
+  }
+
+  function answerChip(chip: string) {
+    if (chip === SEND_PHOTOS) send('Here are a couple of photos.', samplePhotos);
+    else send(chip);
   }
 
   async function seeQuote() {
@@ -230,7 +261,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
           tradeId: demo.tradeId,
           pass: pass.current,
           serviceName,
-          messages: transcript('See my quote'),
+          messages: transcript({ text: 'See my quote' }),
         });
         card = result.quote;
         visit = result.visit;
@@ -368,7 +399,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
             if (line.from === 'me')
               return (
                 <div key={line.id} className="fade-up flex justify-end">
-                  <Mine>{line.text}</Mine>
+                  <Mine photos={line.photos?.map(photoUrl)}>{line.text}</Mine>
                 </div>
               );
             return (
@@ -395,7 +426,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
               <button
                 key={chip}
                 type="button"
-                onClick={() => send(chip)}
+                onClick={() => answerChip(chip)}
                 className="inline-flex min-h-10 items-center rounded-full border border-accent px-3.5 text-[15px] font-medium text-accent hover:bg-accent-soft"
               >
                 {chip}
@@ -478,10 +509,20 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   );
 }
 
-function Mine({ children }: { children: ReactNode }) {
+function Mine({ children, photos }: { children: ReactNode; photos?: string[] }) {
   return (
-    <div className="max-w-[80%] rounded-[16px] rounded-br-[4px] bg-accent px-3.5 py-2.5 text-on-accent">
-      <p className="text-[15px] whitespace-pre-line">{children}</p>
+    <div
+      className={cx(
+        'rounded-[16px] rounded-br-[4px] bg-accent text-on-accent',
+        photos?.length ? 'w-full max-w-[340px] p-1.5' : 'max-w-[80%] px-3.5 py-2.5',
+      )}
+    >
+      {photos?.length ? <PhotoGrid photos={photos} label="Sample photos" /> : null}
+      <p
+        className={cx('text-[15px] whitespace-pre-line', photos?.length ? 'px-2 pt-1.5 pb-1' : '')}
+      >
+        {children}
+      </p>
     </div>
   );
 }

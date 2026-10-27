@@ -4,6 +4,7 @@ import {
   type Demo,
   type DemoExtra,
   type DemoOption,
+  type DemoPhotos,
   type HeroExample,
 } from '@quotefolk/trades/demos';
 import type { Quote, QuoteLine } from './quote';
@@ -14,7 +15,7 @@ import { round5 } from './util';
  * from the same data. This adds what the web pages need on top.
  */
 export { DEMOS, DEMOS_BY_TRADE };
-export type { Demo, DemoExtra, DemoOption, HeroExample };
+export type { Demo, DemoExtra, DemoOption, DemoPhotos, HeroExample };
 
 /** The accepted quotes the home page rotates through. */
 export const HERO_EXAMPLES = DEMOS.filter((demo): demo is Demo & { hero: HeroExample } =>

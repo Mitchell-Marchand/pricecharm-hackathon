@@ -9,11 +9,17 @@ export interface DemoTurn {
   ready: boolean;
   serviceName: string;
 }
+export interface DemoMessage {
+  from: 'customer' | 'assistant';
+  text: string;
+  /** Sample photo keys, never uploads. */
+  photos?: string[];
+}
 export interface DemoChatInput {
   tradeId: string;
   pass: string;
   serviceName: string;
-  messages: { from: 'customer' | 'assistant'; text: string }[];
+  messages: DemoMessage[];
 }
 
 export const startDemoChat = (headers: Record<string, string>) =>

@@ -33,6 +33,25 @@ export const DEMOS = [
         { label: 'No, just clean it' },
       ],
     },
+    photos: {
+      services: ['Driveways'],
+      items: [
+        {
+          key: 'pressure-washing-wide',
+          caption:
+            'A two-car concrete driveway in front of the garage, grey with grime, with tire tracks and green algae along the edges.',
+        },
+        {
+          key: 'pressure-washing-detail',
+          caption:
+            'A large dark oil stain and a few smaller drip stains on the concrete by the garage door.',
+        },
+      ],
+      shows: {
+        answer: 'Yes, treat them',
+        reply: 'I can see the oil stain by the garage, so I’ll include a pre-treatment for it.',
+      },
+    },
     start: 'Next week',
     duration: '3 hours',
     included: ['Hot-water surface clean', 'Rinse of nearby walls and windows'],
@@ -78,6 +97,25 @@ export const DEMOS = [
         { label: 'No, all ground floor' },
       ],
     },
+    photos: {
+      services: ['Exterior windows'],
+      items: [
+        {
+          key: 'window-cleaning-wide',
+          caption:
+            'The front of a two-story house with about 20 windows, the glass dull and dusty.',
+        },
+        {
+          key: 'window-cleaning-detail',
+          caption: 'An upstairs window up close, with hard-water spots and grime on the glass.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply:
+          'I can see a lot of them are upstairs, so I’ll include the ladder work for the second story.',
+      },
+    },
     start: 'This week',
     duration: '4 hours',
     included: ['Squeegee clean', 'Sills and frames wiped'],
@@ -112,6 +150,26 @@ export const DEMOS = [
         { label: 'No' },
       ],
     },
+    photos: {
+      services: ['Gutter clean-out', 'Downspout flush'],
+      items: [
+        {
+          key: 'gutters-wide',
+          caption:
+            'The gutter along the roof of a two-story house, packed with wet leaves, with small weeds growing out of it.',
+        },
+        {
+          key: 'gutters-detail',
+          caption:
+            'A downspout at the corner of the house with a muddy puddle and washed-out soil at its base.',
+        },
+      ],
+      shows: {
+        answer: 'Yes, a couple',
+        reply:
+          'I can see water pooling at that downspout, so I’ll include flushing the downspouts.',
+      },
+    },
     start: 'Next week',
     duration: '2 hours',
     included: ['Debris bagged and hauled away', 'Downspouts checked'],
@@ -142,6 +200,26 @@ export const DEMOS = [
         { label: 'Yes, both', add: { label: 'Inside oven and fridge', amountCents: 6000 } },
         { label: 'No thanks' },
       ],
+    },
+    photos: {
+      services: ['Deep clean', 'Standard clean', 'Move-out clean'],
+      items: [
+        {
+          key: 'house-cleaning-wide',
+          caption:
+            'A kitchen with dark counters, a gas range, a stainless fridge and small appliances out on the counters.',
+        },
+        {
+          key: 'house-cleaning-detail',
+          caption:
+            'The inside of the oven, with heavy baked-on grease and burnt spots on the bottom and the door.',
+        },
+      ],
+      shows: {
+        answer: 'Yes, both',
+        reply:
+          'I can see the oven needs a proper clean, so I’ll include the inside of the oven and fridge.',
+      },
     },
     start: 'This week',
     duration: '5 hours',
@@ -180,6 +258,24 @@ export const DEMOS = [
         { label: 'No pets' },
       ],
     },
+    photos: {
+      services: ['Carpet', 'Stain removal'],
+      items: [
+        {
+          key: 'carpet-wide',
+          caption:
+            'A living room with light beige carpet and a dark worn path from the doorway to the couch.',
+        },
+        {
+          key: 'carpet-detail',
+          caption: 'A yellowish pet stain on the carpet right next to a dog bed.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see you have a dog, so I’ll include a pet odor treatment.',
+      },
+    },
     start: 'Next week',
     duration: '3 hours',
     included: ['Hot-water extraction', 'Pre-spray on high-traffic areas'],
@@ -204,6 +300,20 @@ export const DEMOS = [
       options: [
         { label: 'Yes, please', add: { label: 'Edging and bagging', amountCents: 2000 } },
         { label: 'Just the main job' },
+      ],
+    },
+    photos: {
+      services: ['Mowing'],
+      items: [
+        {
+          key: 'lawn-wide',
+          caption:
+            'A fenced backyard with overgrown grass, ankle to shin high, with weeds mixed in.',
+        },
+        {
+          key: 'lawn-detail',
+          caption: 'Tall grass growing over the edge of the patio and along the fence line.',
+        },
       ],
     },
     start: 'This week',
@@ -249,6 +359,26 @@ export const DEMOS = [
         { label: 'No, leave it' },
       ],
     },
+    photos: {
+      services: ['Mulch & beds', 'Seasonal cleanup', 'Planting'],
+      items: [
+        {
+          key: 'landscaping-wide',
+          caption:
+            'A front-yard garden bed along the house, overgrown with weeds, with thin faded mulch and bare patches.',
+        },
+        {
+          key: 'landscaping-detail',
+          caption:
+            'A dead brown shrub in the bed, and a pile of old branches and pulled weeds on the lawn.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply:
+          'I can see the dead shrub and that pile of branches, so I’ll include hauling them away.',
+      },
+    },
     start: 'In 2 weeks',
     duration: '1 day',
     included: ['Materials and labor', 'Cleanup at the end of each day'],
@@ -278,6 +408,20 @@ export const DEMOS = [
         { label: 'Leave it for firewood' },
       ],
     },
+    photos: {
+      services: ['Trimming', 'Removal'],
+      items: [
+        {
+          key: 'trees-wide',
+          caption:
+            'A large oak, about 45 feet tall, with long branches spreading over the roof of a one-story house.',
+        },
+        {
+          key: 'trees-detail',
+          caption: 'A thick dead branch with no leaves hanging over the roof.',
+        },
+      ],
+    },
     start: 'Next week',
     duration: '1 day',
     included: ['Climber and ground crew', 'Lawn raked after'],
@@ -304,6 +448,25 @@ export const DEMOS = [
         { label: 'Some bigger repairs', add: { label: 'Drywall repair', amountCents: 30000 } },
         { label: 'No, walls are good' },
       ],
+    },
+    photos: {
+      services: ['Interior'],
+      items: [
+        {
+          key: 'painting-wide',
+          caption:
+            'A living room with beige walls, showing scuffs and faded patches where pictures used to hang.',
+        },
+        {
+          key: 'painting-detail',
+          caption: 'A wall up close, with several small nail holes and a few dings.',
+        },
+      ],
+      shows: {
+        answer: 'A few nail holes',
+        reply:
+          'I can see a few nail holes, so I’ll include patching and sanding them before we paint.',
+      },
     },
     start: 'In 2 weeks',
     duration: '2 days',
@@ -341,6 +504,20 @@ export const DEMOS = [
         { label: 'I have everything' },
       ],
     },
+    photos: {
+      services: ['Repairs', 'Drywall'],
+      items: [
+        {
+          key: 'handyman-wide',
+          caption:
+            'A hallway where the door handle has punched a hole in the drywall behind the door.',
+        },
+        {
+          key: 'handyman-detail',
+          caption: 'A doorknob-sized hole in the drywall, with crumbling edges and torn paper.',
+        },
+      ],
+    },
     start: 'This week',
     duration: '3 hours',
     included: ['Labor and basic hardware', 'Cleanup'],
@@ -371,6 +548,24 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Appliance or mattress disposal', amountCents: 4500 } },
         { label: 'No' },
       ],
+    },
+    photos: {
+      services: ['Garage cleanouts'],
+      items: [
+        {
+          key: 'junk-wide',
+          caption:
+            'A two-car garage packed with boxes, old furniture, a bike and bags, with barely a path through it.',
+        },
+        {
+          key: 'junk-detail',
+          caption: 'An old stained mattress leaning on the wall next to a broken washing machine.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see the mattress and the washer, so I’ll include disposing of those.',
+      },
     },
     start: 'This week',
     duration: '2 hours',
@@ -413,6 +608,21 @@ export const DEMOS = [
         { label: 'No stairs' },
       ],
     },
+    photos: {
+      services: ['Local moves', 'Packing', 'Loading only'],
+      items: [
+        {
+          key: 'moving-wide',
+          caption:
+            'An apartment living room partway through packing, with stacked moving boxes, a rolled-up rug and a couch.',
+        },
+        { key: 'moving-detail', caption: 'A long, narrow carpeted staircase up to the apartment.' },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see the stairs up to your place, so I’ll include those in the quote.',
+      },
+    },
     start: 'In 2 weeks',
     duration: '6 hours',
     included: ['3 movers and a 26 ft truck', 'Blankets and wrapping'],
@@ -438,6 +648,22 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Old fence tear-out and haul-away', amountCents: 60000 } },
         { label: 'No old fence' },
       ],
+    },
+    photos: {
+      services: ['New fence'],
+      items: [
+        {
+          key: 'fencing-wide',
+          caption:
+            'An old grey wooden privacy fence along the backyard, leaning, with cracked and loose boards.',
+        },
+        { key: 'fencing-detail', caption: 'A fence post rotted through at the ground.' },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply:
+          'I can see the old fence is on its way out, so I’ll include tearing it out and hauling it away.',
+      },
     },
     start: 'In 2 weeks',
     duration: '2 days',
@@ -470,6 +696,25 @@ export const DEMOS = [
         { label: 'No, they’re solid' },
       ],
     },
+    photos: {
+      services: ['Deck repair', 'Staining & sealing'],
+      items: [
+        {
+          key: 'decks-wide',
+          caption:
+            'A weathered grey wooden deck off the back of the house, with the old stain worn off and peeling.',
+        },
+        {
+          key: 'decks-detail',
+          caption:
+            'A deck board cracked and soft with rot near a screw, next to boards with peeling stain.',
+        },
+      ],
+      shows: {
+        answer: 'A few',
+        reply: 'I can see rot in at least one board, so I’ll include replacing the damaged boards.',
+      },
+    },
     start: 'In 2 weeks',
     duration: '2 days',
     included: ['Materials', 'Cleanup and haul-away'],
@@ -495,6 +740,24 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Temporary leak patch', amountCents: 15000 } },
         { label: 'No leaks' },
       ],
+    },
+    photos: {
+      services: ['Repairs', 'Inspections'],
+      items: [
+        {
+          key: 'roofing-wide',
+          caption: 'An asphalt shingle roof with several shingles missing near the ridge.',
+        },
+        {
+          key: 'roofing-detail',
+          caption: 'A brown water stain on a bedroom ceiling, near the corner.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply:
+          'That ceiling stain looks like an active leak, so I’ll include a temporary patch to stop it.',
+      },
     },
     start: 'Next week',
     duration: '1 day',
@@ -524,6 +787,24 @@ export const DEMOS = [
         },
         { label: 'No' },
       ],
+    },
+    photos: {
+      services: ['Vinyl plank', 'Tile', 'Hardwood'],
+      items: [
+        {
+          key: 'flooring-wide',
+          caption: 'A kitchen with old, worn beige vinyl flooring and oak cabinets.',
+        },
+        {
+          key: 'flooring-detail',
+          caption: 'The old floor peeling up and cracked along a seam by the cabinets.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply:
+          'I can see the old floor that has to come up, so I’ll include removing and disposing of it.',
+      },
     },
     start: 'In 2 weeks',
     duration: '3 days',
@@ -555,6 +836,20 @@ export const DEMOS = [
       options: [
         { label: 'Yes', add: { label: 'Tune-up', amountCents: 8900 } },
         { label: 'No thanks' },
+      ],
+    },
+    photos: {
+      services: ['Service calls', 'Tune-ups'],
+      items: [
+        {
+          key: 'hvac-wide',
+          caption:
+            'A central air conditioner outside a brick house, with grass clippings and leaves stuck to its fins.',
+        },
+        {
+          key: 'hvac-detail',
+          caption: 'A gas furnace in a utility closet, with a dirty air filter leaning next to it.',
+        },
       ],
     },
     start: 'This week',
@@ -602,6 +897,20 @@ export const DEMOS = [
         { label: 'No, just this' },
       ],
     },
+    photos: {
+      services: ['Service calls', 'Drains'],
+      items: [
+        {
+          key: 'plumbing-wide',
+          caption: 'The cabinet under a kitchen sink, with a bucket under the drain pipe.',
+        },
+        {
+          key: 'plumbing-detail',
+          caption:
+            'Water dripping from a joint in the drain pipe under the sink, and a water stain on the cabinet floor.',
+        },
+      ],
+    },
     start: 'This week',
     duration: '2 hours',
     included: ['Labor and standard fittings', 'Cleanup'],
@@ -627,6 +936,23 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Panel safety check', amountCents: 9500 } },
         { label: 'No, or not sure' },
       ],
+    },
+    photos: {
+      services: ['Panels', 'Service calls'],
+      items: [
+        {
+          key: 'electrical-wide',
+          caption: 'An old grey electrical panel on an unfinished garage wall.',
+        },
+        {
+          key: 'electrical-detail',
+          caption: 'Inside the panel: rows of older breakers, worn and dusty.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'That panel looks like it’s been there a while, so I’ll include a safety check.',
+      },
     },
     start: 'Next week',
     duration: '4 hours',
@@ -656,6 +982,23 @@ export const DEMOS = [
       ask: 'Is there a spa attached?',
       options: [{ label: 'Yes', add: { label: 'Spa', amountCents: 6000 } }, { label: 'No' }],
     },
+    photos: {
+      services: ['Green-to-clean', 'Weekly service'],
+      items: [
+        {
+          key: 'pools-wide',
+          caption: 'A backyard pool with cloudy green water and leaves floating in it.',
+        },
+        {
+          key: 'pools-detail',
+          caption: 'A raised spa attached to the pool, also green, with leaves in it.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see the spa attached to the pool, so I’ll include it.',
+      },
+    },
     start: 'This week',
     duration: '2 hours',
     included: ['Chemicals and balancing', 'Skimming and brushing'],
@@ -681,6 +1024,23 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Pet- and kid-safe products', amountCents: 2500 } },
         { label: 'No' },
       ],
+    },
+    photos: {
+      services: ['General pests'],
+      items: [
+        {
+          key: 'pest-wide',
+          caption: 'A kitchen with tile floors, and a dog’s food and water bowls by the counter.',
+        },
+        {
+          key: 'pest-detail',
+          caption: 'A trail of small ants along the kitchen windowsill and onto the counter.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see you have a dog, so I’ll use pet- and kid-safe products.',
+      },
     },
     start: 'This week',
     duration: '1 hour',
@@ -713,6 +1073,21 @@ export const DEMOS = [
         { label: 'No' },
       ],
     },
+    photos: {
+      services: ['Interior detail', 'Full detail'],
+      items: [
+        {
+          key: 'detailing-wide',
+          caption:
+            'The back seat of a car with grey cloth seats, covered in dog hair, with a blanket and crumbs.',
+        },
+        { key: 'detailing-detail', caption: 'A large coffee stain soaked into a grey cloth seat.' },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see the dog hair and that stain, so I’ll include pet hair and stain removal.',
+      },
+    },
     start: 'This week',
     duration: '4 hours',
     included: ['Hand wash and dry', 'Wheels and tires'],
@@ -737,6 +1112,20 @@ export const DEMOS = [
       options: [
         { label: 'Yes', add: { label: 'Print set, eight 8×10s', amountCents: 12000 } },
         { label: 'Digital is fine' },
+      ],
+    },
+    photos: {
+      services: ['Portraits'],
+      items: [
+        {
+          key: 'photography-wide',
+          caption:
+            'A backyard in late afternoon light, with a big shade tree, a lawn and flower beds.',
+        },
+        {
+          key: 'photography-detail',
+          caption: 'A wooden bench under string lights, beside a flowering bush.',
+        },
       ],
     },
     start: 'Next month',
@@ -764,6 +1153,23 @@ export const DEMOS = [
         { label: 'Yes', add: { label: 'Outdoor setup', amountCents: 25000 } },
         { label: 'No, indoors' },
       ],
+    },
+    photos: {
+      services: ['Rentals', 'Planning', 'Catering', 'DJ'],
+      items: [
+        {
+          key: 'events-wide',
+          caption: 'A big backyard lawn with string lights hung between the trees.',
+        },
+        {
+          key: 'events-detail',
+          caption: 'A brick patio by the house, with folding tables stacked against the wall.',
+        },
+      ],
+      shows: {
+        answer: 'Yes',
+        reply: 'I can see it’s out on the lawn, so I’ll include the outdoor setup.',
+      },
     },
     start: 'Next month',
     duration: '5 hours',

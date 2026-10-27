@@ -51,6 +51,28 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
   await expect(message).toBeVisible();
 });
 
+test('with uploads off, a demo visitor sends sample photos and the quote reads them', async ({
+  page,
+}) => {
+  await page.goto('/demo?trade=pressure-washing');
+  const message = page.getByLabel('Message', { exact: true });
+  await message.fill('Hi, can I get a quote to wash our driveways?');
+  await message.press('Enter');
+  await expect(page.getByText(/About how big is the area/)).toBeVisible();
+  await message.fill('Maybe 500 sq ft.');
+  await message.press('Enter');
+  await expect(page.getByText(/send a photo or two/)).toBeVisible();
+  await page.getByRole('button', { name: 'Send sample photos' }).click();
+  await expect(
+    page.getByRole('button', { name: /^Open photo \d of 2 from Sample photos$/ }),
+  ).toHaveCount(2);
+  await expect(page.locator('img[src="/demo-photos/pressure-washing-detail.jpg"]')).toBeVisible();
+  await page.getByRole('button', { name: 'See my quote' }).click();
+  const quote = page.getByRole('article', { name: /^Quote number/ });
+  await expect(quote).toContainText('Stain pre-treatment');
+  await expect(quote).toHaveAttribute('aria-label', /total \$265/);
+});
+
 test('uploads are off in the demo, and a demo link opens on its trade', async ({ page }) => {
   await page.goto('/demo?trade=hvac');
   await expect(page.getByText(/quote assistant for Comfort Air Heating & Cooling/)).toBeVisible();
@@ -86,8 +108,10 @@ test('when the live demo is busy, it carries on as a quick scripted version', as
   await page.getByRole('button', { name: 'Interior', exact: true }).click();
   await expect(page.getByText(/busy right now, so here’s the quick version/)).toBeVisible();
   await page.getByRole('button', { name: '2–3 rooms' }).click();
-  await page.getByRole('button', { name: 'Skip photos' }).click();
-  await page.getByRole('button', { name: 'A few nail holes' }).click();
+  // The sample photos show the nail holes, so it doesn't need to ask about them.
+  await page.getByRole('button', { name: 'Send sample photos' }).click();
+  await expect(page.getByText(/I can see a few nail holes/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'A few nail holes' })).toHaveCount(0);
   await page.getByRole('button', { name: 'See my quote' }).click();
   await expect(page.getByRole('article', { name: /^Quote number/ })).toHaveAttribute(
     'aria-label',

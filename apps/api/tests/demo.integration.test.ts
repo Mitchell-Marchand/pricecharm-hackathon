@@ -65,6 +65,74 @@ test(
     );
     assert.equal(quoted.body.data.quote.place, 'Portland, OR');
 
+    // With no uploads, a visitor sends the sample business's own photos, and the quote reads them.
+    const pat = visitor();
+    const patPass = (await pat.post('start', {})).body.data.pass as string;
+    const photoChat: { from: 'customer' | 'assistant'; text: string; photos?: string[] }[] = [
+      greeting,
+      { from: 'customer', text: 'Driveways' },
+      { from: 'assistant', text: 'About how big is the area?' },
+      { from: 'customer', text: 'About 500 sq ft.' },
+    ];
+    const asked = await pat.post('turn', {
+      tradeId: 'pressure-washing',
+      pass: patPass,
+      serviceName: 'Driveways',
+      messages: photoChat,
+    });
+    assert.equal(asked.body.data.askPhoto, true, 'It asks for photos of a driveway');
+    assert.ok(!asked.body.data.chips.some((chip: string) => /skip/i.test(chip)));
+    photoChat.push(
+      { from: 'assistant', text: asked.body.data.reply },
+      {
+        from: 'customer',
+        text: 'Here are a couple of photos.',
+        photos: ['pressure-washing-wide', 'pressure-washing-detail'],
+      },
+    );
+    const thanked = await pat.post('turn', {
+      tradeId: 'pressure-washing',
+      pass: patPass,
+      serviceName: 'Driveways',
+      messages: photoChat,
+    });
+    assert.equal(thanked.status, 200, JSON.stringify(thanked.body));
+    assert.equal(thanked.body.data.askPhoto, false, 'Once is enough');
+    const photoQuote = await pat.post('quote', {
+      tradeId: 'pressure-washing',
+      pass: patPass,
+      serviceName: 'Driveways',
+      messages: photoChat,
+    });
+    assert.deepEqual(
+      photoQuote.body.data.quote.lines.map((line: { label: string }) => line.label),
+      ['Driveways, about 500 sq ft', 'Stain pre-treatment'],
+      'The oil stain in the photos adds its line',
+    );
+    const withPhotos = (photos: string[], from: 'customer' | 'assistant' = 'customer') =>
+      pat.post('turn', {
+        tradeId: 'pressure-washing',
+        pass: patPass,
+        serviceName: 'Driveways',
+        messages: [
+          greeting,
+          { from, text: 'Here you go.', photos },
+          { from: 'customer', text: 'Driveways' },
+        ],
+      });
+    assert.equal((await withPhotos(['gutters-wide'])).body.error?.code, 'DEMO_PHOTO');
+    assert.equal((await withPhotos(['../../etc/passwd'])).status, 400);
+    assert.equal((await withPhotos(['pressure-washing-wide'], 'assistant')).status, 400);
+    // A service with no sample photos never asks for any.
+    const roof = await pat.post('turn', {
+      tradeId: 'pressure-washing',
+      pass: patPass,
+      serviceName: 'Roof soft wash',
+      messages: photoChat.slice(0, 4),
+    });
+    assert.equal(roof.body.data.askPhoto, false);
+    assert.equal(roof.body.data.ready, true, 'It moves on instead');
+
     // Passes can't be made up, edited or reused for another trade's data.
     const bad = visitor();
     const turnWith = (body: object) =>
