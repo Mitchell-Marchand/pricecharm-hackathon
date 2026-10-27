@@ -25,7 +25,7 @@ cd "$release_dir"
 mkdir -p "$app_root/shared/uploads"
 chmod 700 "$app_root/shared/uploads"
 ln -s "$app_root/shared/.env" "$api_dir/.env"
-npm ci --omit=dev --workspace @quotefolk/api --include-workspace-root=false --no-audit --no-fund
+npm ci --omit=dev --workspace @pricecharm/api --include-workspace-root=false --no-audit --no-fund
 # Only additive, backwards-compatible migrations belong in a normal release.
 # MySQL DDL cannot be automatically rolled back; a current tested backup is an operational prerequisite.
 # Migrations run as their own database user, read from a file the running app never loads.
@@ -72,4 +72,4 @@ try {
 NODE
 pm2 save
 trap - ERR
-echo 'Quotefolk API deployment is healthy.'
+echo 'PriceCharm API deployment is healthy.'

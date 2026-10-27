@@ -39,7 +39,7 @@ export function SiteHeader({ howItWorks = false }: { howItWorks?: boolean }) {
 export function SiteFooter() {
   return (
     <footer className="gutter mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 py-8 text-sm text-muted">
-      <span>© {new Date().getFullYear()} Quotefolk</span>
+      <span>© {new Date().getFullYear()} PriceCharm</span>
       <nav aria-label="Footer" className="flex gap-5">
         <Link href="/pricing" className="hover:text-ink">
           Pricing

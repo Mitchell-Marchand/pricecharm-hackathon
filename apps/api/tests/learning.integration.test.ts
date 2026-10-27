@@ -16,7 +16,7 @@ test(
   'real quotes teach the AI: owner changes, customer answers, reminders, no answer and starting prices',
   { skip: !enabled },
   async () => {
-    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'quotefolk-learning-'));
+    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-learning-'));
     const { createApp } = await import('../src/app.js');
     const { decryptEmail } = await import('../src/integrations/email.js');
     const { pricingHistory } = await import('../src/pricing/history.js');

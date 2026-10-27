@@ -32,7 +32,7 @@ export default async function QuoteLinkPage({ params }: Props) {
       <p className="hidden text-xs text-muted sm:block">
         Quotes by{' '}
         <a href="/" className="font-semibold text-ink-2 hover:text-ink">
-          Quotefolk
+          PriceCharm
         </a>
       </p>
     </div>

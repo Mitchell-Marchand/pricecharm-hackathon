@@ -1,15 +1,15 @@
 /*
-  Quotefolk website widget.
-  <script src="https://…/widget.js" data-quotefolk="your-slug" data-style="floating" async></script>
-  data-style="inline" also needs <div data-quotefolk-inline="your-slug"></div> where the section goes.
+  PriceCharm website widget.
+  <script src="https://…/widget.js" data-pricecharm="your-slug" data-style="floating" async></script>
+  data-style="inline" also needs <div data-pricecharm-inline="your-slug"></div> where the section goes.
 */
 (function () {
   var script = document.currentScript;
   if (!script) return;
-  var slug = script.getAttribute('data-quotefolk') || '';
+  var slug = script.getAttribute('data-pricecharm') || '';
   if (!/^[a-z0-9-]{1,120}$/.test(slug)) return;
-  if (window['__quotefolk_' + slug]) return;
-  window['__quotefolk_' + slug] = true;
+  if (window['__pricecharm_' + slug]) return;
+  window['__pricecharm_' + slug] = true;
   var style = script.getAttribute('data-style') === 'inline' ? 'inline' : 'floating';
   var origin = new URL(script.src, location.href).origin;
 
@@ -44,7 +44,7 @@
 
   // The chat itself lives in a frame on the floating layer, loaded the first time it opens.
   var layer = document.createElement('div');
-  layer.setAttribute('data-quotefolk-layer', slug);
+  layer.setAttribute('data-pricecharm-layer', slug);
   var layerRoot = mount(layer);
   var panel = document.createElement('div');
   // With no floating button below it, the panel can sit lower.
@@ -114,10 +114,10 @@
   }
 
   function addInline() {
-    var spots = document.querySelectorAll('[data-quotefolk-inline]');
+    var spots = document.querySelectorAll('[data-pricecharm-inline]');
     for (var i = 0; i < spots.length; i++) {
       var spot = spots[i];
-      if (spot.getAttribute('data-quotefolk-inline') !== slug || spot.shadowRoot) continue;
+      if (spot.getAttribute('data-pricecharm-inline') !== slug || spot.shadowRoot) continue;
       var root = mount(spot);
       var card = document.createElement('div');
       card.className = 'card';
@@ -138,8 +138,8 @@
   window.addEventListener('message', function (event) {
     if (event.origin !== origin || !frame || event.source !== frame.contentWindow) return;
     if (!event.data) return;
-    if (event.data.type === 'quotefolk:close') close();
-    if (event.data.type === 'quotefolk:ready') {
+    if (event.data.type === 'pricecharm:close') close();
+    if (event.data.type === 'pricecharm:ready') {
       loaded = true;
       if (fallback) fallback.remove();
       fallback = null;

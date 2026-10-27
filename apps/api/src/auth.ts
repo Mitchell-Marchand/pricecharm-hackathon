@@ -170,7 +170,7 @@ export const csrfProtection: RequestHandler = (req, _res, next) => {
     .split(',')
     .map((value) => value.trim());
   if (!req.headers.origin || !expected.includes(req.headers.origin))
-    throw new ApiError(403, 'ORIGIN_REJECTED', 'This request must come from the Quotefolk app.');
+    throw new ApiError(403, 'ORIGIN_REJECTED', 'This request must come from the PriceCharm app.');
   if (req.headers['sec-fetch-site'] === 'cross-site')
     throw new ApiError(403, 'CSRF_REJECTED', 'Cross-site account requests are blocked.');
   next();

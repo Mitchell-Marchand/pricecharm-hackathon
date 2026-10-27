@@ -5,7 +5,7 @@ import { cx } from '@/lib/util';
 
 const ROWS = [TRADES.slice(0, 8), TRADES.slice(8, 16), TRADES.slice(16)];
 
-/** Every trade Quotefolk sets up for, drifting past in three rows. Decorative only. */
+/** Every trade PriceCharm sets up for, drifting past in three rows. Decorative only. */
 export function TradeMarquee() {
   return (
     <div

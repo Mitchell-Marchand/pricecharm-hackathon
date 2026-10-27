@@ -8,7 +8,7 @@ startErrorReporting('api');
 const port = Number(process.env.PORT || 4100);
 const host = process.env.HOST || '127.0.0.1';
 const server = createApp().listen(port, host, () => {
-  console.info(`Quotefolk API listening on http://${host}:${port}`);
+  console.info(`PriceCharm API listening on http://${host}:${port}`);
 });
 server.requestTimeout = 90_000;
 server.headersTimeout = 65_000;

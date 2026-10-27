@@ -10,7 +10,7 @@ export default function GlobalError({ error }: { error: unknown; retry: () => vo
   }, [error]);
   return (
     <html lang="en">
-      <title>Something went wrong · Quotefolk</title>
+      <title>Something went wrong · PriceCharm</title>
       <body
         style={{
           margin: 0,

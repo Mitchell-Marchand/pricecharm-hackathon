@@ -58,12 +58,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run format:check --workspace @quotefolk/api
-      - run: npm run typecheck --workspace @quotefolk/api
+      - run: npm run format:check --workspace @pricecharm/api
+      - run: npm run typecheck --workspace @pricecharm/api
       - name: Migrate the CI database
-        run: npm run migrate --workspace @quotefolk/api
-      - run: npm test --workspace @quotefolk/api
-      - run: npm run build --workspace @quotefolk/api
+        run: npm run migrate --workspace @pricecharm/api
+      - run: npm test --workspace @pricecharm/api
+      - run: npm run build --workspace @pricecharm/api
       - name: Package an immutable release
         # The server installs production dependencies from the root lockfile, so the release keeps
         # the workspace layout: root package files, apps/api, and the other workspace manifests.
@@ -74,11 +74,11 @@ jobs:
           cp -R apps/api/package.json apps/api/dist apps/api/migrations apps/api/deploy apps/api/docs release/apps/api/
           cp apps/web/package.json release/apps/web/
           cp apps/prototype/package.json release/apps/prototype/
-          tar -C release -czf quotefolk-api.tar.gz .
+          tar -C release -czf pricecharm-api.tar.gz .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: quotefolk-api
-          path: quotefolk-api.tar.gz
+          name: pricecharm-api
+          path: pricecharm-api.tar.gz
           retention-days: 7
 
   deploy:
@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: quotefolk-api
+          name: pricecharm-api
       - name: Upload release and health-check PM2 processes
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -107,8 +107,8 @@ jobs:
           test -n "$EC2_SSH_KEY"
           test -n "$EC2_KNOWN_HOSTS"
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          key_path="$RUNNER_TEMP/quotefolk_api_key"
-          known_hosts_path="$RUNNER_TEMP/quotefolk_api_known_hosts"
+          key_path="$RUNNER_TEMP/pricecharm_api_key"
+          known_hosts_path="$RUNNER_TEMP/pricecharm_api_known_hosts"
           trap 'rm -f "$key_path" "$known_hosts_path"' EXIT
           umask 077
           printf '%s\n' "$EC2_SSH_KEY" > "$key_path"
@@ -119,7 +119,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$1/releases/$2"
           REMOTE
-          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" quotefolk-api.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
+          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" pricecharm-api.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
           ssh "${ssh_args[@]}" "$remote" bash -s -- "$DEPLOY_ROOT" "$release_id" <<'REMOTE'
           set -euo pipefail
           tar -xzf "$1/releases/$2/release.tar.gz" -C "$1/releases/$2"

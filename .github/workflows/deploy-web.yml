@@ -29,8 +29,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run format:check --workspace @quotefolk/web
-      - run: npm run typecheck --workspace @quotefolk/web
+      - run: npm run format:check --workspace @pricecharm/web
+      - run: npm run typecheck --workspace @pricecharm/web
       - name: Require the public keys a deployable build needs
         if: github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true'
         env:
@@ -38,7 +38,7 @@ jobs:
         run: |
           # The deployed API rejects signups and new customer chats without a Turnstile token.
           test -n "$TURNSTILE_SITE_KEY" || { echo "Set the TURNSTILE_SITE_KEY repository variable."; exit 1; }
-      - run: npm run build --workspace @quotefolk/web
+      - run: npm run build --workspace @pricecharm/web
         env:
           API_BASE_URL: http://127.0.0.1:4100
           # Both are public by design; they ship in the browser bundle.
@@ -53,11 +53,11 @@ jobs:
           cp -R apps/web/.next/static release/.next/standalone/apps/web/.next/static
           if [[ -d apps/web/public ]]; then cp -R apps/web/public release/.next/standalone/apps/web/public; fi
           cp -R apps/web/deploy release/deploy
-          tar -C release -czf quotefolk-web.tar.gz .
+          tar -C release -czf pricecharm-web.tar.gz .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: quotefolk-web
-          path: quotefolk-web.tar.gz
+          name: pricecharm-web
+          path: pricecharm-web.tar.gz
           retention-days: 7
 
   deploy:
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: quotefolk-web
+          name: pricecharm-web
       - name: Upload release and health-check PM2 process
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -86,8 +86,8 @@ jobs:
           test -n "$EC2_SSH_KEY"
           test -n "$EC2_KNOWN_HOSTS"
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          key_path="$RUNNER_TEMP/quotefolk_web_key"
-          known_hosts_path="$RUNNER_TEMP/quotefolk_web_known_hosts"
+          key_path="$RUNNER_TEMP/pricecharm_web_key"
+          known_hosts_path="$RUNNER_TEMP/pricecharm_web_known_hosts"
           trap 'rm -f "$key_path" "$known_hosts_path"' EXIT
           umask 077
           printf '%s\n' "$EC2_SSH_KEY" > "$key_path"
@@ -98,7 +98,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$1/releases/$2"
           REMOTE
-          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" quotefolk-web.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
+          rsync --archive -e "ssh -i $key_path -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts_path" pricecharm-web.tar.gz "$remote:$DEPLOY_ROOT/releases/$release_id/release.tar.gz"
           ssh "${ssh_args[@]}" "$remote" bash -s -- "$DEPLOY_ROOT" "$release_id" <<'REMOTE'
           set -euo pipefail
           tar -xzf "$1/releases/$2/release.tar.gz" -C "$1/releases/$2"

@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "Quotefolk dedicated EC2 web/API host, its own private RDS MariaDB database, private photos, restricted SES role and alarms. Shares nothing with other applications.",
+  "Description": "PriceCharm dedicated EC2 web/API host, its own private RDS MariaDB database, private photos, restricted SES role and alarms. Shares nothing with other applications.",
   "Parameters": {
     "VpcId": {
       "Type": "AWS::EC2::VPC::Id"
@@ -44,7 +44,7 @@
         "dedicated",
         "existing"
       ],
-      "Description": "dedicated creates a private RDS MariaDB instance for Quotefolk only (recommended). existing keeps the older option of reaching a database you already run."
+      "Description": "dedicated creates a private RDS MariaDB instance for PriceCharm only (recommended). existing keeps the older option of reaching a database you already run."
     },
     "DbSubnetIds": {
       "Type": "CommaDelimitedList",
@@ -215,7 +215,7 @@
         "SourceSecurityGroupId": {
           "Ref": "AppSecurityGroup"
         },
-        "Description": "Quotefolk application access to an existing database (DatabaseMode existing)"
+        "Description": "PriceCharm application access to an existing database (DatabaseMode existing)"
       }
     },
     "PhotoBucket": {
@@ -485,7 +485,7 @@
       "Type": "AWS::EC2::SecurityGroup",
       "Condition": "CreateDatabase",
       "Properties": {
-        "GroupDescription": "Quotefolk database: MariaDB from the Quotefolk application host only",
+        "GroupDescription": "PriceCharm database: MariaDB from the PriceCharm application host only",
         "VpcId": {
           "Ref": "VpcId"
         },
@@ -497,7 +497,7 @@
             "SourceSecurityGroupId": {
               "Ref": "AppSecurityGroup"
             },
-            "Description": "Quotefolk API and worker"
+            "Description": "PriceCharm API and worker"
           }
         ],
         "Tags": [
@@ -512,7 +512,7 @@
       "Type": "AWS::RDS::DBSubnetGroup",
       "Condition": "CreateDatabase",
       "Properties": {
-        "DBSubnetGroupDescription": "Private subnets for the Quotefolk database",
+        "DBSubnetGroupDescription": "Private subnets for the PriceCharm database",
         "SubnetIds": {
           "Ref": "DbSubnetIds"
         },
@@ -528,7 +528,7 @@
       "Type": "AWS::RDS::DBParameterGroup",
       "Condition": "CreateDatabase",
       "Properties": {
-        "Description": "Quotefolk MariaDB: TLS required, utf8mb4",
+        "Description": "PriceCharm MariaDB: TLS required, utf8mb4",
         "Family": {
           "Fn::Sub": "mariadb${DbEngineVersion}"
         },
@@ -609,7 +609,7 @@
       "Type": "AWS::CloudWatch::Alarm",
       "Condition": "CreateDatabase",
       "Properties": {
-        "AlarmDescription": "Quotefolk database CPU has stayed high",
+        "AlarmDescription": "PriceCharm database CPU has stayed high",
         "Namespace": "AWS/RDS",
         "MetricName": "CPUUtilization",
         "Dimensions": [
@@ -645,7 +645,7 @@
       "Type": "AWS::CloudWatch::Alarm",
       "Condition": "CreateDatabase",
       "Properties": {
-        "AlarmDescription": "Quotefolk database has less than 2 GiB of free storage",
+        "AlarmDescription": "PriceCharm database has less than 2 GiB of free storage",
         "Namespace": "AWS/RDS",
         "MetricName": "FreeStorageSpace",
         "Dimensions": [
@@ -681,7 +681,7 @@
       "Type": "AWS::CloudWatch::Alarm",
       "Condition": "CreateDatabase",
       "Properties": {
-        "AlarmDescription": "Quotefolk database connections are close to the app and migration limits",
+        "AlarmDescription": "PriceCharm database connections are close to the app and migration limits",
         "Namespace": "AWS/RDS",
         "MetricName": "DatabaseConnections",
         "Dimensions": [

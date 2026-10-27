@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { DEMOS } from '@quotefolk/trades/demos';
+import { DEMOS } from '@pricecharm/trades/demos';
 import { hasContactDetails } from '../src/demo.js';
 
 test('demo replies and quote lines can’t carry links, emails or phone numbers', () => {

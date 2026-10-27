@@ -25,9 +25,9 @@ import {
   Waves,
   Zap,
 } from 'lucide-react';
-import { TRADES as TRADE_DATA, type Trade as TradeData } from '@quotefolk/trades';
+import { TRADES as TRADE_DATA, type Trade as TradeData } from '@pricecharm/trades';
 
-export { TRADES_BY_ID as TRADE_DATA_BY_ID, tradeName } from '@quotefolk/trades';
+export { TRADES_BY_ID as TRADE_DATA_BY_ID, tradeName } from '@pricecharm/trades';
 
 export type Trade = TradeData & { icon: LucideIcon };
 

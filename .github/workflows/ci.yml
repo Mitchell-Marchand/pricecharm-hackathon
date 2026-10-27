@@ -55,12 +55,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run format:check --workspace @quotefolk/api
-      - run: npm run typecheck --workspace @quotefolk/api
+      - run: npm run format:check --workspace @pricecharm/api
+      - run: npm run typecheck --workspace @pricecharm/api
       - name: Migrate the CI database
-        run: npm run migrate --workspace @quotefolk/api
-      - run: npm test --workspace @quotefolk/api
-      - run: npm run build --workspace @quotefolk/api
+        run: npm run migrate --workspace @pricecharm/api
+      - run: npm test --workspace @pricecharm/api
+      - run: npm run build --workspace @pricecharm/api
 
   web:
     name: Web and end-to-end
@@ -88,8 +88,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run format:check --workspace @quotefolk/web
-      - run: npm run typecheck --workspace @quotefolk/web
+      - run: npm run format:check --workspace @pricecharm/web
+      - run: npm run typecheck --workspace @pricecharm/web
       - name: Install the Playwright browser
         run: npx playwright install --with-deps chromium
       - name: Build and run the end-to-end suite
@@ -123,6 +123,6 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: Typecheck and build
-        run: npm run build --workspace @quotefolk/prototype
+        run: npm run build --workspace @pricecharm/prototype
       - name: Check formatting of workflow and compose files
         run: npx prettier --check ".github/workflows/*.yml" docker-compose.yml

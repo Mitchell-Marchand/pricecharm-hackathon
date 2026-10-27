@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { TRADES_BY_ID, tradeName } from '@quotefolk/trades';
+import { TRADES_BY_ID, tradeName } from '@pricecharm/trades';
 import { hashToken, newToken } from './auth.js';
 import { devTokensAllowed, isDeployed } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
@@ -238,7 +238,7 @@ onboardingRouter.post(
           dedupeKey: `resume-link:${current.businessId}:${randomUUID()}`,
           to: email,
           subject: 'Pick up where you left off',
-          text: `Here’s the link to finish setting up ${name || 'your business'} on Quotefolk:\n${link}\n\nIt works for ${DRAFT_DAYS} days from when you started. If you didn’t ask for this, you can ignore this email.`,
+          text: `Here’s the link to finish setting up ${name || 'your business'} on PriceCharm:\n${link}\n\nIt works for ${DRAFT_DAYS} days from when you started. If you didn’t ask for this, you can ignore this email.`,
         },
         connection,
       );

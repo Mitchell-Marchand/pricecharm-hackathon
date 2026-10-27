@@ -1,12 +1,12 @@
-# Quotefolk's database
+# PriceCharm's database
 
-Quotefolk keeps its data in a database server of its own.
+PriceCharm keeps its data in a database server of its own.
 
 ## Production
 
 The CloudFormation template at `apps/api/deploy/infra/cloudformation.json` creates the database when `DatabaseMode` is `dedicated` (the default):
 
-- A private RDS MariaDB 11.4 instance that only the Quotefolk app server's security group can reach.
+- A private RDS MariaDB 11.4 instance that only the PriceCharm app server's security group can reach.
 - TLS required for every connection (`require_secure_transport=ON`), encrypted storage, and 14 days of automated backups with point-in-time restore.
 - Deletion protection, plus a final snapshot if the stack ever deletes or replaces the instance.
 - An admin password that RDS keeps in Secrets Manager. It never appears in the template or in GitHub.
@@ -48,14 +48,14 @@ Practice a restore before launch: restore a snapshot to a new instance, or load 
 
 ## Local development
 
-`npm run db:start` runs Quotefolk's own MariaDB 11.4 in Docker on `127.0.0.1:3307`, separate from any other app's local database. It has two databases:
+`npm run db:start` runs PriceCharm's own MariaDB 11.4 in Docker on `127.0.0.1:3307`, separate from any other app's local database. It has two databases:
 
 - `quoting_engine` for development.
 - `quoting_test`, a throwaway database for tests.
 
 The credentials in `docker-compose.yml` are local-only and published on this machine only.
 
-To use it for development, set these in `apps/api/.env` and run `npm run migrate --workspace @quotefolk/api`:
+To use it for development, set these in `apps/api/.env` and run `npm run migrate --workspace @pricecharm/api`:
 
 ```sh
 DB_HOST=127.0.0.1

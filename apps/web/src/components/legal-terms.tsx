@@ -18,20 +18,20 @@ export function termsOfService(operator?: Operator): LegalDocument {
     intro: (
       <>
         These terms are the agreement between you and {operatorName(operator)} (“we” or “us”) for
-        using Quotefolk. By creating an account or using Quotefolk, you agree to them. If you use
-        Quotefolk for a business, you agree on the business’s behalf and confirm that you’re allowed
-        to. If you’re asking a business for a quote, the section{' '}
+        using PriceCharm. By creating an account or using PriceCharm, you agree to them. If you use
+        PriceCharm for a business, you agree on the business’s behalf and confirm that you’re
+        allowed to. If you’re asking a business for a quote, the section{' '}
         <SectionLink id="requesting">If you’re requesting a quote</SectionLink> is written for you.
       </>
     ),
     sections: [
       {
         id: 'using',
-        title: 'Using Quotefolk',
+        title: 'Using PriceCharm',
         body: (
           <ul>
             <li>
-              Quotefolk is for businesses. To open an account, you must be at least 18 and use it
+              PriceCharm is for businesses. To open an account, you must be at least 18 and use it
               for your business.
             </li>
             <li>Give us accurate information when you sign up, and keep it current.</li>
@@ -44,17 +44,17 @@ export function termsOfService(operator?: Operator): LegalDocument {
       },
       {
         id: 'service',
-        title: 'What Quotefolk does',
+        title: 'What PriceCharm does',
         body: (
           <>
             <p>
-              Quotefolk learns how you price from the jobs, notes and practice quotes you give it.
+              PriceCharm learns how you price from the jobs, notes and practice quotes you give it.
               It then talks with your customers, asks the questions you need answered and drafts
               quotes. You decide whether each quote waits for your review or goes out automatically,
               within the rules and limits you set.
             </p>
             <p>
-              We keep improving Quotefolk, so features will change. If we remove something you rely
+              We keep improving PriceCharm, so features will change. If we remove something you rely
               on, we’ll tell you first. Features we label as beta may be less reliable and may
               change or go away.
             </p>
@@ -103,7 +103,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
               about it.
             </li>
             <li>
-              Use Quotefolk to answer people who asked you for a quote, not to send marketing they
+              Use PriceCharm to answer people who asked you for a quote, not to send marketing they
               didn’t ask for.
             </li>
             <li>
@@ -131,7 +131,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
               whether the assistant sent it automatically or you approved it first. On the per-quote
               plan, the fee applies once a qualifying quote is delivered, whether or not the
               customer accepts it. On the accepted-quote plan, the fee applies when the customer
-              accepts a qualifying quote through Quotefolk, as a percentage of the quote within the
+              accepts a qualifying quote through PriceCharm, as a percentage of the quote within the
               stated minimum and maximum. We don’t charge for practice, the demo, your own test
               requests, or sending the same quote again.
             </li>
@@ -181,13 +181,13 @@ export function termsOfService(operator?: Operator): LegalDocument {
         body: (
           <ul>
             <li>
-              “Your content” means everything you and your customers put into Quotefolk: business
+              “Your content” means everything you and your customers put into PriceCharm: business
               details, prices, past jobs, documents, photos, conversations and quotes. You own it.
             </li>
             <li>
               You let us host, copy, process, display and send your content, including to the
               service providers in our <DocumentLink to="privacy">Privacy Policy</DocumentLink>, as
-              needed to run Quotefolk for you, keep it secure, meet the law and make the combined
+              needed to run PriceCharm for you, keep it secure, meet the law and make the combined
               figures described below. This permission ends when your content is deleted, apart from
               copies in backups until they’re overwritten.
             </li>
@@ -199,8 +199,8 @@ export function termsOfService(operator?: Operator): LegalDocument {
               We may combine prices and job details, like sizes and what was included, from many
               businesses into figures that can’t be traced back to any one business or customer,
               such as the typical price per square foot for washing a driveway. We use these figures
-              to improve Quotefolk, for example to give a business a starting price for a service it
-              hasn’t priced yet, and we may share them with others. A figure always combines at
+              to improve PriceCharm, for example to give a business a starting price for a service
+              it hasn’t priced yet, and we may share them with others. A figure always combines at
               least five businesses and never includes names, addresses or contact details. Once
               your content is deleted, it stops counting toward new figures.
             </li>
@@ -217,10 +217,10 @@ export function termsOfService(operator?: Operator): LegalDocument {
         title: 'Our software',
         body: (
           <p>
-            Quotefolk, including its software, design and the assistant’s instructions, belongs to
+            PriceCharm, including its software, design and the assistant’s instructions, belongs to
             us and our licensors. While you have an account and follow these terms, you may use
-            Quotefolk for your business. This right is limited, non-exclusive and can’t be
-            transferred. The quotes and other results Quotefolk produces for you are your content,
+            PriceCharm for your business. This right is limited, non-exclusive and can’t be
+            transferred. The quotes and other results PriceCharm produces for you are your content,
             and you can use them as you like.
           </p>
         ),
@@ -232,7 +232,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
           <>
             <p>Don’t do any of the following, or help anyone else do it:</p>
             <ul>
-              <li>Break the law, or use Quotefolk for fraud, deception or harassment.</li>
+              <li>Break the law, or use PriceCharm for fraud, deception or harassment.</li>
               <li>
                 Pretend to be another person or business, or quote for a business you don’t
                 represent.
@@ -243,19 +243,19 @@ export function termsOfService(operator?: Operator): LegalDocument {
               </li>
               <li>Send spam, or contact people who didn’t ask you for a quote.</li>
               <li>
-                Try to get into another account, or probe, scan or attack Quotefolk. If you find a
+                Try to get into another account, or probe, scan or attack PriceCharm. If you find a
                 security problem, please report it to {mail}.
               </li>
               <li>
-                Get around Quotefolk’s limits, bot checks, email verification, billing or spending
+                Get around PriceCharm’s limits, bot checks, email verification, billing or spending
                 cap, or create fake requests.
               </li>
               <li>
-                Overload Quotefolk, or access it with bots or scrapers. Putting the quote widget on
+                Overload PriceCharm, or access it with bots or scrapers. Putting the quote widget on
                 your own website, as intended, is fine.
               </li>
               <li>
-                Copy, reverse engineer or resell Quotefolk, or use it to build a competing product.
+                Copy, reverse engineer or resell PriceCharm, or use it to build a competing product.
               </li>
               <li>
                 Try to make the assistant reveal its instructions or other businesses’ information,
@@ -278,12 +278,12 @@ export function termsOfService(operator?: Operator): LegalDocument {
             </p>
             <ul>
               <li>
-                use it only to run Quotefolk for you, following the instructions you give through
-                your settings and how you use Quotefolk, or as the law requires, apart from job
+                use it only to run PriceCharm for you, following the instructions you give through
+                your settings and how you use PriceCharm, or as the law requires, apart from job
                 details that go into combined figures without anything that identifies a customer,
                 as <SectionLink id="content">Your content</SectionLink> describes;
               </li>
-              <li>make sure everyone who works on Quotefolk keeps it confidential;</li>
+              <li>make sure everyone who works on PriceCharm keeps it confidential;</li>
               <li>protect it with the measures described in our Privacy Policy;</li>
               <li>
                 use only the service providers listed in our Privacy Policy, under contracts that
@@ -312,8 +312,8 @@ export function termsOfService(operator?: Operator): LegalDocument {
               can, we’ll tell you first and give you a chance to fix the problem.
             </li>
             <li>
-              If we stop offering Quotefolk, we’ll give you at least 30 days’ notice and a chance to
-              download your data.
+              If we stop offering PriceCharm, we’ll give you at least 30 days’ notice and a chance
+              to download your data.
             </li>
             <li>
               Closing an account doesn’t cancel fees for quotes already delivered. The sections on
@@ -328,10 +328,10 @@ export function termsOfService(operator?: Operator): LegalDocument {
         title: 'Disclaimers',
         body: (
           <p className="legal-emphasis">
-            Quotefolk is provided “as is” and “as available.” To the fullest extent the law allows,
+            PriceCharm is provided “as is” and “as available.” To the fullest extent the law allows,
             we disclaim all warranties, express or implied, including warranties of merchantability,
             fitness for a particular purpose, title and non-infringement. We don’t promise that
-            Quotefolk will be uninterrupted or error-free, that the assistant’s replies, prices or
+            PriceCharm will be uninterrupted or error-free, that the assistant’s replies, prices or
             quotes will be accurate or complete, or that any customer will accept a quote.
           </p>
         ),
@@ -349,7 +349,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
                 they were possible.
               </li>
               <li>
-                Our total liability for all claims relating to Quotefolk or these terms is limited
+                Our total liability for all claims relating to PriceCharm or these terms is limited
                 to the greater of the fees you paid us in the 12 months before the claim arose, or
                 $100.
               </li>
@@ -381,7 +381,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
         title: 'If you’re requesting a quote',
         body: (
           <>
-            <p>If you use Quotefolk to ask a business for a quote:</p>
+            <p>If you use PriceCharm to ask a business for a quote:</p>
             <ul>
               <li>
                 You’re dealing with that business. It sets the prices, sends the quote and does the
@@ -437,7 +437,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
               resolve it within 30 days. If we can’t, it will be decided only in the state or
               federal courts located in {state || 'that state'}, and you and we agree to their
               jurisdiction. Either of us may still bring a claim in small claims court, or ask any
-              court to stop misuse of Quotefolk or to protect intellectual property.
+              court to stop misuse of PriceCharm or to protect intellectual property.
             </p>
           </>
         ),
@@ -449,8 +449,8 @@ export function termsOfService(operator?: Operator): LegalDocument {
           <p>
             We may update these terms. We’ll post the new version here with a new date. For
             significant changes, we’ll email account owners at least 30 days before they take
-            effect. If you keep using Quotefolk after that, the new terms apply. If you don’t agree,
-            close your account before they take effect.
+            effect. If you keep using PriceCharm after that, the new terms apply. If you don’t
+            agree, close your account before they take effect.
           </p>
         ),
       },
@@ -461,7 +461,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
           <ul>
             <li>
               These terms and our <DocumentLink to="privacy">Privacy Policy</DocumentLink> are the
-              whole agreement between you and us about Quotefolk.
+              whole agreement between you and us about PriceCharm.
             </li>
             <li>If part of these terms can’t be enforced, the rest still applies.</li>
             <li>If we don’t enforce a right straight away, we haven’t given it up.</li>

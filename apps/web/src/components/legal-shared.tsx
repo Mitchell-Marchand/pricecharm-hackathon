@@ -30,7 +30,7 @@ export function Mail({ operator }: { operator?: Operator }) {
 }
 
 export function operatorName(operator?: Operator) {
-  return operator?.name || 'the company that operates Quotefolk';
+  return operator?.name || 'the company that operates PriceCharm';
 }
 
 export function SectionLink({ id, children }: { id: string; children: ReactNode }) {

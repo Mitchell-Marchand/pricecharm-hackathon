@@ -1,6 +1,6 @@
 # Dedicated AI keys
 
-Quotefolk needs its own keys, one set per environment, each with a spending cap set at the provider.
+PriceCharm needs its own keys, one set per environment, each with a spending cap set at the provider.
 
 Only you can create these keys. They live in your provider accounts.
 
@@ -8,14 +8,14 @@ Only you can create these keys. They live in your provider accounts.
 
 | Environment | OpenAI | Anthropic | Suggested monthly cap |
 | --- | --- | --- | --- |
-| Local development | Project "Quotefolk dev" | Workspace "Quotefolk dev" | Low, such as $20 |
-| Staging | Project "Quotefolk staging" | Workspace "Quotefolk staging" | Low |
-| Production | Project "Quotefolk production" | Workspace "Quotefolk production" | Set from expected volume, with alerts at 50% and 80% |
+| Local development | Project "PriceCharm dev" | Workspace "PriceCharm dev" | Low, such as $20 |
+| Staging | Project "PriceCharm staging" | Workspace "PriceCharm staging" | Low |
+| Production | Project "PriceCharm production" | Workspace "PriceCharm production" | Set from expected volume, with alerts at 50% and 80% |
 
 **OpenAI** (platform.openai.com):
 
 1. Create a project for each environment.
-2. In the project's limits, set a monthly budget with email alerts, and allow only the models Quotefolk uses: the chat model in `OPENAI_MODEL`, the drafting model in `OPENAI_DRAFT_MODEL` if you set one, and the image model in `OPENAI_IMAGE_MODEL`.
+2. In the project's limits, set a monthly budget with email alerts, and allow only the models PriceCharm uses: the chat model in `OPENAI_MODEL`, the drafting model in `OPENAI_DRAFT_MODEL` if you set one, and the image model in `OPENAI_IMAGE_MODEL`.
 3. Create an API key inside that project.
 
 Practice photos always use OpenAI, so production needs an OpenAI key even when chat runs on Anthropic.

@@ -60,13 +60,13 @@ export function Live() {
   const [ended, setEnded] = useState(false);
   const business = state.business.name || 'Your business';
   const slug = slugify(business);
-  const link = `quotefolk.com/q/${slug}`;
+  const link = `pricecharm.com/q/${slug}`;
   const domain = domainOf(state.live.website);
   const style = state.live.style;
   const code =
     style === 'floating'
-      ? `<script src="https://get.quotefolk.com/widget.js"\n  data-business="${slug}" async></script>`
-      : `<div data-quotefolk="${slug}"></div>\n<script src="https://get.quotefolk.com/widget.js" async></script>`;
+      ? `<script src="https://get.pricecharm.com/widget.js"\n  data-business="${slug}" async></script>`
+      : `<div data-pricecharm="${slug}"></div>\n<script src="https://get.pricecharm.com/widget.js" async></script>`;
   const owner = state.account?.name.split(' ')[0] ?? 'there';
   const email = state.account?.email ?? 'your email';
 
@@ -134,7 +134,7 @@ export function Live() {
           </div>
           <div className="flex flex-col items-start gap-2 md:items-center">
             <div className="w-36 rounded-sm border border-line bg-[var(--paper)] p-2 md:w-full">
-              <QRCode text={`Quotefolk prototype: quote link for ${business}`} label={`QR code for the ${business} quote link`} />
+              <QRCode text={`PriceCharm prototype: quote link for ${business}`} label={`QR code for the ${business} quote link`} />
             </div>
             <p className="text-sm text-muted">For trucks, flyers and yard signs</p>
           </div>

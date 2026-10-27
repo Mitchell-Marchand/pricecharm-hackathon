@@ -7,7 +7,7 @@ import type { Account, Business, ChatMessage, Job, LiveSettings, Quote, Run, Scr
 import { uid } from './util';
 
 export const SCREENS: Screen[] = ['landing', 'business', 'jobs', 'practice', 'ready', 'account', 'live'];
-const STORAGE_KEY = 'quotefolk-prototype-v1';
+const STORAGE_KEY = 'pricecharm-prototype-v1';
 
 function emptyRun(scenarioId: string): Run {
   return {

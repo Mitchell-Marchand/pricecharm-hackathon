@@ -200,7 +200,7 @@ export default function SettingsPage() {
             </Button>
             <a
               href="/api/v1/account/export"
-              download="quotefolk-export.json"
+              download="pricecharm-export.json"
               className="inline-flex h-11 items-center gap-2 rounded-sm px-4 text-[15px] font-semibold text-ink-2 hover:bg-surface-2 hover:text-ink [&_svg]:size-[1.1em]"
             >
               <Download aria-hidden /> Download your data

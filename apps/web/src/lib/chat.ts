@@ -39,7 +39,7 @@ export type ChatAccess = { chatId: string; token: string };
 export const greeting = (businessName: string) =>
   `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
 
-const storageKey = (slug: string) => `quotefolk:chat:${slug}`;
+const storageKey = (slug: string) => `pricecharm:chat:${slug}`;
 
 export function savedAccess(slug: string): ChatAccess | null {
   try {

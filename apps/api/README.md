@@ -1,17 +1,17 @@
-# Quotefolk API
+# PriceCharm API
 
-The Express API behind Quotefolk. It keeps accounts, setup, past jobs, practice, customer chats, quotes and billing in Quotefolk's own MySQL-compatible database, and runs the AI.
+The Express API behind PriceCharm. It keeps accounts, setup, past jobs, practice, customer chats, quotes and billing in PriceCharm's own MySQL-compatible database, and runs the AI.
 
 ## Development
 
-Use Node 24. Quotefolk has its own database (see `docs/ops/database.md`); database names must begin with `quotient` or `quoting`. From the repository root:
+Use Node 24. PriceCharm has its own database (see `docs/ops/database.md`); database names must begin with `quotient` or `quoting`. From the repository root:
 
 ```sh
 npm ci
 npm run db:start
 cp apps/api/.env.example apps/api/.env
-# Add Quotefolk's own dev AI keys (docs/ops/ai-keys.md), or set AI_PROVIDER=demo.
-npm run migrate --workspace @quotefolk/api
+# Add PriceCharm's own dev AI keys (docs/ops/ai-keys.md), or set AI_PROVIDER=demo.
+npm run migrate --workspace @pricecharm/api
 npm run dev
 ```
 
@@ -46,7 +46,7 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 
 **Customers.** A chat token, stored only as a hash, scopes each customer to their own chat. Customers confirm their email with a six-digit code (five tries, ten minutes) before they see a price. Emailed links carry a separate token in the URL fragment. An owner chatting with their own link gets a test chat that is never emailed or billed.
 
-**The live demo.** Visitors to the website can chat with a sample business for any trade and get a quote. The sample businesses and prices live in `@quotefolk/trades/demos`, on the server, so a visitor can't change them. Each demo chat starts with a bot check that earns a signed pass, good for an hour. Demo AI calls have their own daily pool inside the app-wide one, plus caps per visitor and per chat. Messages are short, nothing is saved, and replies or quote lines with links, emails or phone numbers are replaced.
+**The live demo.** Visitors to the website can chat with a sample business for any trade and get a quote. The sample businesses and prices live in `@pricecharm/trades/demos`, on the server, so a visitor can't change them. Each demo chat starts with a bot check that earns a signed pass, good for an hour. Demo AI calls have their own daily pool inside the app-wide one, plus caps per visitor and per chat. Messages are short, nothing is saved, and replies or quote lines with links, emails or phone numbers are replaced.
 
 **Billing.** Each quote a verified customer receives has a fee (1% by default, at least $1 and at most $25), recorded once in `quote_usage` and reported to Stripe by the worker. Owners add a payment method before their first customer quote; until then, quotes wait for them. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
 
@@ -59,8 +59,8 @@ Every AI call reserves a daily allowance first, including calls that fail: per b
 ## Tests
 
 ```sh
-npm run typecheck --workspace @quotefolk/api
-npm test --workspace @quotefolk/api   # unit tests
+npm run typecheck --workspace @pricecharm/api
+npm test --workspace @pricecharm/api   # unit tests
 npm run test:db                       # everything, against a throwaway quoting_test database
 ```
 

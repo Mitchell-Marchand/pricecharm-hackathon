@@ -7,7 +7,7 @@ const apiBase = process.env.API_BASE_URL || process.env.API_ORIGIN || 'http://12
 const config: NextConfig = {
   output: 'standalone',
   // The server reads business profiles for the quote link pages, so it needs the address too.
-  env: { QUOTEFOLK_API_BASE: apiBase },
+  env: { PRICECHARM_API_BASE: apiBase },
   // Dependencies are installed once at the monorepo root, so trace from there.
   outputFileTracingRoot: path.join(__dirname, '../..'),
   poweredByHeader: false,

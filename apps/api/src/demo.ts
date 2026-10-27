@@ -1,8 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { TRADES_BY_ID } from '@quotefolk/trades';
-import { DEMOS_BY_TRADE, type Demo } from '@quotefolk/trades/demos';
+import { TRADES_BY_ID } from '@pricecharm/trades';
+import { DEMOS_BY_TRADE, type Demo } from '@pricecharm/trades/demos';
 import { aiMode } from './ai/index.js';
 import { intakeTurn } from './ai/intake.js';
 import { draftQuote, type PricingHistory } from './ai/quote-engine.js';
@@ -35,7 +35,7 @@ const MAX_CUSTOMER_TEXT = 300;
 function passKey(): Buffer {
   const secret = hashingSecret();
   if (!secret) throw new ApiError(503, 'DEMO_UNAVAILABLE', 'The live demo is unavailable.');
-  return createHmac('sha256', secret).update('quotefolk-demo-pass-v1').digest();
+  return createHmac('sha256', secret).update('pricecharm-demo-pass-v1').digest();
 }
 
 function issuePass(): string {

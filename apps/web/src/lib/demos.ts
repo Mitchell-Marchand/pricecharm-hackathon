@@ -6,12 +6,12 @@ import {
   type DemoOption,
   type DemoPhotos,
   type HeroExample,
-} from '@quotefolk/trades/demos';
+} from '@pricecharm/trades/demos';
 import type { Quote, QuoteLine } from './quote';
 import { round5 } from './util';
 
 /**
- * The public demo's sample businesses live in @quotefolk/trades, so the API prices demo chats
+ * The public demo's sample businesses live in @pricecharm/trades, so the API prices demo chats
  * from the same data. This adds what the web pages need on top.
  */
 export { DEMOS, DEMOS_BY_TRADE };

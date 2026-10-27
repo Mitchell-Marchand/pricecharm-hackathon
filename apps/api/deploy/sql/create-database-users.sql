@@ -1,4 +1,4 @@
--- Run once against the dedicated Quotefolk database, as the RDS admin user. The admin password is
+-- Run once against the dedicated PriceCharm database, as the RDS admin user. The admin password is
 -- in the Secrets Manager secret named by the stack's DatabaseAdminSecretArn output.
 --
 -- Before running, replace both passwords with fresh values, for example from `openssl rand -base64 32`.

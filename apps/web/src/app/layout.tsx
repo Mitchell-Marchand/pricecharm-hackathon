@@ -22,7 +22,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: { default: 'Quotefolk: train an AI to quote like you', template: '%s · Quotefolk' },
+  title: { default: 'PriceCharm: train an AI to quote like you', template: '%s · PriceCharm' },
   description:
     'Teach an AI how you price your jobs in about 5 minutes. It answers your customers, asks the right questions and sends quotes the way you would.',
 };

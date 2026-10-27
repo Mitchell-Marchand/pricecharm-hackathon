@@ -1,4 +1,4 @@
-# How Quotefolk prices a job
+# How PriceCharm prices a job
 
 Each business's AI prices from that business's own history. The server does the math and checks every draft before it goes anywhere.
 
@@ -67,7 +67,7 @@ Each quote records the provider, model and prompt version that drafted it (`live
 To compare models, replay quotes owners already priced. Each one is drafted from only what the business had taught it before that quote:
 
 ```sh
-npm run replay --workspace @quotefolk/api -- --model gpt-5 --limit 20
+npm run replay --workspace @pricecharm/api -- --model gpt-5 --limit 20
 ```
 
 It calls the model once per quote, so it costs money. With `AI_PROVIDER=demo` it measures the rate card alone, for free, which is the baseline a model has to beat.

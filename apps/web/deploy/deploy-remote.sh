@@ -37,4 +37,4 @@ pm2 startOrReload "$release_dir/deploy/ecosystem.config.cjs" --update-env
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused --retry-all-errors --max-time 5 http://127.0.0.1:3100/ >/dev/null
 pm2 save
 trap - ERR
-echo 'Quotefolk web deployment is healthy.'
+echo 'PriceCharm web deployment is healthy.'

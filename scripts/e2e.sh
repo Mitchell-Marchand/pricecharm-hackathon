@@ -4,7 +4,7 @@
 # does, and starts the API, worker and web server on spare ports, so a running dev stack on
 # 3100/4100 is left alone.
 #
-# Locally the database defaults to the throwaway quoting_test database in the Quotefolk container
+# Locally the database defaults to the throwaway quoting_test database in the PriceCharm container
 # (`npm run db:start`). In CI the DB_* variables point at the job's MariaDB service.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -24,8 +24,8 @@ if [ "$DB_PORT" = 3307 ] && [ "$DB_NAME" = quoting_test ] && [ "${E2E_RESET_DB:-
   docker exec quotefolk-db mariadb -uquoting_engine -plocal-dev-only \
     -e "DROP DATABASE IF EXISTS quoting_test; CREATE DATABASE quoting_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 fi
-npm run migrate --workspace @quotefolk/api
-API_BASE_URL="http://127.0.0.1:$api_port" npm run build --workspace @quotefolk/web
+npm run migrate --workspace @pricecharm/api
+API_BASE_URL="http://127.0.0.1:$api_port" npm run build --workspace @pricecharm/web
 
 standalone=apps/web/.next/standalone/apps/web
 rm -rf "$standalone/.next/static" "$standalone/public"
@@ -59,4 +59,4 @@ for url in "http://127.0.0.1:$api_port/ready" "http://127.0.0.1:$web_port/"; do
 done
 
 # Extra arguments go to Playwright, e.g. `bash scripts/e2e.sh request-history --repeat-each=5`.
-QUOTING_WEB_URL="http://localhost:$web_port" npm run test:e2e --workspace @quotefolk/web -- "$@"
+QUOTING_WEB_URL="http://localhost:$web_port" npm run test:e2e --workspace @pricecharm/web -- "$@"

@@ -1,6 +1,6 @@
-# Quotefolk
+# PriceCharm
 
-Quotefolk lets a service business train an AI to quote jobs the way the owner would. This repository holds the whole product.
+PriceCharm lets a service business train an AI to quote jobs the way the owner would. This repository holds the whole product.
 
 | Folder | What it is |
 | --- | --- |
@@ -13,19 +13,19 @@ Quotefolk lets a service business train an AI to quote jobs the way the owner wo
 
 ## Get started
 
-You need Node 24 (`.nvmrc`) and Docker, for Quotefolk's own local database.
+You need Node 24 (`.nvmrc`) and Docker, for PriceCharm's own local database.
 
 ```sh
 npm ci
 npm run db:start
 python3 scripts/setup-local.py
-npm run migrate --workspace @quotefolk/api
+npm run migrate --workspace @pricecharm/api
 npm run dev
 ```
 
 Open http://localhost:3100. The API runs on port 4100.
 
-Add Quotefolk's own development AI keys to `apps/api/.env` ([AI keys guide](docs/ops/ai-keys.md)), or set `AI_PROVIDER=demo` for deterministic, labelled demo responses.
+Add PriceCharm's own development AI keys to `apps/api/.env` ([AI keys guide](docs/ops/ai-keys.md)), or set `AI_PROVIDER=demo` for deterministic, labelled demo responses.
 
 ## Everyday commands
 
@@ -39,7 +39,7 @@ All commands run from the repository root.
 | `npm test` | API tests that don't need a database |
 | `npm run test:db` | Every API test, including database tests, against a throwaway `quoting_test` database |
 | `bash scripts/e2e.sh` | Playwright suite against a real API and the test database, on ports 3300 and 4200 |
-| `npm run dev --workspace @quotefolk/prototype` | The onboarding prototype on port 3200 |
+| `npm run dev --workspace @pricecharm/prototype` | The onboarding prototype on port 3200 |
 
 ## Safety checks
 

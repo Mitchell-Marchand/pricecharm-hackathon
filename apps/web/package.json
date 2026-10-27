@@ -1,5 +1,5 @@
 {
-  "name": "@quotefolk/web",
+  "name": "@pricecharm/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -12,7 +12,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" package.json tsconfig.json .prettierrc.json next.config.ts playwright.config.ts public/widget.js \"deploy/*.cjs\""
   },
   "dependencies": {
-    "@quotefolk/trades": "0.1.0",
+    "@pricecharm/trades": "0.1.0",
     "@sentry/nextjs": "11.6.0",
     "lucide-react": "1.61.0",
     "next": "^16.3.1",

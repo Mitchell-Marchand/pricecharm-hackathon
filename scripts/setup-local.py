@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Create local Quotefolk configuration without printing credentials.
+"""Create local PriceCharm configuration without printing credentials.
 
-By default the API uses Quotefolk's own MariaDB container (`npm run db:start`). Pass
+By default the API uses PriceCharm's own MariaDB container (`npm run db:start`). Pass
 --database local-server to provision a database on a MariaDB server already running on this
-machine instead. Provider keys are never copied from another product: add Quotefolk's own dev
+machine instead. Provider keys are never copied from another product: add PriceCharm's own dev
 keys to apps/api/.env yourself (see docs/ops/ai-keys.md).
 """
 from pathlib import Path
@@ -82,5 +82,5 @@ if not web_path.exists():
 print('Local configuration ready in apps/api/.env. Values were not printed.')
 print(f"Database: {database['DB_NAME']} on {database['DB_HOST']}:{database['DB_PORT']}.")
 if not values.get('OPENAI_API_KEY') and not values.get('ANTHROPIC_API_KEY'):
-    print("Add Quotefolk's own dev AI keys to apps/api/.env (docs/ops/ai-keys.md), or set AI_PROVIDER=demo.")
-print('Next: npm run migrate --workspace @quotefolk/api, then npm run dev.')
+    print("Add PriceCharm's own dev AI keys to apps/api/.env (docs/ops/ai-keys.md), or set AI_PROVIDER=demo.")
+print('Next: npm run migrate --workspace @pricecharm/api, then npm run dev.')

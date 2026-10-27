@@ -16,7 +16,7 @@ test(
   'customers chat, confirm their email and get a quote; the owner approves anything unusual',
   { skip: !enabled },
   async () => {
-    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'quotefolk-live-'));
+    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-live-'));
     const { createApp } = await import('../src/app.js');
     const { decryptEmail } = await import('../src/integrations/email.js');
     const app = createApp();

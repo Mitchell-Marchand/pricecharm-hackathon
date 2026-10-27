@@ -17,7 +17,7 @@ import { getPhoto } from './storage.js';
  * a fair test. Use it to pick the drafting model. It calls the model once per quote, so it costs
  * money; with AI_PROVIDER=demo it measures the rate card alone, for free.
  *
- *   npm run replay --workspace @quotefolk/api -- --model gpt-5 --limit 20 [--business <id>]
+ *   npm run replay --workspace @pricecharm/api -- --model gpt-5 --limit 20 [--business <id>]
  *
  * It prints quote numbers and percentages only, never customer details.
  */

@@ -31,5 +31,5 @@ TASK_API_PID=$!
 TASK_WORKER_PID=$!
 (cd "$TASK_WORKSPACE/apps/web" && API_BASE_URL="http://127.0.0.1:$api_port" exec "$TASK_WORKSPACE/node_modules/.bin/next" dev --port "$web_port" --hostname 127.0.0.1) &
 TASK_WEB_PID=$!
-printf 'Quotefolk web: http://localhost:%s\nQuotefolk API: http://localhost:%s\nBackground worker: local jobs, email, billing, and cleanup.\nCtrl-C stops these three processes.\n' "$web_port" "$api_port"
+printf 'PriceCharm web: http://localhost:%s\nPriceCharm API: http://localhost:%s\nBackground worker: local jobs, email, billing, and cleanup.\nCtrl-C stops these three processes.\n' "$web_port" "$api_port"
 wait "$TASK_API_PID" "$TASK_WEB_PID" "$TASK_WORKER_PID"

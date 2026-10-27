@@ -8,7 +8,7 @@ import tablePatio from './photos/table-patio.jpg';
 import tableStains from './photos/table-stains.jpg';
 import planters from './photos/planters.jpg';
 
-// Generated practice photos from the local Quotefolk dev environment, cropped for the mock scenarios.
+// Generated practice photos from the local PriceCharm dev environment, cropped for the mock scenarios.
 export const PHOTOS = {
   'patio-overview': patioOverview,
   'patio-stains': patioStains,

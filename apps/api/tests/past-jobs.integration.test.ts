@@ -21,7 +21,7 @@ test(
   'past jobs keep every field, attach photos picked before saving, and stay in their own setup',
   { skip: !enabled },
   async () => {
-    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'quotefolk-jobs-'));
+    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-jobs-'));
     const { createApp } = await import('../src/app.js');
     const app = createApp();
     const owner = request.agent(app),

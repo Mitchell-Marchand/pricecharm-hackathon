@@ -335,7 +335,7 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     page.getByText('Only mossandstone.com and www.mossandstone.com can show your widget.'),
   ).toBeVisible();
   await page.getByRole('radio', { name: 'Section on a page' }).click();
-  await expect(page.locator('pre code')).toContainText('data-quotefolk-inline=');
+  await expect(page.locator('pre code')).toContainText('data-pricecharm-inline=');
   await page.reload();
   await expect(page.getByLabel(/What.s your website\?/)).toHaveValue('mossandstone.com');
   await expect(page.getByRole('radio', { name: 'Section on a page' })).toHaveAttribute(

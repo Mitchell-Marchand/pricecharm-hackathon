@@ -1,7 +1,7 @@
 {
-  "name": "quotefolk",
+  "name": "pricecharm",
   "private": true,
-  "description": "Quotefolk monorepo: API, web app and prototype.",
+  "description": "PriceCharm monorepo: API, web app and prototype.",
   "engines": {
     "node": ">=24.0.0 <25"
   },
@@ -14,7 +14,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present && prettier --check \".github/workflows/*.yml\" docker-compose.yml",
-    "test": "npm run test --workspace @quotefolk/api",
+    "test": "npm run test --workspace @pricecharm/api",
     "db:start": "docker compose up --detach --wait db",
     "db:stop": "docker compose stop db",
     "test:db": "bash scripts/test-db.sh"

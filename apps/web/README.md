@@ -1,6 +1,6 @@
-# Quotefolk Web
+# PriceCharm Web
 
-The Next.js app for Quotefolk: the public site, setup, the owner's app, and what customers see on a quote link or a business's website. The API in `apps/api` owns accounts, pricing, AI and data. This app never holds a secret.
+The Next.js app for PriceCharm: the public site, setup, the owner's app, and what customers see on a quote link or a business's website. The API in `apps/api` owns accounts, pricing, AI and data. This app never holds a secret.
 
 ## Run locally
 
@@ -32,7 +32,7 @@ Browser requests go to `/api/v1` on this app's own origin, and Next.js forwards 
 
 ## Framing
 
-Only `/embed/:slug` can be shown in a frame, and only on Quotefolk itself or the business's own website (its domain and `www.`). `src/proxy.ts` sets that per business. Every other page refuses to be framed. If the widget's frame doesn't load, for example on a site the business didn't list, the widget offers a link to the quote page instead.
+Only `/embed/:slug` can be shown in a frame, and only on PriceCharm itself or the business's own website (its domain and `www.`). `src/proxy.ts` sets that per business. Every other page refuses to be framed. If the widget's frame doesn't load, for example on a site the business didn't list, the widget offers a link to the quote page instead.
 
 ## Design
 
@@ -43,7 +43,7 @@ The design comes from the prototype in `apps/prototype`: the tokens in `src/app/
 `bash scripts/e2e.sh` (from the repository root) builds this app, starts it with the API and worker on ports 3300 and 4200 against the throwaway test database, and runs the Playwright tests in `tests/e2e`. AI runs in demo mode, and email and billing stay local.
 
 ```sh
-npm run typecheck --workspace @quotefolk/web
+npm run typecheck --workspace @pricecharm/web
 bash scripts/e2e.sh
 bash scripts/e2e.sh owner   # one file
 ```

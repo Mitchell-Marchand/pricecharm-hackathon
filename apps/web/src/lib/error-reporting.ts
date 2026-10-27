@@ -8,7 +8,7 @@ const scrub = (value: string) => value.replace(EMAIL, '[email]').replace(TOKEN, 
 /** Customer links carry their access token after the #, so a report keeps only the path. */
 function pathOnly(url: string): string {
   try {
-    return new URL(url, 'https://quotefolk.invalid').pathname;
+    return new URL(url, 'https://pricecharm.invalid').pathname;
   } catch {
     return '';
   }

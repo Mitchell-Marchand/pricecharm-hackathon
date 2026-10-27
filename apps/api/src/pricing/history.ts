@@ -1,4 +1,4 @@
-import { tradeName } from '@quotefolk/trades';
+import { tradeName } from '@pricecharm/trades';
 import type { PricingHistory } from '../ai/quote-engine.js';
 import { rows, type Sql } from '../db.js';
 import { ApiError } from '../http.js';

@@ -16,10 +16,10 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
     updated: LEGAL_UPDATED,
     intro: (
       <>
-        Quotefolk is software that learns how a business prices its work, then talks with that
+        PriceCharm is software that learns how a business prices its work, then talks with that
         business’s customers and drafts quotes. This policy explains what information we collect,
         how we use it, who we share it with and the choices you have. It covers business owners who
-        use Quotefolk and people who ask a business for a quote through it.
+        use PriceCharm and people who ask a business for a quote through it.
       </>
     ),
     sections: [
@@ -29,7 +29,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              Quotefolk is operated by {operatorName(operator)} (“we” or “us”). You can reach us at{' '}
+              PriceCharm is operated by {operatorName(operator)} (“we” or “us”). You can reach us at{' '}
               {mail}
               {operator?.address ? <>, or by mail at {operator.address}</> : null}.
             </p>
@@ -43,7 +43,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 <strong>For people requesting a quote,</strong> we handle your information for the
                 business you contacted. That business decides what happens with your request, and
                 its own privacy policy covers what it does with it. We use your information only to
-                run Quotefolk for that business and for the few purposes of our own listed below,
+                run PriceCharm for that business and for the few purposes of our own listed below,
                 such as security and billing.
               </li>
             </ul>
@@ -123,7 +123,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             <p>
               Please don’t put sensitive information, such as health details, financial account
               numbers or government ID numbers, in project descriptions, documents or photos.
-              Quotefolk doesn’t need it.
+              PriceCharm doesn’t need it.
             </p>
           </>
         ),
@@ -135,7 +135,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
           <>
             <ul>
               <li>
-                <strong>To run Quotefolk:</strong> answer customers, ask the questions a business
+                <strong>To run PriceCharm:</strong> answer customers, ask the questions a business
                 needs answered, calculate and draft quotes, deliver them and keep each conversation
                 together.
               </li>
@@ -148,7 +148,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 <strong>To make combined figures,</strong> like the typical price for a kind of job
                 in a trade. They combine prices and job details from at least five businesses and
                 can’t be traced back to any one business or customer. They never include names,
-                addresses or contact details. We use them to improve Quotefolk and may share them.
+                addresses or contact details. We use them to improve PriceCharm and may share them.
               </li>
               <li>
                 <strong>To send the emails the service needs:</strong> verification codes, sign-in
@@ -159,8 +159,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 <strong>To bill businesses</strong> for delivered quotes through Stripe.
               </li>
               <li>
-                <strong>To keep Quotefolk safe:</strong> stop bots and fake requests, limit how much
-                any one visitor can use, protect accounts and investigate misuse.
+                <strong>To keep PriceCharm safe:</strong> stop bots and fake requests, limit how
+                much any one visitor can use, protect accounts and investigate misuse.
               </li>
               <li>
                 <strong>To support you and fix problems,</strong> including reading a conversation
@@ -181,7 +181,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              Quotefolk uses AI models from OpenAI and Anthropic. To reply to a customer, read a
+              PriceCharm uses AI models from OpenAI and Anthropic. To reply to a customer, read a
               document or draft a quote, we send the model the parts of the conversation, the
               business’s pricing information and any photos it needs, and use its answer. We also
               use OpenAI to create the photos that come with practice requests. Those photos are
@@ -212,7 +212,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               business.
             </p>
             <p>
-              <strong>Service providers.</strong> These companies run parts of Quotefolk for us.
+              <strong>Service providers.</strong> These companies run parts of PriceCharm for us.
               They can use the information only to do that work for us.
             </p>
             <LegalTable
@@ -221,7 +221,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 [
                   'Amazon Web Services',
                   'Servers, database, file storage and email delivery, in the United States',
-                  'Everything stored in Quotefolk, and the emails we send',
+                  'Everything stored in PriceCharm, and the emails we send',
                 ],
                 [
                   'OpenAI and Anthropic',
@@ -230,7 +230,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
                 [
                   'Stripe',
-                  'Billing businesses for Quotefolk',
+                  'Billing businesses for PriceCharm',
                   'The business name, owner’s email, payment details and fees',
                 ],
                 [
@@ -252,7 +252,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             </p>
             <p>
               <strong>For legal reasons.</strong> When the law requires it, or when it’s needed to
-              protect the rights, property or safety of the people who use Quotefolk, the public or
+              protect the rights, property or safety of the people who use PriceCharm, the public or
               us.
             </p>
             <p>
@@ -272,7 +272,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              We only use the cookies and browser storage Quotefolk needs to work. We don’t use
+              We only use the cookies and browser storage PriceCharm needs to work. We don’t use
               advertising or analytics cookies.
             </p>
             <LegalTable
@@ -353,11 +353,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              Every connection to Quotefolk uses HTTPS. The database, stored files and backups are
+              Every connection to PriceCharm uses HTTPS. The database, stored files and backups are
               encrypted. Passwords are salted and hashed, and sign-in sessions and emailed links are
               stored only as hashes. Emails waiting to be sent are encrypted. Uploaded photos are
               re-saved on upload, which strips location data and other hidden details. Only the
-              people who run Quotefolk can reach its servers, and only when their work needs it.
+              people who run PriceCharm can reach its servers, and only when their work needs it.
             </p>
             <p>
               No system is perfectly secure. If a breach affects your personal information, we’ll
@@ -374,13 +374,13 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             <h3>If you own a business account</h3>
             <ul>
               <li>Download your business’s data any time from Settings.</li>
-              <li>Correct your details in Quotefolk, or ask us to.</li>
+              <li>Correct your details in PriceCharm, or ask us to.</li>
               <li>
                 Close your account from Settings. We then delete your information as described
                 above.
               </li>
               <li>
-                The emails Quotefolk sends are part of the service, so they continue while you have
+                The emails PriceCharm sends are part of the service, so they continue while you have
                 an account. If we ever send product news, every one will have an unsubscribe link.
               </li>
             </ul>
@@ -410,7 +410,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             </p>
             <p>
               If you’re in the UK or EU: we rely on our contract with you to run your account; on
-              our legitimate interests to keep Quotefolk secure, prevent fraud and fix problems; on
+              our legitimate interests to keep PriceCharm secure, prevent fraud and fix problems; on
               legal obligations for billing and tax; and on your consent where we ask for it. You
               can complain to your local data protection authority.
             </p>
@@ -422,7 +422,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         title: 'Children',
         body: (
           <p>
-            Quotefolk isn’t meant for children, and you must be 18 or older to use it. If you think
+            PriceCharm isn’t meant for children, and you must be 18 or older to use it. If you think
             a child has given us personal information, contact us at {mail} and we’ll delete it.
           </p>
         ),
@@ -432,7 +432,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         title: 'Where your information is kept',
         body: (
           <p>
-            Quotefolk runs in the United States. If you use it from another country, your
+            PriceCharm runs in the United States. If you use it from another country, your
             information goes to the United States and is handled there, under laws that may differ
             from yours. Our service providers offer contractual safeguards for these transfers, such
             as the European Commission’s standard contractual clauses.

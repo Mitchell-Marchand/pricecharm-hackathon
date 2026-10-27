@@ -1,4 +1,4 @@
-# Quotefolk onboarding prototype
+# PriceCharm onboarding prototype
 
 A clickable prototype of the new flow: landing page, the three setup steps (business, past jobs, practice quotes), "Your AI is ready", account creation and "You're live". Everything runs in the browser on mock data. Nothing is sent to a server, and progress is kept in local storage.
 
@@ -6,12 +6,12 @@ A clickable prototype of the new flow: landing page, the three setup steps (busi
 
 ```sh
 npm ci
-npm run dev --workspace @quotefolk/prototype
+npm run dev --workspace @pricecharm/prototype
 ```
 
 Run these from the repository root, then open http://127.0.0.1:3200. It needs Node 24 (see `.nvmrc`).
 
-`npm run build --workspace @quotefolk/prototype` typechecks, builds one self-contained HTML file in `dist/index.html`, and writes `dist/quotefolk-onboarding.html`, the same page in the fragment format used for publishing it as a shareable Artifact.
+`npm run build --workspace @pricecharm/prototype` typechecks, builds one self-contained HTML file in `dist/index.html`, and writes `dist/pricecharm-onboarding.html`, the same page in the fragment format used for publishing it as a shareable Artifact.
 
 ## What's real and what's mocked
 

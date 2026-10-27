@@ -5,7 +5,7 @@ import type { BusinessProfile } from '@/lib/chat';
 import { LoadedChat } from '@/components/customer/LoadedChat';
 
 /** Asks the business's page to hide the widget's frame. */
-const close = () => window.parent.postMessage({ type: 'quotefolk:close' }, '*');
+const close = () => window.parent.postMessage({ type: 'pricecharm:close' }, '*');
 
 /** Inside the website widget's frame. */
 export function EmbedChat({
@@ -17,7 +17,7 @@ export function EmbedChat({
 }) {
   useEffect(() => {
     // Tells the widget the chat loaded, so it doesn't offer the quote page instead.
-    window.parent.postMessage({ type: 'quotefolk:ready' }, '*');
+    window.parent.postMessage({ type: 'pricecharm:ready' }, '*');
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close();
     };

@@ -1,6 +1,6 @@
 # EC2 deployment
 
-GitHub Actions builds a release, uploads it with SSH/rsync, switches a `current` symlink, and restarts separate PM2 processes. The web app deploys independently to the same EC2 instance from the same repository (`Deploy web`). Quotefolk has its own RDS database; see [the database guide](../../../docs/ops/database.md).
+GitHub Actions builds a release, uploads it with SSH/rsync, switches a `current` symlink, and restarts separate PM2 processes. The web app deploys independently to the same EC2 instance from the same repository (`Deploy web`). PriceCharm has its own RDS database; see [the database guide](../../../docs/ops/database.md).
 
 ## Provision the server
 
@@ -18,7 +18,7 @@ Use an Amazon Linux 2023 or Ubuntu LTS EC2 instance with Node 24 LTS, npm, PM2, 
   current -> releases/<commit>-<workflow-run>-<attempt>
 ```
 
-Place API settings and secrets in `/srv/quotient-api/shared/.env` with mode `600`. Copy the names from `.env.example`; do not put this file in GitHub or a release archive. Set `NODE_ENV=production`, the HTTPS `APP_ORIGIN`, and the dedicated database connection. Keep MySQL private and allow connections only from approved application hosts. Limit the app user to the Quotefolk database. Configure an EC2 role for S3 rather than storing AWS credentials in the repository.
+Place API settings and secrets in `/srv/quotient-api/shared/.env` with mode `600`. Copy the names from `.env.example`; do not put this file in GitHub or a release archive. Set `NODE_ENV=production`, the HTTPS `APP_ORIGIN`, and the dedicated database connection. Keep MySQL private and allow connections only from approved application hosts. Limit the app user to the PriceCharm database. Configure an EC2 role for S3 rather than storing AWS credentials in the repository.
 
 Set `S3_BUCKET` (with `AWS_REGION` and optional `S3_PREFIX`) to use private S3 for production photos. If `S3_BUCKET` is unset, PM2 explicitly sets the absolute `UPLOAD_DIR` to the application's `shared/uploads` directory. Include it in the backup/retention plan; photos do not belong beneath a release directory.
 
@@ -53,7 +53,7 @@ Deploy the API first, then the web application. The browser uses same-origin `/a
 
 ## Migrations, rollback and compatibility
 
-Every API deploy installs production dependencies from the root lockfile (`npm ci --omit=dev --workspace @quotefolk/api`) and runs the compiled migration program, as the migration user from `shared/migrate.env`, before switching traffic. Normal release migrations must be additive and compatible with the prior application. MySQL DDL can commit independently; restoring a symlink cannot undo a destructive migration. Take tested backups and schedule destructive schema changes separately after old code is retired.
+Every API deploy installs production dependencies from the root lockfile (`npm ci --omit=dev --workspace @pricecharm/api`) and runs the compiled migration program, as the migration user from `shared/migrate.env`, before switching traffic. Normal release migrations must be additive and compatible with the prior application. MySQL DDL can commit independently; restoring a symlink cannot undo a destructive migration. Take tested backups and schedule destructive schema changes separately after old code is retired.
 
 The API and web have independent pipelines. Maintain compatibility with the preceding release's API contract and coordinate changes that require both. Deployment serialization prevents two API releases from migrating concurrently. An immutable release directory includes the commit, run ID and retry attempt; retrying a workflow does not overwrite a prior release.
 

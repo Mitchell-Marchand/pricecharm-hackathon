@@ -26,8 +26,8 @@ export function websiteDomain(input: string): string {
 }
 
 export function embedCode(slug: string, style: 'floating' | 'inline') {
-  const script = `<script src="${appOrigin()}/widget.js" data-quotefolk="${slug}" data-style="${style}" async></script>`;
-  return style === 'inline' ? `<div data-quotefolk-inline="${slug}"></div>\n${script}` : script;
+  const script = `<script src="${appOrigin()}/widget.js" data-pricecharm="${slug}" data-style="${style}" async></script>`;
+  return style === 'inline' ? `<div data-pricecharm-inline="${slug}"></div>\n${script}` : script;
 }
 
 async function shareState(businessId: string) {

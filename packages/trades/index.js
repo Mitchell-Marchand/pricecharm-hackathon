@@ -1,5 +1,5 @@
 /**
- * The trades Quotefolk sets up for, shared by the API and the web app. Each one lists its usual
+ * The trades PriceCharm sets up for, shared by the API and the web app. Each one lists its usual
  * services (the first `preselect` start selected) and a sample job description for its trade.
  */
 export const TRADES = [

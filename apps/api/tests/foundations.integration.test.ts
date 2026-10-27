@@ -16,7 +16,7 @@ test(
   'owners see only their own customers’ photos, and AI allowances hold under parallel calls',
   { skip: !enabled },
   async () => {
-    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'quotefolk-foundations-'));
+    process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-foundations-'));
     process.env.AI_DAILY_BUSINESS_LIMIT = '5';
     process.env.AI_DAILY_APP_LIMIT = '999999';
     const { createApp } = await import('../src/app.js');

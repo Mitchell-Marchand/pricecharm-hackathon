@@ -8,7 +8,7 @@ import type { AgentReadiness } from '@/lib/account';
 
 type Next = NonNullable<AgentReadiness['next']>;
 
-const STORE = 'quotefolk:readiness';
+const STORE = 'pricecharm:readiness';
 const nextText = (next: Next) =>
   next.action === 'job'
     ? `Add a ${next.service} job with its size.`

@@ -119,8 +119,8 @@ export function createApp() {
   app.get('/api/v1/site', (_req, res) =>
     res.json(
       ok({
-        name: 'Quotefolk',
-        operatorName: process.env.OPERATOR_NAME || 'Quotefolk local development',
+        name: 'PriceCharm',
+        operatorName: process.env.OPERATOR_NAME || 'PriceCharm local development',
         supportEmail: process.env.SUPPORT_EMAIL || 'support@example.test',
         // Shown in the privacy policy and terms: a postal address, and the US state whose laws apply.
         operatorAddress: process.env.OPERATOR_ADDRESS?.trim() || '',

@@ -1,7 +1,7 @@
 import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { tradeName } from '@quotefolk/trades';
+import { tradeName } from '@pricecharm/trades';
 import type { AiImage } from '../ai/index.js';
 import { intakeTurn } from '../ai/intake.js';
 import { hashToken, newToken } from '../auth.js';

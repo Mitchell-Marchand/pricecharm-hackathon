@@ -116,9 +116,9 @@ test('the website widget opens the chat on the business’s site and falls back 
 }) => {
   const shop = await createBusiness(browser, baseURL!);
   const host = (src: string, style: string) =>
-    `<!doctype html><html><body><h1>Moss &amp; Stone</h1><div data-quotefolk-inline="${shop.slug}"></div><script src="${src}" data-quotefolk="${shop.slug}" data-style="${style}" async></script></body></html>`;
+    `<!doctype html><html><body><h1>Moss &amp; Stone</h1><div data-pricecharm-inline="${shop.slug}"></div><script src="${src}" data-pricecharm="${shop.slug}" data-style="${style}" async></script></body></html>`;
 
-  // Quotefolk's own pages may always show it, for the owner's previews.
+  // PriceCharm's own pages may always show it, for the owner's previews.
   await page.route(`${baseURL}/widget-host`, (route) =>
     route.fulfill({ contentType: 'text/html', body: host('/widget.js', 'floating') }),
   );

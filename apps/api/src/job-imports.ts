@@ -3,7 +3,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import { z } from 'zod';
-import { tradeName } from '@quotefolk/trades';
+import { tradeName } from '@pricecharm/trades';
 import { readPastJob, type ReadJob } from './ai/past-job-reader.js';
 import { mutate, rows, transaction } from './db.js';
 import { reportError } from './error-reporting.js';

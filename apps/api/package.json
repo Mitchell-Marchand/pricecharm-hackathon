@@ -1,5 +1,5 @@
 {
-  "name": "@quotefolk/api",
+  "name": "@pricecharm/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -23,7 +23,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",
     "@aws-sdk/client-sesv2": "^3.1156.0",
-    "@quotefolk/trades": "0.1.0",
+    "@pricecharm/trades": "0.1.0",
     "@sentry/node": "11.6.0",
     "cors": "^2.8.5",
     "disposable-email-domains-js": "1.26.0",

@@ -253,7 +253,7 @@ export function Landing() {
       </main>
 
       <footer className="gutter mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 py-8 text-sm text-muted">
-        <span>© 2026 Quotefolk</span>
+        <span>© 2026 PriceCharm</span>
         <span className="flex gap-5">
           <span>Privacy</span>
           <span>Terms</span>

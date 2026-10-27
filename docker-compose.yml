@@ -1,4 +1,4 @@
-# Quotefolk's own local MariaDB, separate from any other app's database server.
+# PriceCharm's own local MariaDB, separate from any other app's database server.
 # Local-only credentials, published on 127.0.0.1 only. Start it with `npm run db:start`.
 services:
   db:

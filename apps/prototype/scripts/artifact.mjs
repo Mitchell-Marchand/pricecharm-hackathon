@@ -25,5 +25,5 @@ const fragment = [
   ...scripts.map((script) => script.replace(/\s+crossorigin(?:="[^"]*")?/, '')),
 ].join('\n');
 
-writeFileSync('dist/quotefolk-onboarding.html', fragment);
-console.log(`dist/quotefolk-onboarding.html: ${(fragment.length / 1024).toFixed(0)} KB`);
+writeFileSync('dist/pricecharm-onboarding.html', fragment);
+console.log(`dist/pricecharm-onboarding.html: ${(fragment.length / 1024).toFixed(0)} KB`);

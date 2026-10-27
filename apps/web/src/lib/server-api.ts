@@ -2,7 +2,7 @@ import { DEFAULT_PRICING, type Pricing } from './plans';
 import type { BusinessProfile } from './chat';
 
 /** Where the web server reaches the API directly, the same address its /api/v1 rewrite uses. */
-export const apiOrigin = () => process.env.QUOTEFOLK_API_BASE || 'http://127.0.0.1:4100';
+export const apiOrigin = () => process.env.PRICECHARM_API_BASE || 'http://127.0.0.1:4100';
 
 const SLUG = /^[a-z0-9-]{1,120}$/;
 

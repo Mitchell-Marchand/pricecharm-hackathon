@@ -81,7 +81,7 @@ export function LoginForm() {
         </Link>
       </form>
       <p className="mt-10 border-t border-line pt-6 text-ink-2">
-        New to Quotefolk?{' '}
+        New to PriceCharm?{' '}
         <Link href="/start" className="font-semibold text-accent underline underline-offset-4">
           Set up your AI
         </Link>

@@ -1,10 +1,10 @@
-# Deploy and launch Quotefolk
+# Deploy and launch PriceCharm
 
-One repository ships the product: the Next.js web app (`apps/web`) and the Node/Express API (`apps/api`). Quotefolk shares nothing with other applications. It has its own RDS database ([database guide](../../../docs/ops/database.md)) and its own AI keys with provider spending caps ([AI keys guide](../../../docs/ops/ai-keys.md)).
+One repository ships the product: the Next.js web app (`apps/web`) and the Node/Express API (`apps/api`). PriceCharm shares nothing with other applications. It has its own RDS database ([database guide](../../../docs/ops/database.md)) and its own AI keys with provider spending caps ([AI keys guide](../../../docs/ops/ai-keys.md)).
 
 ## 1. Provision the new application host
 
-`infra/cloudformation.json` creates an Amazon Linux 2023 EC2 host, EIP, encrypted disk, HTTPS/HTTP security group, restricted SSH source, private encrypted photo bucket, runtime S3/SES role, SSM access and CPU/status alarms. With `DatabaseMode=dedicated` (the default) it also creates Quotefolk's private RDS MariaDB database, reachable only from the app host, with TLS required, encrypted storage, automated backups, deletion protection and database alarms. It uses an existing VPC and subnets, and contains no secrets: RDS keeps the admin password in Secrets Manager. Photos are not versioned so account deletion can remove them; the bucket and instance disk are retained if the stack is deleted. Remove retained resources deliberately when decommissioning.
+`infra/cloudformation.json` creates an Amazon Linux 2023 EC2 host, EIP, encrypted disk, HTTPS/HTTP security group, restricted SSH source, private encrypted photo bucket, runtime S3/SES role, SSM access and CPU/status alarms. With `DatabaseMode=dedicated` (the default) it also creates PriceCharm's private RDS MariaDB database, reachable only from the app host, with TLS required, encrypted storage, automated backups, deletion protection and database alarms. It uses an existing VPC and subnets, and contains no secrets: RDS keeps the admin password in Secrets Manager. Photos are not versioned so account deletion can remove them; the bucket and instance disk are retained if the stack is deleted. Remove retained resources deliberately when decommissioning.
 
 Set parameters in the AWS console or a local, ignored parameter file: VPC, public subnet for the app host, two or more private subnets for the database (`DbSubnetIds`), existing SSH key pair, trusted SSH CIDR, verified SES domain ARN and an optional SNS alarm topic. Use a CI runner with a stable permitted source address. The default SSH source is intentionally unreachable from the internet. Do not make application ports public.
 
@@ -29,7 +29,7 @@ Copy `env.production.example` to `/srv/quotient-api/shared/.env` and `migrate.en
 
 - `NODE_ENV=production`, `APP_ORIGIN=https://YOUR_PRODUCT_DOMAIN`, `HOST=127.0.0.1`, port4100.
 - The `quotefolk_app` credentials, the `DatabaseEndpoint` stack output as `DB_HOST`, `DB_CONNECTION_LIMIT=5`, `DB_SSL=1` and `DB_SSL_CA_FILE=/etc/pki/rds/global-bundle.pem`. Certificates are verified.
-- Selected `AI_PROVIDER=openai` or `anthropic`, its chat model and Quotefolk's own production API key from the [AI keys guide](../../../docs/ops/ai-keys.md). Practice photos also require `OPENAI_API_KEY` and an image-capable account, with `OPENAI_IMAGE_MODEL=gpt-image-2.5-flare` by default. Chat uses the selected provider; generated practice images use OpenAI. Set provider spending limits and the app/tenant daily call budgets.
+- Selected `AI_PROVIDER=openai` or `anthropic`, its chat model and PriceCharm's own production API key from the [AI keys guide](../../../docs/ops/ai-keys.md). Practice photos also require `OPENAI_API_KEY` and an image-capable account, with `OPENAI_IMAGE_MODEL=gpt-image-2.5-flare` by default. Chat uses the selected provider; generated practice images use OpenAI. Set provider spending limits and the app/tenant daily call budgets.
 - `MAIL_PROVIDER=ses`, AWS region, verified `SES_EMAIL_FROM`, stable random32-byte/base64 `MAIL_ENCRYPTION_KEY`. Back up this encryption key with secrets; pending emails cannot be decrypted if it is lost.
 - The same key makes the daily fingerprints that stand in for visitors' addresses in the setup and customer chat limits, and the links in customer emails. Changing it retires links already sent.
 - `BILLING_PROVIDER=stripe`, Stripe secret, webhook signing secret, meter event name and metered price ID, using the exact setup in [COMMERCE.md](COMMERCE.md).
