@@ -4,8 +4,9 @@ import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
 /** Scrolls so the target's top sits just under the top of the scroller. */
 function alignTop(element: HTMLElement, target: HTMLElement) {
-  element.scrollTop +=
-    target.getBoundingClientRect().top - element.getBoundingClientRect().top - 12;
+  const off = target.getBoundingClientRect().top - element.getBoundingClientRect().top - 12;
+  // Under a pixel is already in place, and leaving it alone keeps scroll events from echoing.
+  if (Math.abs(off) >= 1) element.scrollTop += off;
 }
 
 /**
@@ -28,14 +29,19 @@ export function useStickToBottom(scroller: RefObject<HTMLElement | null>) {
       else if (pinned.current) element.scrollTop = element.scrollHeight;
     };
     const onScroll = () => {
-      if (held.current) return;
+      // The browser moves the chat on its own sometimes, like keeping its place as a photo above
+      // finishes loading. While something is held, any scroll the reader didn't make goes back.
+      if (held.current) {
+        if (held.current.isConnected) alignTop(element, held.current);
+        return;
+      }
       pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
     };
-    // Only the reader's own scrolling or tapping lets go of something being held in view.
+    // Only the reader's own scrolling, tapping or moving focus lets go of something held in view.
     const letGo = () => {
       held.current = null;
     };
-    const reader = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    const reader = ['wheel', 'touchstart', 'pointerdown', 'keydown', 'focusin'] as const;
     element.addEventListener('scroll', onScroll, { passive: true });
     for (const name of reader) element.addEventListener(name, letGo, { passive: true });
     // Fires when a message arrives, and when the area around the chat changes size.

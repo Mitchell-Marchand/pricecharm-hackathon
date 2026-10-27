@@ -51,6 +51,15 @@ test('a customer gets a quote on the link, comes back to it, and accepts it', as
   await expect(quote).toBeVisible();
   await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
   await expectQuoteFromTop(quote);
+  // The browser can move the chat on its own as things load. Until the customer scrolls or taps,
+  // the quote goes back to the top.
+  await quote.evaluate((card) => {
+    let scroller = card.parentElement;
+    while (scroller && getComputedStyle(scroller).overflowY !== 'auto')
+      scroller = scroller.parentElement;
+    scroller!.scrollTop = scroller!.scrollHeight;
+  });
+  await expectQuoteFromTop(quote);
   await page.getByRole('button', { name: 'Accept quote' }).click();
   await expect(page.getByText(/You.re all set\. Maya will be in touch/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Accept quote' })).toHaveCount(0);
