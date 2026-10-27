@@ -8,23 +8,24 @@ import { EmailCode } from '@/components/owner/EmailCode';
 import { GoLiveSteps } from '@/components/owner/GoLive';
 import { ShareSections } from '@/components/share/ShareSections';
 import { ButtonLink } from '@/components/ui';
-import { loadMe, loadShare, type Me, type Share } from '@/lib/account';
+import { loadMe, loadShare, type AgentReadiness, type Me, type Share } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
-import { loadBilling, syncBilling, type Billing } from '@/lib/owner';
+import { loadBilling, loadHome, syncBilling, type Billing } from '@/lib/owner';
 
 /** Checks of the card after coming back from adding it, two seconds apart. */
 const CARD_CHECKS = 10;
 
 /**
- * Setup's last screen. It says they're live only once quotes can reach customers; until then it
- * shows what's left, the same two steps as right after signing up.
+ * Setup's last screen. It says they're live only once the agent is deployed and quotes can reach
+ * customers; until then it shows what's left, the same steps as right after signing up.
  */
 export default function LiveStep() {
   const { state } = useOnboarding();
   const [me, setMe] = useState<Me | null>(null);
   const [share, setShare] = useState<Share | null>(null);
   const [billing, setBilling] = useState<Billing | null>(null);
+  const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
   const [checkingCard, setCheckingCard] = useState(false);
   const [error, setError] = useState('');
   const fromCheckout = useRef<boolean | null>(null);
@@ -42,6 +43,10 @@ export default function LiveStep() {
     loadShare()
       .then(setShare)
       .catch((loadError) => setError(errorMessage(loadError)));
+    // Only to show at the deploy step; going live doesn't wait on it.
+    loadHome()
+      .then((home) => setReadiness(home.readiness))
+      .catch(() => {});
     fromCheckout.current ??=
       new URLSearchParams(window.location.search).get('billing') === 'active';
     if (!fromCheckout.current) return refresh();
@@ -88,7 +93,7 @@ export default function LiveStep() {
   if (!state || !share || !me || !billing) return <SetupLoading />;
   const business = state.business.name || 'Your business';
   const firstName = me.user.firstName || me.user.name.split(' ')[0] || 'there';
-  const live = billing.canSend;
+  const live = billing.canSend && billing.linkOn;
 
   return (
     <div className="min-h-dvh">
@@ -134,11 +139,10 @@ export default function LiveStep() {
             <p className="font-semibold text-ink-2">Your account is saved, {firstName}</p>
             <h1 className="t-hero mt-4">Almost live.</h1>
             <p className="mt-5 max-w-xl text-lg text-ink-2">
-              Your quote link is ready, but quotes can&apos;t reach customers until these are done.
-              Anyone who asks before then waits for you.
+              Your quote link is ready. It starts taking requests once these are done.
             </p>
-            <div className="mt-8 max-w-[560px]">
-              <GoLiveSteps me={me} billing={billing} onConfirmed={refresh} />
+            <div className="mt-8 max-w-[640px]">
+              <GoLiveSteps billing={billing} readiness={readiness} onDeployed={setBilling} />
             </div>
           </>
         )}

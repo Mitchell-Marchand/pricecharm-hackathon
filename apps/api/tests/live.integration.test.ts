@@ -148,7 +148,19 @@ test(
       return { customer, contact: contact.body.data };
     }
 
-    // 0. No payment method yet: even an automatic quote waits, and the owner is told why.
+    // Going live the way an owner does: a plan, a card, then deploying. No email check first.
+    async function goLive(owner: ReturnType<typeof request.agent>, plan = 'per_quote') {
+      await owner.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan }).expect(200);
+      await owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+      await owner.post('/api/v1/app/deploy').set('Origin', origin).send({}).expect(200);
+    }
+
+    // 0. The card stops working after going live: even an automatic quote waits, and the owner
+    // is told why.
+    await goLive(rival.owner);
+    await mutate("UPDATE billing_accounts SET subscription_status='past_due' WHERE business_id=?", [
+      rival.id,
+    ]);
     await rival.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
@@ -189,18 +201,7 @@ test(
       'The email’s link needs billing too',
     );
 
-    // The shop sets up billing the way an owner does: confirm the email, then add a card.
-    const verification = await shop.owner
-      .post('/api/v1/auth/request-verification')
-      .set('Origin', origin)
-      .send({})
-      .expect(200);
-    await shop.owner
-      .post('/api/v1/auth/verify-email')
-      .set('Origin', origin)
-      .send({ token: verification.body.data.devToken })
-      .expect(200);
-    await shop.owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+    await goLive(shop.owner);
 
     // 1. Automatic quotes on: the quote goes out as soon as the email is confirmed.
     await shop.owner
@@ -236,9 +237,9 @@ test(
       {
         source: 'live_auto',
         trial_covered: false,
-        fee_cents: 275,
+        fee_cents: 200,
       },
-      '1% of the $275 quote, from the first one',
+      '$2 for the quote on the per-quote plan, from the first one',
     );
     const emails = await rows(
       'SELECT dedupe_key,payload_encrypted FROM email_outbox WHERE business_id=? ORDER BY created_at',

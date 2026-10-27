@@ -119,17 +119,31 @@ export function termsOfService(operator?: Operator): LegalDocument {
         body: (
           <ul>
             <li>
-              Quotefolk charges a fee for each qualifying quote it delivers. The current fee and the
-              details are on our <Link href="/pricing">pricing page</Link> and in your billing
-              settings. The fee in place when you sign up applies to your account until we change it
-              as described below. Setting up, practice and your own tests are free.
+              Before your quote link takes requests, you choose a plan: a fee for each qualifying
+              quote delivered, a fee for each qualifying quote a customer accepts, or a monthly or
+              yearly subscription. The current prices and details are on our{' '}
+              <Link href="/pricing">pricing page</Link> and in your billing settings. The prices in
+              place when you choose a plan apply until we change them as described below. Setting
+              up, practice and your own tests are free on every plan.
             </li>
             <li>
               A quote qualifies when a customer whose email address has been verified receives it,
-              whether the assistant sent it automatically or you approved it first. We don’t charge
-              for practice, the demo, your own test requests, or sending the same quote again. The
-              fee applies once a qualifying quote is delivered, whether or not the customer accepts
-              it.
+              whether the assistant sent it automatically or you approved it first. On the per-quote
+              plan, the fee applies once a qualifying quote is delivered, whether or not the
+              customer accepts it. On the accepted-quote plan, the fee applies when the customer
+              accepts a qualifying quote through Quotefolk, as a percentage of the quote within the
+              stated minimum and maximum. We don’t charge for practice, the demo, your own test
+              requests, or sending the same quote again.
+            </li>
+            <li>
+              A subscription includes a set number of qualifying quotes each calendar month, with a
+              fee for each one past that. A new subscription may start with a free trial; you give a
+              payment method to start it, and unless you cancel before the trial ends, the
+              subscription begins and you’re charged then. Subscriptions renew automatically at the
+              end of each monthly or yearly period until you cancel. You can cancel or switch plans
+              at any time in your billing settings. Switching away from a subscription, or from
+              yearly to monthly, takes effect at the end of the period you’ve paid for, and we don’t
+              refund the rest of a period.
             </li>
             <li>
               You can set a monthly spending cap in billing settings. Once you reach it, no more
@@ -138,8 +152,9 @@ export function termsOfService(operator?: Operator): LegalDocument {
             </li>
             <li>
               Sending quotes to customers needs a payment method on file. Until you add one, quotes
-              wait for you instead of going out. Stripe bills fees monthly, and you authorize us to
-              charge your payment method for them. Stripe’s terms also apply to payments.
+              wait for you instead of going out. Stripe bills subscriptions at the start of each
+              period and fees monthly, and you authorize us to charge your payment method for them.
+              Stripe’s terms also apply to payments.
             </li>
             <li>
               Fees don’t include taxes. You’re responsible for any sales, use or similar taxes on

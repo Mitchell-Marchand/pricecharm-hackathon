@@ -71,7 +71,12 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   }
   await page.goto('/pricing');
   const pricing = (await (await page.request.get('/api/v1/pricing')).json()).data;
-  await expect(page.getByText(`${pricing.feeBasisPoints / 100}% of the quote`)).toBeVisible();
+  await expect(
+    page.getByText(`$${pricing.perQuoteCents / 100} per quote`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(`${pricing.accepted.basisPoints / 100}% when they say yes`),
+  ).toBeVisible();
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;
   await expect(page.locator('#contact')).toContainText(site.operatorName);
@@ -245,6 +250,12 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     page.getByText(/^You.ll approve each quote for now\.$/),
     'One past job is too few for any service to send on its own',
   ).toBeVisible();
+  const readiness = page.getByRole('region', { name: 'Agent readiness' });
+  await expect(readiness.getByRole('meter', { name: 'Agent readiness' })).toHaveAttribute(
+    'aria-valuenow',
+    /^\d+$/,
+  );
+  await expect(readiness).toContainText(/Next: (Add a .+ job with its size|Practice a .+ job)\./);
   const services = page.getByRole('list', { name: 'Your services' });
   const driveways = services.getByRole('listitem').filter({ hasText: 'Driveways' });
   await expect(driveways).toContainText(
@@ -285,25 +296,29 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await page.getByLabel('Password', { exact: true }).fill('test password strong123');
   await page.getByRole('button', { name: 'Create account' }).click();
 
-  // The email is confirmed with a code on this same page, then a card, then they're live.
+  // Straight on to a plan and a card on this same page, then deploying. No email check first.
   await expect(page.getByRole('heading', { name: 'Two quick steps to go live.' })).toBeVisible();
   await expect(page).toHaveURL(/\/start\/account$/);
   const steps = page.getByRole('list', { name: 'Before you go live' });
-  await expect(steps.getByRole('button', { name: 'Add a payment method' })).toHaveCount(0);
-  const codeField = page.getByLabel('Code from the email');
-  await codeField.fill('000000');
-  await expect(page.getByText(/That code didn.t work/)).toBeVisible();
-  const sent = await page.getByText(/^Local test: the code is \d{6}\.$/).textContent();
-  await codeField.fill(sent!.match(/\d{6}/)![0]);
-  await expect(steps.getByRole('button', { name: 'Add a payment method' })).toBeVisible();
-  await expect(codeField).toHaveCount(0);
+  const addCard = steps.getByRole('button', { name: 'Add a card' });
+  await expect(addCard, 'Nothing is picked for them').toBeDisabled();
+  await expect(steps.getByRole('radio')).toHaveCount(3);
+  await steps.getByRole('radio', { name: /^\$49 a month or \$499 a year/ }).check();
+  await expect(steps).toContainText('First week free. 100 quotes a month included, then $1 each.');
+  await steps.getByRole('radio', { name: 'Yearly', exact: true }).click();
+  await steps.getByRole('radio', { name: /^\$2 per quote/ }).check();
 
-  // Skipping the card leaves them a step short, and the live page says so.
+  // Leaving before the card leaves them a step short, and the live page says so.
   await page.getByRole('button', { name: /I.ll finish this later/ }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByRole('heading', { name: 'Almost live.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
-  await steps.getByRole('button', { name: 'Add a payment method' }).click();
+  await steps.getByRole('radio', { name: /^\$2 per quote/ }).check();
+  await addCard.click();
+  await expect(steps).toContainText('$2 per quote. Card added.');
+  await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
+  await expect(steps).toContainText(/Your agent is \d+% ready, so for now it drafts each quote/);
+  await steps.getByRole('button', { name: 'Deploy your agent' }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByText(/You.re all set, Maya/)).toBeVisible();

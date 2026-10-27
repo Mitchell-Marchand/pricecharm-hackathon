@@ -73,17 +73,13 @@ test(
       id: String(signup.body.data.business.id),
       slug: String(signup.body.data.business.slug),
     };
-    const verification = await owner
-      .post('/api/v1/auth/request-verification')
-      .set('Origin', origin)
-      .send({})
-      .expect(200);
     await owner
-      .post('/api/v1/auth/verify-email')
+      .post('/api/v1/app/billing/plan')
       .set('Origin', origin)
-      .send({ token: verification.body.data.devToken })
+      .send({ plan: 'per_quote' })
       .expect(200);
     await owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+    await owner.post('/api/v1/app/deploy').set('Origin', origin).send({}).expect(200);
 
     async function quoteRequest(slug: string, service: string, size: string) {
       const agent = request.agent(app);
@@ -206,7 +202,7 @@ test(
     async function business(name: string, services: string[], jobs: [string, number, string][]) {
       const id = randomUUID();
       await mutate(
-        "INSERT INTO businesses (id,name,slug,description,status,trade_id) VALUES (?,?,?,'','active','pressure-washing')",
+        "INSERT INTO businesses (id,name,slug,description,status,trade_id,link_on) VALUES (?,?,?,'','active','pressure-washing',TRUE)",
         [id, name, `${name.toLowerCase().replace(/\W+/g, '-')}-${id.slice(0, 8)}`],
       );
       for (const [position, offering] of services.entries())

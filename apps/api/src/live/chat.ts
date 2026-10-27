@@ -29,7 +29,7 @@ import { questionChecklist } from '../profile.js';
 import { getPhoto } from '../storage.js';
 import { withAiUsage, withCustomerAiUsage } from '../usage.js';
 import { consumeAuthRateLimit } from '../verification.js';
-import { recordLiveDelivery, liveBillingAccess } from './billing.js';
+import { liveBillingAccess, recordAcceptance, recordLiveDelivery } from './billing.js';
 import { lossReasonPhrase, type LossReason } from './outcomes.js';
 
 const CHAT_DAYS = 14;
@@ -131,6 +131,8 @@ export async function publicProfile(business: Row) {
     ownerFirstName: await ownerFirstName(String(business.id)),
     /** The one website allowed to show the widget. */
     websiteDomain: String(business.website_domain ?? ''),
+    /** Taking quote requests: the owner has deployed the agent and hasn't paused it. */
+    taking: Boolean(business.link_on),
   };
 }
 
@@ -946,6 +948,13 @@ export async function customerDecision(
       [{ accept: 'accepted', visit: 'visit', decline: 'closed' }[decision], chat.id],
       connection,
     );
+    // On the accepted-quote plan, this is when the quote is charged.
+    if (decision === 'accept')
+      await recordAcceptance(connection, {
+        businessId: String(business.id),
+        quoteId: String(quote.id),
+        totalCents: Number(quote.total_cents),
+      });
     const owner = await ownerFirstName(String(business.id));
     await addMessage(connection, {
       businessId: String(business.id),

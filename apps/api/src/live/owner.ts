@@ -7,11 +7,12 @@ import { queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
+import { agentReadiness, businessReadiness, serviceWorkload } from '../pricing/readiness.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { owner } from '../auth.js';
-import { billingProvider, reconcileStripeCustomer } from '../billing.js';
+import { billingProvider, changePlan, PLANS, reconcileStripeCustomer } from '../billing.js';
 import { consumeAuthRateLimit } from '../verification.js';
-import { liveBillingSummary } from './billing.js';
+import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
 
@@ -78,6 +79,10 @@ ownerQuotesRouter.get('/app/home', async (req, res) => {
       autoSend: Boolean(business.auto_send),
       autoSendLimitCents: Number(business.auto_send_limit_cents),
       websiteDomain: String(business.website_domain || ''),
+      readiness: agentReadiness(
+        await businessReadiness(businessId),
+        await serviceWorkload(businessId),
+      ),
     }),
   );
 });
@@ -289,6 +294,55 @@ ownerQuotesRouter.post('/app/quotes/:id/decline', rateLimit(30, 60_000), async (
 
 ownerQuotesRouter.get('/app/billing', async (req, res) => {
   res.json(ok(await liveBillingSummary(owner(req).businessId)));
+});
+
+/** Picks or switches the plan. See changePlan for when a switch takes effect. */
+ownerQuotesRouter.post('/app/billing/plan', async (req, res) => {
+  const { businessId } = owner(req);
+  const { plan } = z
+    .object({ plan: z.enum(PLANS) })
+    .strict()
+    .parse(req.body);
+  await consumeAuthRateLimit(`billing-plan:${businessId}`, 20, 3600_000);
+  await changePlan(businessId, plan);
+  res.json(ok(await liveBillingSummary(businessId)));
+});
+
+/**
+ * Deploys the agent: the quote link starts taking requests. It needs a plan and a card, so every
+ * quote it writes can reach the customer. How ready the agent is doesn't matter here; until a
+ * service is ready, its quotes wait for the owner's OK.
+ */
+ownerQuotesRouter.post('/app/deploy', async (req, res) => {
+  const { businessId } = owner(req);
+  await transaction(async (connection) => {
+    const access = await liveBillingAccess(businessId, connection, 0);
+    if (!access.canSend) throw new ApiError(409, 'NOT_READY_TO_DEPLOY', access.reason);
+    await mutate(
+      'UPDATE businesses SET link_on=TRUE,deployed_at=COALESCE(deployed_at,UTC_TIMESTAMP(3)) WHERE id=?',
+      [businessId],
+      connection,
+    );
+  });
+  res.json(ok(await liveBillingSummary(businessId)));
+});
+
+/** Pauses the quote link, or turns it back on. Customers see that it isn't taking requests. */
+ownerQuotesRouter.patch('/app/link', async (req, res) => {
+  const { businessId } = owner(req);
+  const { on } = z.object({ on: z.boolean() }).strict().parse(req.body);
+  await transaction(async (connection) => {
+    if (on) {
+      const access = await liveBillingAccess(businessId, connection, 0);
+      if (!access.canSend) throw new ApiError(409, 'NOT_READY_TO_DEPLOY', access.reason);
+    }
+    await mutate(
+      `UPDATE businesses SET link_on=?${on ? ',deployed_at=COALESCE(deployed_at,UTC_TIMESTAMP(3))' : ''} WHERE id=?`,
+      [on, businessId],
+      connection,
+    );
+  });
+  res.json(ok(await liveBillingSummary(businessId)));
 });
 
 /**

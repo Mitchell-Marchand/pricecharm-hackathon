@@ -1,6 +1,7 @@
 import { api, json } from './api';
-import type { Profile } from './account';
+import type { AgentReadiness, Profile } from './account';
 import { money } from './util';
+import type { Plan, PlanChoice, Pricing } from './plans';
 import type { Quote } from './quote';
 
 export type QuoteStatus =
@@ -25,6 +26,7 @@ export interface Home {
   autoSend: boolean;
   autoSendLimitCents: number;
   websiteDomain: string;
+  readiness: AgentReadiness;
 }
 
 export interface QuoteCheck {
@@ -85,6 +87,20 @@ export const saveSettings = (patch: Partial<Pick<Settings, 'autoSend' | 'autoSen
 export interface Billing {
   provider: 'local' | 'stripe';
   configured: boolean;
+  /** Null until they choose one, which comes before the card. */
+  plan: Plan | null;
+  /** A switch booked for the end of the paid period. */
+  nextPlan: Plan | null;
+  /** The order to show the choices in, random per business. */
+  planOrder: PlanChoice[];
+  pricing: Pricing;
+  /** The subscription's free week is still theirs to use. */
+  freeWeek: boolean;
+  periodEnd: string | null;
+  coveredThisMonth: number;
+  /** The quote link takes requests: deployed, and not paused. */
+  linkOn: boolean;
+  deployed: boolean;
   status: string;
   trial: { quoteLimit: number; remainingQuotes: number };
   deliveredQuotes: number;
@@ -107,6 +123,14 @@ export const startCheckout = (from?: 'setup') =>
     method: 'POST',
     ...json(from ? { from } : {}),
   });
+/** Picks or switches the plan. Off a paid subscription, it waits for the end of the period. */
+export const choosePlan = (plan: Plan) =>
+  api<Billing>('/app/billing/plan', { method: 'POST', ...json({ plan }) });
+/** Deploys the agent: the quote link starts taking requests. Needs a plan and a card. */
+export const deployAgent = () => api<Billing>('/app/deploy', { method: 'POST', ...json({}) });
+/** Pauses the quote link, or turns it back on. */
+export const setLinkOn = (on: boolean) =>
+  api<Billing>('/app/link', { method: 'PATCH', ...json({ on }) });
 /** Billing as Stripe has it right now, for coming back from adding a card. */
 export const syncBilling = () => api<Billing>('/app/billing/sync', { method: 'POST', ...json({}) });
 export const openBillingPortal = () =>
@@ -116,12 +140,6 @@ export const deleteAccount = (password: string, confirmation: string) =>
 export const loadOwnerProfile = () => api<Profile>('/app/profile');
 
 /** The fee in words, from the account's own tariff: "1% of each quote, at least $1 and at most $25". */
-export function feeText(tariff: Billing['tariff']): string {
-  const percent = `${tariff.basisPoints / 100}%`;
-  if (tariff.minimumFeeCents === tariff.maximumFeeCents)
-    return `${money(tariff.minimumFeeCents)} for each quote`;
-  return `${percent} of each quote, at least ${money(tariff.minimumFeeCents)} and at most ${money(tariff.maximumFeeCents)}`;
-}
 
 /** One waiting quote, as the one-tap link in a "needs your OK" email shows it. */
 export interface ApprovalView {

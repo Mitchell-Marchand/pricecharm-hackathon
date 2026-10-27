@@ -41,6 +41,14 @@ test(
           password: 'test password strong123',
         });
       assert.equal(signup.status, 201, JSON.stringify(signup.body));
+      // Live, so customers can ask: a plan, a card, and deploying.
+      await owner
+        .post('/api/v1/app/billing/plan')
+        .set('Origin', origin)
+        .send({ plan: 'per_quote' })
+        .expect(200);
+      await owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+      await owner.post('/api/v1/app/deploy').set('Origin', origin).send({}).expect(200);
       return {
         owner,
         id: String(signup.body.data.business.id),

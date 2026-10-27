@@ -11,7 +11,6 @@ import { money } from '@/lib/util';
 
 export default async function LandingPage() {
   const pricing = await publicPricing();
-  const percent = `${pricing.feeBasisPoints / 100}%`;
   return (
     <div className="min-h-dvh">
       <SiteHeader howItWorks />
@@ -165,8 +164,8 @@ export default async function LandingPage() {
               },
               {
                 icon: Receipt,
-                title: `${percent} per quote`,
-                text: `You pay ${percent} of each quote a customer receives, at least ${money(pricing.minimumFeeCents)} and at most ${money(pricing.maximumFeeCents)}. Setting up and practice are free.`,
+                title: 'Pay per quote, or by the month',
+                text: `${money(pricing.perQuoteCents)} for each quote a customer gets, ${pricing.accepted.basisPoints / 100}% of the ones they accept, or ${money(pricing.subscription.monthlyCents)} a month with the first week free. Setting up and practice are free.`,
               },
             ].map(({ icon: Icon, title, text }) => (
               <div key={title}>

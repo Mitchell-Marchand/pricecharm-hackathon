@@ -29,6 +29,8 @@ export type ServiceReadiness = {
   matchesToGo: number;
   /** "150 to 1,800 sq ft": the sizes it sends on its own. Bigger or smaller jobs wait. */
   covers: string;
+  /** 0 to 100: how far it is toward sending on its own. Half sized jobs, half close guesses. */
+  progress: number;
   /** Why its quotes wait for the owner, in their terms. Empty once it's ready. */
   reason: string;
 };
@@ -85,6 +87,11 @@ export function serviceReadiness(
         recent.length - matched >= 2 ? `Its recent ${service} prices were off from yours. ` : '';
       reason = `${off}It needs to come within ${AGREE_PERCENT}% of your price on ${plural(toGo, `more ${service} job`)} before it sends these on its own.`;
     }
+    const progress = ready
+      ? 1
+      : (Math.min(sizedPrices, SOLID_POINTS) / SOLID_POINTS +
+          (MATCHES_NEEDED - toGo) / MATCHES_NEEDED) /
+        2;
     return {
       service,
       ready,
@@ -94,9 +101,58 @@ export function serviceReadiness(
       jobsToGo,
       matchesToGo: toGo,
       covers: rate && !jobsToGo ? covers(rate) : '',
+      progress: Math.round(progress * 100),
       reason,
     };
   });
+}
+
+/** The agent as a whole: how close it is to quoting the owner's work without them. */
+export type AgentReadiness = {
+  /** 0 to 100. 100 once every service sends on its own. The services they do most count most. */
+  score: number;
+  /** The one step that would raise it most, and by how many points. Null at 100. */
+  next: { service: string; action: 'job' | 'practice'; gain: number } | null;
+};
+
+/**
+ * Each service's progress, weighted by how often it comes up: one for being offered, plus each
+ * past job and each real request in the last 90 days. A service they rarely do barely counts.
+ */
+export function agentReadiness(
+  services: ServiceReadiness[],
+  workload: Record<string, number>,
+): AgentReadiness {
+  const weight = (service: string) => 1 + (workload[service.toLowerCase()] ?? 0);
+  const total = services.reduce((sum, item) => sum + weight(item.service), 0);
+  if (!total) return { score: 0, next: null };
+  const score = Math.floor(
+    services.reduce((sum, item) => sum + weight(item.service) * item.progress, 0) / total,
+  );
+  let next: AgentReadiness['next'] = null;
+  for (const item of services) {
+    if (item.ready) continue;
+    // A job with a size is the quickest step while it's short of them; then guesses to check.
+    const action = item.jobsToGo ? 'job' : 'practice';
+    const step = action === 'job' ? 50 / SOLID_POINTS : 50 / MATCHES_NEEDED;
+    const gain = Math.max(1, Math.round((weight(item.service) * step) / total));
+    if (!next || gain > next.gain) next = { service: item.service, action, gain };
+  }
+  return { score: next ? Math.min(score, 99) : 100, next };
+}
+
+/** How often each service comes up, by lowercase name: past jobs, and requests in 90 days. */
+export async function serviceWorkload(businessId: string): Promise<Record<string, number>> {
+  const counts = await rows(
+    `SELECT LOWER(service_name) AS service, COUNT(*) AS count FROM past_jobs WHERE business_id=? GROUP BY LOWER(service_name)
+     UNION ALL
+     SELECT LOWER(service_name), COUNT(*) FROM lead_chats WHERE business_id=? AND source<>'test' AND service_name<>'' AND created_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 90 DAY) GROUP BY LOWER(service_name)`,
+    [businessId, businessId],
+  );
+  const workload: Record<string, number> = {};
+  for (const row of counts)
+    workload[String(row.service)] = (workload[String(row.service)] ?? 0) + Number(row.count);
+  return workload;
 }
 
 /**

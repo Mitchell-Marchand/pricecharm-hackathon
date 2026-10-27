@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Check, ChevronRight, Copy, ExternalLink, Inbox } from 'lucide-react';
 import { useOwner } from '@/components/owner/OwnerShell';
-import { PaymentCard } from '@/components/owner/PaymentCard';
+import { GoLiveCard } from '@/components/owner/GoLiveCard';
 import { QuoteStatusTag } from '@/components/owner/QuoteStatus';
+import { ReadinessCard } from '@/components/ReadinessCard';
 import { useToast } from '@/components/Toast';
 import { Button, Tag } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
@@ -114,13 +115,9 @@ export default function QuotesHome() {
         </dl>
       </div>
 
-      {billing && (
-        <PaymentCard
-          billing={billing}
-          email={me.user.email}
-          emailVerified={me.user.emailVerified}
-          className="mt-8"
-        />
+      {billing && <GoLiveCard billing={billing} onChange={setBilling} className="mt-8" />}
+      {home.readiness.next && (
+        <ReadinessCard className="mt-8" readiness={home.readiness} nextHref="/app/train" />
       )}
 
       <div className="mt-10 flex flex-wrap gap-1.5" role="tablist" aria-label="Show quotes">

@@ -55,31 +55,52 @@ test('an owner signs in, edits and sends one quote, and declines another', async
   await shop.context.close();
 });
 
-test('an owner adds a payment method, turns on automatic quotes and signs out', async ({
+test('an owner goes live from the dashboard, turns on automatic quotes and signs out', async ({
   browser,
   baseURL,
 }) => {
   const shop = await createBusiness(browser, baseURL!, { billing: false });
   const page = await shop.context.newPage();
-  await page.goto('/app');
-  const payment = page.getByRole('region', { name: 'Add a payment method so quotes can go out' });
-  await expect(payment).toContainText('1% of each quote');
-  await expect(payment).toContainText('Confirm your email first, with the code we sent');
-  await expect(payment.getByRole('button', { name: 'Add a payment method' })).toBeDisabled();
+  await page.goto(`/q/${shop.slug}`);
+  await expect(
+    page.getByText(/I'm the quote assistant for Moss & Stone/),
+    'Not deployed yet, but the owner still gets their test chat',
+  ).toBeVisible();
+  const visitor = await browser.newPage({ baseURL });
+  await visitor.goto(`/q/${shop.slug}`);
+  await expect(
+    visitor.getByText('Moss & Stone Exterior Care isn’t taking quote requests here right now.'),
+  ).toBeVisible();
 
-  // Locally no email is sent, so the banner shows the new code itself.
-  await page.getByRole('button', { name: 'send a new code' }).click();
-  const sent = await page.getByText(/^Local test: the code is \d{6}\.$/).textContent();
-  await page.getByLabel('Code from the email').fill(sent!.match(/\d{6}/)![0]);
-  await expect(page.getByLabel('Code from the email')).toHaveCount(0);
-  await payment.getByRole('button', { name: 'Add a payment method' }).click();
-  await expect(page).toHaveURL(/\/app\/settings/);
-  await expect(page.getByText('Billing is on.')).toBeVisible();
+  await page.goto('/app');
+  const goLive = page.getByRole('region', { name: 'Choose a plan to go live' });
+  await expect(goLive).toBeVisible();
+  // Confirming the email is asked for, never in the way.
+  await expect(page.getByLabel('Code from the email')).toBeVisible();
+  await goLive.getByRole('link', { name: 'Finish going live' }).click();
+  await expect(page).toHaveURL(/\/start\/live$/);
+  const steps = page.getByRole('list', { name: 'Before you go live' });
+  await steps.getByRole('radio', { name: /when they say yes/ }).check();
+  await steps.getByRole('button', { name: 'Add a card' }).click();
+  await steps.getByRole('button', { name: 'Deploy your agent' }).click();
+  await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
+  await visitor.reload();
+  await expect(visitor.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
+  await visitor.close();
+
   await page.goto('/app');
   await expect(page.getByText('Hi Maya')).toBeVisible();
-  await expect(payment).toHaveCount(0);
-
+  await expect(goLive).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Agent readiness' })).toContainText(
+    'Keep training',
+  );
   await page.goto('/app/settings');
+  await expect(page.getByText('1% when they say yes', { exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Paused' }).click();
+  await expect(page.getByText('Your quote link is paused.')).toBeVisible();
+  await page.getByRole('radio', { name: 'Taking requests' }).click();
+  await expect(page.getByText('Your quote link is on.')).toBeVisible();
+
   await page.getByRole('radio', { name: 'Send them on their own' }).click();
   await expect(page.getByText('Quotes can go out on their own now.')).toBeVisible();
   await page.getByLabel('Always ask me about quotes over').fill('900');
@@ -88,7 +109,7 @@ test('an owner adds a payment method, turns on automatic quotes and signs out', 
 
   await page.goto('/app');
   await expect(page.getByText(/Quotes up to \$900 that match your usual prices/)).toBeVisible();
-  await page.getByRole('link', { name: 'Train' }).click();
+  await page.getByRole('link', { name: 'Train', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What your AI knows' })).toBeVisible();
   await expect(page.getByText('It learned from 3 past jobs.')).toBeVisible();
   await expect(

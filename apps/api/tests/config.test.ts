@@ -24,6 +24,8 @@ const base: NodeJS.ProcessEnv = {
   STRIPE_SECRET_KEY: 'sk_test_config_only_never_charge',
   STRIPE_WEBHOOK_SECRET: 'whsec_config_only',
   STRIPE_PRICE_ID: 'price_config_only',
+  STRIPE_PRICE_MONTHLY: 'price_config_monthly',
+  STRIPE_PRICE_YEARLY: 'price_config_yearly',
   STRIPE_METER_EVENT_NAME: 'quotient_fee_cents',
   SUPPORT_EMAIL: 'support@example.test',
   OPERATOR_NAME: 'Configuration test operator',

@@ -27,8 +27,18 @@ export interface ServiceReadiness {
   matchesToGo: number;
   /** "150 to 1,800 sq ft": the sizes it sends on its own. Bigger or smaller jobs wait. */
   covers: string;
+  /** 0 to 100: how far it is toward sending on its own. */
+  progress: number;
   /** Why its quotes wait for the owner. Empty once it's ready. */
   reason: string;
+}
+
+/** How close the agent is to quoting the owner's work without them. Never needed to go live. */
+export interface AgentReadiness {
+  /** 0 to 100. 100 once every service sends on its own; the services they do most count most. */
+  score: number;
+  /** The one step that would raise it most, and by how many points. */
+  next: { service: string; action: 'job' | 'practice'; gain: number } | null;
 }
 
 export interface Profile {
@@ -41,6 +51,7 @@ export interface Profile {
   /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
   services: ServiceReadiness[];
   autoSendReady: boolean;
+  readiness: AgentReadiness;
   /** The AI's record on real quotes the owner checked before sending. */
   live: {
     reviewed: number;

@@ -50,6 +50,16 @@ Setup asks for past jobs the same way. The main service, and any service with a 
 
 Owners can also drop in old quotes and invoices, as many as they like (`src/job-imports.ts`). Each file is stored as it arrives and read in the background, so they can keep going. The jobs it finds wait on one list, where the owner checks the service, description, price and size and saves them together. A file is deleted as soon as it has been read, because invoices carry customers' names and addresses. Up to 20 files can wait on the list at once, and any left there for a week are cleared.
 
+## Agent readiness
+
+One score, 0 to 100%, for how close the agent is to quoting the owner's work without them (`agentReadiness` in `src/pricing/readiness.ts`). It follows the rule above exactly, so 100% means every service sends on its own:
+
+- Each service's progress is half sized jobs (3 needed) and half close guesses (2 of the last 3 within 15%).
+- Services are weighted by how often they come up: one for being offered, plus each past job and each real request in the last 90 days. A service they rarely do barely moves it.
+- It also names the one step that would raise it most, "Add a House wash job with its size" or "Practice a Driveways job", and by how much.
+
+It shows on the Ready screen, the deploy step, the dashboard and the Train page. It never blocks going live.
+
 ## Choosing the model
 
 Each quote records the provider, model and prompt version that drafted it (`live_quotes.engine_json`). Drafting can use a stronger model than the chat with `OPENAI_DRAFT_MODEL` or `ANTHROPIC_DRAFT_MODEL`.

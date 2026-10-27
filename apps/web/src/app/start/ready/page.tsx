@@ -5,6 +5,7 @@ import { ArrowRight, CircleCheckBig, Hand, MessageSquareText, Receipt } from 'lu
 import { JobSheet, newJob, type Editing } from '@/components/jobs/PastJobs';
 import { Logo } from '@/components/Logo';
 import { QuoteForm } from '@/components/QuoteForm';
+import { ReadinessCard } from '@/components/ReadinessCard';
 import { ServiceList, ServicesIntro } from '@/components/ServiceList';
 import { SetupLoading } from '@/components/SetupLoading';
 import { useToast } from '@/components/Toast';
@@ -108,6 +109,15 @@ export default function ReadyStep() {
               <h2 id="services-title" className="t-h2">
                 Your services
               </h2>
+              <ReadinessCard
+                className="mt-5 max-w-3xl"
+                readiness={profile.readiness}
+                onNext={(next) =>
+                  next.action === 'job'
+                    ? setAdding(newJob(next.service))
+                    : void practice(next.service)
+                }
+              />
               <ServicesIntro services={profile.services} autoSend />
               <ServiceList
                 services={profile.services}

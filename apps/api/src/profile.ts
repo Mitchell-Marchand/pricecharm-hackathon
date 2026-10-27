@@ -7,7 +7,7 @@ import { practiceState } from './practice/engine.js';
 import { liveRecord, LIVE_WINDOW } from './pricing/accuracy.js';
 import { loadPricingData } from './pricing/history.js';
 import { fitRates } from './pricing/rates.js';
-import { businessReadiness } from './pricing/readiness.js';
+import { agentReadiness, businessReadiness, serviceWorkload } from './pricing/readiness.js';
 import type { Insight, PracticeScenario, Quote } from './practice/types.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
@@ -84,6 +84,7 @@ export async function pricingProfile(businessId: string) {
     /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
     services,
     autoSendReady: services.some((item) => item.ready),
+    readiness: agentReadiness(services, await serviceWorkload(businessId)),
     live: {
       reviewed: record.length,
       considered: recent.length,

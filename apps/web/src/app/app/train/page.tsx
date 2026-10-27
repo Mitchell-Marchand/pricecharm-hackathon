@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Hand, MessageSquareText, Receipt } from 'lucide-react';
 import { buttonClass } from '@/components/button-class';
 import { PastJobsEditor } from '@/components/jobs/PastJobs';
+import { ReadinessCard } from '@/components/ReadinessCard';
 import { ServiceList, ServicesIntro } from '@/components/ServiceList';
 import { api, errorMessage } from '@/lib/api';
 import type { Profile } from '@/lib/account';
@@ -105,6 +106,15 @@ export default function TrainPage() {
           <h2 id="services-title" className="t-h2">
             Your services
           </h2>
+          <ReadinessCard
+            className="mt-5 max-w-3xl"
+            readiness={profile.readiness}
+            onNext={(next) =>
+              next.action === 'job'
+                ? setAddRequest({ service: next.service, at: Date.now() })
+                : router.push(`/app/train/practice?service=${encodeURIComponent(next.service)}`)
+            }
+          />
           <ServicesIntro services={profile.services} autoSend={profile.autoSend} />
           <ServiceList
             services={profile.services}

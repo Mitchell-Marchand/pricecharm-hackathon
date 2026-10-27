@@ -5,23 +5,26 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
+import { PlanPicker } from '@/components/owner/PlanPicker';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { Button, Field, MoneyInput, Segmented, TextInput } from '@/components/ui';
 import { logout } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import {
+  choosePlan,
   deleteAccount,
-  feeText,
   loadBilling,
   loadHome,
   openBillingPortal,
   saveSettings,
   saveSpendingCap,
+  setLinkOn,
   startCheckout,
   type Billing,
 } from '@/lib/owner';
-import { money, moneyInput, parseMoney } from '@/lib/util';
+import { planDetail, planName, type Plan } from '@/lib/plans';
+import { money, moneyInput, parseMoney, shortDate } from '@/lib/util';
 
 function Section({
   title,
@@ -244,41 +247,124 @@ function BillingDetails({
   go: (request: () => Promise<{ url: string }>) => void;
 }) {
   const notify = useToast();
-  const active = billing.status === 'active';
-  const free = billing.trial.remainingQuotes;
+  const [picking, setPicking] = useState(!billing.plan);
+  const [plan, setPlan] = useState<Plan | null>(billing.plan);
+  const [saving, setSaving] = useState(false);
+  const paying = billing.status === 'active' || billing.status === 'trialing';
+  const { pricing } = billing;
+
+  async function savePlan() {
+    if (!plan || saving) return;
+    setSaving(true);
+    try {
+      const saved = await choosePlan(plan);
+      onChange(saved);
+      setPicking(false);
+      notify(
+        saved.nextPlan && saved.periodEnd
+          ? `You’ll move to ${planName(saved.nextPlan, pricing)} on ${shortDate(saved.periodEnd)}.`
+          : `You’re on ${planName(plan, pricing)}.`,
+      );
+    } catch (planError) {
+      notify(errorMessage(planError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-md border border-line bg-surface p-4">
-        <p className="font-semibold">{active ? 'Billing is on.' : 'No payment method yet.'}</p>
-        <p className="mt-1 text-sm text-ink-2">
-          {active
-            ? 'Quotes go out to customers as soon as they’re ready.'
-            : free > 0
-              ? `Your ${free} free ${free === 1 ? 'quote goes' : 'quotes go'} out without one. After that, quotes wait for you until you add one.`
-              : 'Quotes wait for you until you add one.'}{' '}
-          You pay {feeText(billing.tariff)}, only when a customer receives it. Your own tests are
-          always free.
+        <p className="font-semibold">
+          {billing.plan ? planName(billing.plan, pricing) : 'No plan yet.'}
         </p>
+        <p className="mt-1 text-sm text-ink-2">
+          {billing.plan
+            ? planDetail(billing.plan, pricing, false)
+            : 'Choose how you’d like to pay and add a card. Quotes wait for you until then.'}{' '}
+          Your own tests are always free.
+        </p>
+        {billing.status === 'trialing' && billing.periodEnd && (
+          <p className="mt-2 text-sm text-ink-2">
+            Your free week ends {shortDate(billing.periodEnd)}.
+          </p>
+        )}
+        {billing.nextPlan && billing.periodEnd && (
+          <p className="mt-2 text-sm text-ink-2">
+            Moving to {planName(billing.nextPlan, pricing)} on {shortDate(billing.periodEnd)}.
+          </p>
+        )}
         <p className="mt-3 text-sm text-muted">
           This month: {billing.usage.billableQuotes} paid{' '}
           {billing.usage.billableQuotes === 1 ? 'quote' : 'quotes'},{' '}
-          {money(billing.usage.feesCents)} in fees.
+          {money(billing.usage.feesCents)} in fees
+          {billing.plan === 'monthly' || billing.plan === 'yearly'
+            ? `, ${billing.coveredThisMonth} of ${pricing.subscription.includedQuotes} included quotes used`
+            : ''}
+          .
         </p>
         {!billing.canSend && billing.reason && (
           <p className="mt-3 text-sm text-stop">{billing.reason}</p>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {billing.checkoutAvailable && !active && (
-          <Button onClick={() => go(startCheckout)}>Add a payment method</Button>
-        )}
-        {billing.portalAvailable && (
-          <Button variant="secondary" onClick={() => go(openBillingPortal)}>
-            Manage billing
+      {picking ? (
+        <div className="flex flex-col gap-4">
+          <PlanPicker billing={billing} value={plan} onChange={setPlan} />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={!plan || saving || plan === billing.plan}
+              onClick={() => void savePlan()}
+            >
+              {saving ? 'Saving…' : 'Save plan'}
+            </Button>
+            {billing.plan && (
+              <Button variant="ghost" onClick={() => setPicking(false)}>
+                Cancel
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => setPicking(true)}>
+            Change plan
           </Button>
-        )}
-      </div>
+          {billing.checkoutAvailable && billing.plan && !paying && (
+            <Button onClick={() => go(startCheckout)}>Add a card</Button>
+          )}
+          {billing.portalAvailable && (
+            <Button variant="secondary" onClick={() => go(openBillingPortal)}>
+              Manage card and invoices
+            </Button>
+          )}
+        </div>
+      )}
+
+      {billing.deployed && (
+        <Field
+          label="Quote link"
+          htmlFor="settings-link"
+          hint="Paused, customers see that you aren’t taking requests right now."
+        >
+          <Segmented
+            label="Quote link"
+            value={billing.linkOn ? 'on' : 'off'}
+            onChange={(value) =>
+              setLinkOn(value === 'on')
+                .then((saved) => {
+                  onChange(saved);
+                  notify(saved.linkOn ? 'Your quote link is on.' : 'Your quote link is paused.');
+                })
+                .catch((linkError) => notify(errorMessage(linkError)))
+            }
+            options={[
+              { value: 'on', label: 'Taking requests' },
+              { value: 'off', label: 'Paused' },
+            ]}
+          />
+        </Field>
+      )}
 
       <Field
         label="Monthly spending limit"

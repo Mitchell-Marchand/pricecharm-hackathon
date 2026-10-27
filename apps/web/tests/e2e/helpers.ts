@@ -5,8 +5,8 @@ import mysql from 'mysql2/promise';
 export const OWNER_PASSWORD = 'test password strong123';
 
 /**
- * A signed-up business with three past driveway jobs, set up through the API. Billing is on
- * unless asked otherwise, done the way an owner does it: confirm the email, then add a card.
+ * A signed-up business with three past driveway jobs, set up through the API. It's live unless
+ * asked otherwise, done the way an owner does it: a plan, a card, then deploying.
  */
 export async function createBusiness(
   browser: Browser,
@@ -42,9 +42,9 @@ export async function createBusiness(
     password: OWNER_PASSWORD,
   });
   if (billing) {
-    const { devToken } = await send('post', '/api/v1/auth/request-verification', {});
-    await send('post', '/api/v1/auth/verify-email', { token: devToken });
+    await send('post', '/api/v1/app/billing/plan', { plan: 'per_quote' });
     await send('post', '/api/v1/billing/checkout', {});
+    await send('post', '/api/v1/app/deploy', {});
   }
   const slug = String(account.business.slug);
   const approveWaiting = async () => {

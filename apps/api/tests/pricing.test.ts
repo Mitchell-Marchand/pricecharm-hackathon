@@ -11,7 +11,7 @@ import {
   withinEstimate,
   type PricePoint,
 } from '../src/pricing/rates.js';
-import { serviceReadiness, type Comparison } from '../src/pricing/readiness.js';
+import { agentReadiness, serviceReadiness, type Comparison } from '../src/pricing/readiness.js';
 import { cleanSpec, describeSpec, specFromScenario } from '../src/pricing/spec.js';
 import { canonicalUnit, formatQuantity, parseQuantity, roundSize } from '../src/pricing/units.js';
 import { focusSituation, planSituation, SITUATIONS, type PlanInput } from '../src/practice/plan.js';
@@ -315,6 +315,36 @@ test('each service sends on its own once it has learned the owner’s prices for
     ...drafts('House wash', [false, false, false]),
   ]);
   assert.equal(driveways.ready, true, 'Another service’s misses don’t count against it');
+
+  // Readiness as a score: each service half sized jobs, half close guesses, weighted by workload.
+  [driveways, house, patios] = check([]);
+  assert.deepEqual(
+    [driveways.progress, house.progress, patios.progress],
+    [50, 17, 0],
+    'Three sized jobs and no guesses yet is halfway',
+  );
+  const busy = { driveways: 10 };
+  assert.deepEqual(agentReadiness([driveways, house, patios], busy), {
+    score: 43,
+    next: { service: 'Driveways', action: 'practice', gain: 21 },
+  });
+  [driveways, house, patios] = check(drafts('Driveways', [true, true]));
+  assert.equal(driveways.progress, 100);
+  assert.deepEqual(
+    agentReadiness([driveways, house, patios], busy),
+    { score: 85, next: { service: 'House wash', action: 'job', gain: 1 } },
+    'Services they rarely do barely move it',
+  );
+  assert.equal(
+    agentReadiness([house, patios], {}).score,
+    8,
+    'With no work yet, each counts the same',
+  );
+  assert.deepEqual(
+    agentReadiness([driveways], busy),
+    { score: 100, next: null },
+    '100 only once every service sends on its own',
+  );
 });
 
 test('a long history keeps the examples most like the request', () => {

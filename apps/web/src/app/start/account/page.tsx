@@ -8,7 +8,7 @@ import { Logo } from '@/components/Logo';
 import { GoLiveSteps } from '@/components/owner/GoLive';
 import { SetupLoading } from '@/components/SetupLoading';
 import { Button, Field, TextInput } from '@/components/ui';
-import { loadMe, register, type Me } from '@/lib/account';
+import { register } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
 import { useHumanCheck } from '@/lib/human-check';
 import { useOnboarding } from '@/lib/onboarding';
@@ -29,29 +29,22 @@ export default function AccountStep() {
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<{ message: string; exists?: boolean } | null>(null);
-  // Once the account exists, this page goes on to confirming the email and adding a card.
-  const [account, setAccount] = useState<{ me: Me; devCode: string | null } | null>(null);
+  // Once the account exists, this page goes on to choosing a plan and adding a card.
+  const [signedUp, setSignedUp] = useState(false);
   const [billing, setBilling] = useState<Billing | null>(null);
 
   // Signed up before, on another visit: the live page has whatever is left.
   useEffect(() => {
-    if (state && !state.draft && !account) router.replace('/start/live');
-  }, [state, account, router]);
+    if (state && !state.draft && !signedUp) router.replace('/start/live');
+  }, [state, signedUp, router]);
 
-  if (!state || (!state.draft && !account)) return <SetupLoading />;
-  if (account)
+  if (!state || (!state.draft && !signedUp)) return <SetupLoading />;
+  if (signedUp)
     return (
       <GoingLive
         business={state.business.name || 'Your business'}
-        me={account.me}
-        devCode={account.devCode}
         billing={billing}
-        onConfirmed={async () => {
-          const [me, fresh] = await Promise.all([loadMe(), loadBilling()]);
-          if (fresh.canSend) return void goTo('live');
-          setAccount({ me, devCode: null });
-          setBilling(fresh);
-        }}
+        onDeployed={() => void goTo('live')}
         onLater={() => void goTo('live')}
       />
     );
@@ -66,7 +59,7 @@ export default function AccountStep() {
     setBusy(true);
     setError(null);
     try {
-      const { devCode, ...me } = await register(
+      await register(
         {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
@@ -75,7 +68,7 @@ export default function AccountStep() {
         },
         await human.headers(),
       );
-      setAccount({ me, devCode: devCode ?? null });
+      setSignedUp(true);
       reload();
       loadBilling()
         .then(setBilling)
@@ -212,20 +205,16 @@ export default function AccountStep() {
   );
 }
 
-/** Right after signing up: the code from the email, then a card, on this same page. */
+/** Right after signing up: a plan and a card, on this same page, then deploying. */
 function GoingLive({
   business,
-  me,
-  devCode,
   billing,
-  onConfirmed,
+  onDeployed,
   onLater,
 }: {
   business: string;
-  me: Me;
-  devCode: string | null;
   billing: Billing | null;
-  onConfirmed: () => Promise<void>;
+  onDeployed: () => void;
   onLater: () => void;
 }) {
   return (
@@ -233,19 +222,15 @@ function GoingLive({
       <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
         <Logo href="/" />
       </header>
-      <main className="gutter mx-auto max-w-[520px] pt-6 pb-20">
+      <main className="gutter mx-auto max-w-[640px] pt-6 pb-20">
         <h1 className="t-h1 mt-5">Two quick steps to go live.</h1>
         <p className="mt-3 text-lg text-ink-2">
-          Your account is saved. Once these are done, {business} can send customers real quotes.
+          Your account is saved. Choose how you’d like to pay, then deploy your agent and {business}{' '}
+          can send customers real quotes.
         </p>
         <div className="mt-8">
           {billing ? (
-            <GoLiveSteps
-              me={me}
-              billing={billing}
-              devCode={devCode}
-              onConfirmed={() => void onConfirmed()}
-            />
+            <GoLiveSteps billing={billing} onDeployed={onDeployed} />
           ) : (
             <div className="shimmer h-48 rounded-md" aria-busy="true" />
           )}

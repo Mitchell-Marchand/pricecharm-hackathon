@@ -44,6 +44,16 @@ chatRouter.get('/chat/:slug', async (req, res) => {
 });
 
 /**
+ * Whether the person looking is this business's signed-in owner. Before the agent is deployed,
+ * or while it's paused, they still get their test chat; everyone else is told it isn't open.
+ */
+chatRouter.get('/chat/:slug/viewer', async (req, res) => {
+  const business = await businessBySlug(req.params.slug);
+  const viewer = await workspaceFromRequest(req);
+  res.json(ok({ owner: Boolean(viewer && !viewer.draft && viewer.businessId === business.id) }));
+});
+
+/**
  * Starts a chat. When the business's own owner is signed in, it's a test: no bot check, and the
  * quote is never billed or emailed.
  */
@@ -55,6 +65,12 @@ chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => 
     .parse(req.body ?? {});
   const viewer = await workspaceFromRequest(req);
   const test = Boolean(viewer && !viewer.draft && viewer.businessId === business.id);
+  if (!test && !business.link_on)
+    throw new ApiError(
+      409,
+      'NOT_TAKING_REQUESTS',
+      `${business.name} isn’t taking quote requests here right now.`,
+    );
   if (!test) await verifyHuman(req, 'quote_chat');
   const { token, chatId } = await startChat(business, test ? 'test' : source);
   req.headers.authorization = `Bearer ${token}`;

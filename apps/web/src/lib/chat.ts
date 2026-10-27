@@ -8,6 +8,8 @@ export interface BusinessProfile {
   services: string[];
   ownerFirstName: string;
   websiteDomain: string;
+  /** Taking quote requests: the owner has deployed the agent and hasn't paused it. */
+  taking: boolean;
 }
 
 export interface ChatMessage {
@@ -71,6 +73,8 @@ const auth = (access: ChatAccess) => ({ Authorization: `Bearer ${access.token}` 
 const base = (slug: string, access: ChatAccess) => `/chat/${slug}/${access.chatId}`;
 
 export const loadProfile = (slug: string) => api<BusinessProfile>(`/chat/${slug}`);
+/** Whether the person looking is this business's signed-in owner, who can always test. */
+export const loadViewer = (slug: string) => api<{ owner: boolean }>(`/chat/${slug}/viewer`);
 
 export const startChat = (
   slug: string,

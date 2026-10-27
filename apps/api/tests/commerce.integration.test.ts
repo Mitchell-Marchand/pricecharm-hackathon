@@ -7,12 +7,18 @@ import { createApp } from '../src/app.js';
 import { closeDatabase, mutate, rows, transaction } from '../src/db.js';
 import { hashToken } from '../src/auth.js';
 import {
+  applyDuePlanChanges,
   dispatchMeterEvent,
   ensureBillingAccount,
   reconcileStripeCustomer,
   stripeClient,
 } from '../src/billing.js';
-import { liveBillingAccess, liveBillingSummary, recordLiveDelivery } from '../src/live/billing.js';
+import {
+  liveBillingAccess,
+  liveBillingSummary,
+  recordAcceptance,
+  recordLiveDelivery,
+} from '../src/live/billing.js';
 import {
   decryptEmail,
   deliverEmail,
@@ -225,6 +231,20 @@ test(
         .expect(200);
       assert.deepEqual(unknown.body.data, { ok: true });
 
+      // The quote link takes requests once the owner deploys it. Their own test chat works before.
+      const startOn = (agent: typeof a, slugToTry: string) =>
+        agent.post(`/api/v1/chat/${slugToTry}/start`).set('Origin', origin).send({});
+      assert.equal((await startOn(guest, slug)).body.error?.code, 'NOT_TAKING_REQUESTS');
+      assert.equal((await startOn(a, slug)).status, 201, 'The owner can always test');
+      assert.equal((await guest.get(`/api/v1/chat/${slug}/viewer`)).body.data.owner, false);
+      assert.equal((await a.get(`/api/v1/chat/${slug}/viewer`)).body.data.owner, true);
+      assert.equal((await guest.get(`/api/v1/chat/${slug}`)).body.data.taking, false);
+      // Free quotes are enough to deploy; so is a plan and a card, as below.
+      const deployed = await a.post('/api/v1/app/deploy').set('Origin', origin).send({});
+      assert.equal(deployed.status, 200, JSON.stringify(deployed.body));
+      assert.equal(deployed.body.data.linkOn, true);
+      assert.equal((await guest.get(`/api/v1/chat/${slug}`)).body.data.taking, true);
+
       // Customer email codes: one at a time, for this chat only, five tries, ten minutes.
       const contact = await chatWithCode();
       assert.match(contact.devCode, /^\d{6}$/);
@@ -315,20 +335,129 @@ test(
         process.env.MAIL_PROVIDER = 'local';
       }
 
-      // The first quotes are free; after that each one has a fee, up to the monthly cap.
+      // The first quotes are free; after that a plan and a card, and each plan charges its way.
       assert.equal(await canSend(), true);
       const first = randomUUID();
       assert.equal(await record(first), true);
       assert.equal(await record(first), false, 'A quote is billed once');
       await record(randomUUID());
       assert.equal((await liveBillingSummary(businessId)).trial.remainingQuotes, 0);
-      assert.equal(await canSend(), false, 'No payment method after the free quotes');
+      assert.equal(await canSend(), false, 'No plan or card after the free quotes');
+      const checkoutFirst = await a.post('/api/v1/billing/checkout').set('Origin', origin).send({});
+      assert.equal(checkoutFirst.body.error?.code, 'PLAN_REQUIRED', 'A card is for a chosen plan');
+      const choose = (agent: typeof a, plan: string) =>
+        agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan });
+      assert.equal((await choose(a, 'free')).status, 400);
+      const shown = (await a.get('/api/v1/app/billing')).body.data.planOrder;
+      assert.deepEqual([...shown].sort(), ['per_accepted', 'per_quote', 'subscription']);
+      assert.deepEqual(
+        (await a.get('/api/v1/app/billing')).body.data.planOrder,
+        shown,
+        'Each business keeps the order it was shown',
+      );
+      assert.equal((await choose(a, 'per_quote')).body.data.plan, 'per_quote');
       const checkout = await a
         .post('/api/v1/billing/checkout')
         .set('Origin', origin)
         .send({})
         .expect(200);
       assert.match(checkout.body.data.url, /\/app\/settings\?billing=active$/);
+      await a
+        .patch('/api/v1/billing')
+        .set('Origin', origin)
+        .send({ spendingCapCents: 200 })
+        .expect(200);
+      const paid = randomUUID();
+      await record(paid);
+      assert.equal((await liveBillingSummary(businessId)).usage.feesCents, 200);
+      assert.equal(await canSend(), false, 'The monthly cap stops the next quote');
+      const [fee] = await rows(
+        "SELECT * FROM quote_usage WHERE quote_id=? AND charge='delivered'",
+        [paid],
+      );
+      assert.equal(Number(fee.fee_cents), 200, '$2 for each quote a customer receives');
+      assert.deepEqual([fee.tariff_version, fee.plan], ['per-quote-v1', 'per_quote']);
+      await a
+        .patch('/api/v1/billing')
+        .set('Origin', origin)
+        .send({ spendingCapCents: 100000 })
+        .expect(200);
+      const accept = (quoteId: string, totalCents: number) =>
+        transaction(async (connection) =>
+          recordAcceptance(connection, { businessId, quoteId, totalCents }),
+        );
+      assert.equal((await accept(paid, 10000)).recorded, false, 'Already paid for on delivery');
+
+      // 1% when the customer accepts, at least $1 and at most $25, charged then and only once.
+      assert.equal((await choose(a, 'per_accepted')).body.data.plan, 'per_accepted');
+      const [small, usual, huge, unanswered] = [
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+        randomUUID(),
+      ];
+      for (const quoteId of [small, usual, huge, unanswered]) await record(quoteId);
+      const fees = async (quoteId: string) =>
+        (
+          await rows('SELECT charge,fee_cents FROM quote_usage WHERE quote_id=? ORDER BY charge', [
+            quoteId,
+          ])
+        ).map((row) => [row.charge, Number(row.fee_cents)]);
+      assert.deepEqual(await fees(usual), [['delivered', 0]], 'Nothing when it goes out');
+      assert.deepEqual(await accept(usual, 32000), { recorded: true, feeCents: 320 });
+      assert.deepEqual(await accept(usual, 32000), { recorded: false, feeCents: 0 });
+      assert.equal((await accept(small, 5000)).feeCents, 100);
+      // Moving plans after it went out doesn't change how it's charged.
+      assert.equal((await choose(a, 'per_quote')).body.data.plan, 'per_quote');
+      assert.equal((await accept(huge, 400000)).feeCents, 2500);
+      assert.deepEqual(await fees(unanswered), [['delivered', 0]]);
+
+      // The subscription covers a set number of quotes a month, then $1 each.
+      process.env.BILLING_INCLUDED_QUOTES = '2';
+      assert.equal((await choose(a, 'monthly')).body.data.plan, 'monthly');
+      const covered = [randomUUID(), randomUUID(), randomUUID()];
+      for (const quoteId of covered) await record(quoteId);
+      assert.deepEqual(
+        (await Promise.all(covered.map(fees))).map((rowsFor) => rowsFor[0][1]),
+        [0, 0, 100],
+      );
+      assert.equal((await liveBillingSummary(businessId)).coveredThisMonth, 3);
+      delete process.env.BILLING_INCLUDED_QUOTES;
+
+      // Off a paid subscription waits for the end of the period; changing back undoes it.
+      await mutate(
+        'UPDATE billing_accounts SET period_end=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 10 DAY) WHERE business_id=?',
+        [businessId],
+      );
+      const booked = (await choose(a, 'per_quote')).body.data;
+      assert.deepEqual([booked.plan, booked.nextPlan], ['monthly', 'per_quote']);
+      const undone = (await choose(a, 'monthly')).body.data;
+      assert.deepEqual([undone.plan, undone.nextPlan], ['monthly', null]);
+      await choose(a, 'per_quote');
+      await mutate(
+        'UPDATE billing_accounts SET period_end=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE) WHERE business_id=?',
+        [businessId],
+      );
+      await applyDuePlanChanges();
+      const switched = (await a.get('/api/v1/app/billing')).body.data;
+      assert.deepEqual([switched.plan, switched.nextPlan], ['per_quote', null]);
+      const [{ choices }] = await rows(
+        "SELECT COUNT(*) choices FROM usage_events WHERE business_id=? AND kind='plan_chosen'",
+        [businessId],
+      );
+      assert.equal(Number(choices), 5, 'Every pick is recorded, for seeing what owners choose');
+
+      // From setup: the subscription's free week starts with the card, then they deploy.
+      await b.get('/api/v1/app/billing').expect(200);
+      await mutate('UPDATE billing_accounts SET trial_quote_limit=0 WHERE business_id=?', [
+        other.body.data.business.id,
+      ]);
+      assert.equal(
+        (await b.post('/api/v1/app/deploy').set('Origin', origin).send({})).body.error?.code,
+        'NOT_READY_TO_DEPLOY',
+        'Deploying needs a plan and a card',
+      );
+      await choose(b, 'yearly').expect(200);
       const fromSetup = await b
         .post('/api/v1/billing/checkout')
         .set('Origin', origin)
@@ -337,25 +466,20 @@ test(
       assert.match(fromSetup.body.data.url, /\/start\/live\?billing=active$/, 'Back to setup');
       const synced = await b.post('/api/v1/app/billing/sync').set('Origin', origin).send({});
       assert.equal(synced.status, 200, JSON.stringify(synced.body));
-      assert.equal(synced.body.data.canSend, true, 'Setup can say they’re live straight away');
-      await a
-        .patch('/api/v1/billing')
-        .set('Origin', origin)
-        .send({ spendingCapCents: 200 })
-        .expect(200);
-      const paid = randomUUID();
-      await record(paid);
-      await record(randomUUID());
-      assert.equal((await liveBillingSummary(businessId)).usage.feesCents, 200);
-      assert.equal(await canSend(), false, 'The monthly cap stops the next quote');
-      const [fee] = await rows('SELECT * FROM quote_usage WHERE quote_id=?', [paid]);
-      assert.equal(Number(fee.fee_cents), 100);
-      assert.equal(fee.tariff_version, 'quote-percentage-v1');
+      assert.equal(synced.body.data.canSend, true, 'Setup can deploy straight away');
+      assert.deepEqual([synced.body.data.status, synced.body.data.freeWeek], ['trialing', false]);
+      assert.equal(synced.body.data.linkOn, false, 'Not taking requests until they deploy');
+      await b.post('/api/v1/app/deploy').set('Origin', origin).send({}).expect(200);
+      const paused = await b.patch('/api/v1/app/link').set('Origin', origin).send({ on: false });
+      assert.deepEqual([paused.body.data.linkOn, paused.body.data.deployed], [false, true]);
+      await b.patch('/api/v1/app/link').set('Origin', origin).send({ on: true }).expect(200);
 
       process.env.BILLING_PROVIDER = 'stripe';
       process.env.STRIPE_SECRET_KEY = 'sk_test_mock_commerce';
       process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_commerce';
       process.env.STRIPE_PRICE_ID = 'price_mock';
+      process.env.STRIPE_PRICE_MONTHLY = 'price_monthly_mock';
+      process.env.STRIPE_PRICE_YEARLY = 'price_yearly_mock';
       process.env.STRIPE_METER_EVENT_NAME = 'quotient_fee_cents';
       await mutate(
         "UPDATE billing_accounts SET stripe_customer_id='cus_mock_commerce',subscription_status='active',last_reconciled_at=UTC_TIMESTAMP(3) WHERE business_id=?",
@@ -366,7 +490,7 @@ test(
       stripe.billing.meterEvents.create = (async (params: any, options: any) => {
         meterCalls++;
         assert.equal(params.identifier, `quotient:${fee.id}`);
-        assert.equal(params.payload.value, '100');
+        assert.equal(params.payload.value, '200');
         assert.equal(options.idempotencyKey, `quotient-meter:${fee.id}`);
         return { identifier: params.identifier };
       }) as any;
@@ -472,6 +596,8 @@ test(
     } finally {
       process.env.MAIL_PROVIDER = 'local';
       process.env.BILLING_PROVIDER = 'local';
+      delete process.env.STRIPE_PRICE_MONTHLY;
+      delete process.env.STRIPE_PRICE_YEARLY;
       for (const id of businesses) {
         if (!(await rows('SELECT id FROM businesses WHERE id=?', [id])).length) continue;
         const deletionId = randomUUID();
@@ -490,7 +616,7 @@ test(
 );
 
 test(
-  'Stripe Checkout and Portal use server prices, verified owners, trusted URLs and current-state reconciliation',
+  'Stripe Checkout and Portal use server prices for the chosen plan, trusted URLs, booked switches and current-state reconciliation',
   { skip: !enabled },
   async () => {
     process.env.MAIL_PROVIDER = 'local';
@@ -498,6 +624,8 @@ test(
     process.env.STRIPE_SECRET_KEY = 'sk_test_mock_checkout';
     process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_checkout';
     process.env.STRIPE_PRICE_ID = 'price_checkout_mock';
+    process.env.STRIPE_PRICE_MONTHLY = 'price_monthly_mock';
+    process.env.STRIPE_PRICE_YEARLY = 'price_yearly_mock';
     process.env.STRIPE_METER_EVENT_NAME = 'quotient_fee_cents';
     process.env.TRUST_PROXY = '1';
     const app = createApp(),
@@ -520,20 +648,35 @@ test(
         })
         .expect(201);
       businessId = created.body.data.business.id;
-      await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(409);
-      await mutate('UPDATE users SET email_verified_at=UTC_TIMESTAMP(3) WHERE business_id=?', [
-        businessId,
-      ]);
+      assert.equal(
+        (await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({})).body.error
+          ?.code,
+        'PLAN_REQUIRED',
+        'A card is added for a plan, with or without a confirmed email',
+      );
+      await agent
+        .post('/api/v1/app/billing/plan')
+        .set('Origin', origin)
+        .send({ plan: 'monthly' })
+        .expect(200);
       const stripe = stripeClient();
       let customers = 0,
         checkouts = 0,
         portals = 0;
-      stripe.prices.retrieve = (async () => ({
-        active: true,
-        currency: 'usd',
-        unit_amount: 1,
-        recurring: { usage_type: 'metered', meter: 'meter_checkout' },
-      })) as any;
+      stripe.prices.retrieve = (async (id: string) =>
+        id === 'price_monthly_mock'
+          ? {
+              active: true,
+              currency: 'usd',
+              unit_amount: 4900,
+              recurring: { usage_type: 'licensed', interval: 'month' },
+            }
+          : {
+              active: true,
+              currency: 'usd',
+              unit_amount: 1,
+              recurring: { usage_type: 'metered', meter: 'meter_checkout' },
+            }) as any;
       stripe.billing.meters.retrieve = (async () => ({
         event_name: 'quotient_fee_cents',
         default_aggregation: { formula: 'sum' },
@@ -547,14 +690,20 @@ test(
       stripe.subscriptions.list = (async () => ({ data: [] })) as any;
       stripe.checkout.sessions.create = (async (params: any) => {
         checkouts++;
-        assert.deepEqual(params.line_items, [{ price: 'price_checkout_mock' }]);
+        assert.deepEqual(params.line_items, [
+          { price: 'price_monthly_mock', quantity: 1 },
+          { price: 'price_checkout_mock' },
+        ]);
         assert.equal(params.mode, 'subscription');
+        assert.equal(params.subscription_data.trial_period_days, 7, 'The free week');
+        assert.equal(params.metadata.plan, 'monthly');
         assert.match(params.success_url, /^http:\/\/localhost:3100\/app\/settings/);
         return { id: `cs_${suffix}`, url: 'https://checkout.stripe.com/mock-only' };
       }) as any;
       stripe.checkout.sessions.retrieve = (async () => ({
         status: 'open',
         url: 'https://checkout.stripe.com/mock-only',
+        metadata: { plan: 'monthly' },
       })) as any;
       stripe.billingPortal.sessions.create = (async (params: any) => {
         portals++;
@@ -581,6 +730,63 @@ test(
         'https://billing.stripe.com/mock-only',
       );
       assert.equal(portals, 1);
+
+      // Switching a paying subscription: up to yearly now, off it at the end of the period.
+      await mutate(
+        "UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status='active',period_end=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 20 DAY),trial_used_at=UTC_TIMESTAMP(3),last_reconciled_at=UTC_TIMESTAMP(3) WHERE business_id=?",
+        [`sub_${suffix}`, businessId],
+      );
+      const updates: any[] = [];
+      stripe.subscriptions.retrieve = (async () => ({
+        id: `sub_${suffix}`,
+        items: {
+          data: [
+            { id: 'si_fixed', price: { id: 'price_monthly_mock' } },
+            { id: 'si_usage', price: { id: 'price_checkout_mock' } },
+          ],
+        },
+      })) as any;
+      stripe.subscriptions.update = (async (_id: string, params: any) => {
+        updates.push(params);
+        return {};
+      }) as any;
+      const choose = (plan: string) =>
+        agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan });
+      assert.equal((await choose('yearly')).body.data.plan, 'yearly');
+      assert.deepEqual(updates, [
+        {
+          items: [{ id: 'si_fixed', price: 'price_yearly_mock' }],
+          proration_behavior: 'create_prorations',
+        },
+      ]);
+      const scheduled: any[] = [];
+      let released = '';
+      stripe.subscriptionSchedules.create = (async () => ({
+        id: 'sub_sched_mock',
+        phases: [
+          {
+            items: [{ price: 'price_yearly_mock', quantity: 1 }, { price: 'price_checkout_mock' }],
+            start_date: 1,
+            end_date: 2,
+          },
+        ],
+      })) as any;
+      stripe.subscriptionSchedules.update = (async (_id: string, params: any) => {
+        scheduled.push(params);
+        return {};
+      }) as any;
+      stripe.subscriptionSchedules.release = (async (id: string) => {
+        released = id;
+        return {};
+      }) as any;
+      const booked = (await choose('per_accepted')).body.data;
+      assert.deepEqual([booked.plan, booked.nextPlan], ['yearly', 'per_accepted']);
+      assert.deepEqual(scheduled[0].phases[1].items, [{ price: 'price_checkout_mock' }]);
+      assert.equal(scheduled[0].phases[1].proration_behavior, 'none');
+      assert.equal(updates.length, 1, 'Nothing changes on the subscription until then');
+      const kept = (await choose('yearly')).body.data;
+      assert.deepEqual([kept.plan, kept.nextPlan, released], ['yearly', null, 'sub_sched_mock']);
+
       const eventId = `evt_${suffix}`,
         event = {
           id: eventId,
@@ -645,6 +851,8 @@ test(
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(503);
     } finally {
       process.env.BILLING_PROVIDER = 'local';
+      delete process.env.STRIPE_PRICE_MONTHLY;
+      delete process.env.STRIPE_PRICE_YEARLY;
       if (businessId) {
         const id = randomUUID();
         await mutate('UPDATE businesses SET deletion_requested_at=UTC_TIMESTAMP(3) WHERE id=?', [

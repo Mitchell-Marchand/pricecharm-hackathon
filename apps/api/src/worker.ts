@@ -9,6 +9,7 @@ import { validateRuntimeConfiguration } from './config.js';
 import { closeDatabase, mutate, rows, transaction } from './db.js';
 import { deleteBusinessAccount } from './accounts.js';
 import {
+  applyDuePlanChanges,
   billingProvider,
   dispatchMeterEvent,
   reconcileStripeCustomer,
@@ -120,6 +121,7 @@ async function maintenance(): Promise<void> {
     }
   });
   await cleanupUnattachedJobPhotos();
+  await applyDuePlanChanges();
   await cleanupStaleJobImports();
   await followUpQuotes();
 }
