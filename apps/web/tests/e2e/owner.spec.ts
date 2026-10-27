@@ -123,3 +123,43 @@ test('an owner resets a forgotten password', async ({ page, browser, baseURL }) 
   await signIn(page, shop.email, 'a brand new password');
   await expect(page).toHaveURL(/\/app$/);
 });
+
+test('after setup, an owner practices with as many customers as they like', async ({
+  browser,
+  baseURL,
+}) => {
+  const shop = await createBusiness(browser, baseURL!);
+  const page = await shop.context.newPage();
+  await page.goto('/app/train');
+  await page.getByRole('link', { name: 'Practice with a customer' }).click();
+  await expect(page).toHaveURL(/\/app\/train\/practice\?run=[0-9a-f-]{36}$/);
+  await expect(page.getByRole('heading', { name: 'Practice with a customer' })).toBeVisible();
+  await expect(page.getByText('Dana R. · Eastgate')).toBeVisible({ timeout: 15_000 });
+
+  const reply = page.getByLabel('Reply to Dana');
+  await reply.fill('How big is the patio?');
+  await reply.press('Enter');
+  await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible();
+  // The customer is in the address, so a reload comes back to the same chat.
+  await page.reload();
+  await expect(page.getByText('How big is the patio?')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create quote' }).click();
+  const builder = page.getByRole('dialog', { name: /^Quote for / });
+  await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill('Patio wash');
+  await builder.getByRole('textbox', { name: 'Price for item 1' }).fill('280');
+  await builder.getByRole('button', { name: 'Send quote' }).click();
+  await expect(page.getByRole('heading', { name: /Here.s what your AI picked up/ })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText('1 practice customer so far.')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Practice another' }).click();
+  await expect(page.getByText('Marcus T. · North Hills')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByLabel('Reply to Marcus')).toBeEditable();
+  await page.goto('/app/train');
+  await expect(
+    page.getByText(/It learned from 3 past jobs and 1 practice customer\./),
+  ).toBeVisible();
+  await shop.context.close();
+});

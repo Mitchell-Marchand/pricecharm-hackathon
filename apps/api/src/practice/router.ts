@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { ok, rateLimit } from '../http.js';
+import { ApiError, ok, rateLimit } from '../http.js';
 import { mutate } from '../db.js';
 import { requireWorkspace, workspace } from '../workspace.js';
 import {
+  addPracticeRun,
   askForSiteVisit,
   computeShadow,
   editInsight,
@@ -15,7 +16,10 @@ import {
   sendPracticeQuote,
 } from './engine.js';
 
-/** Step 3 of setup: practice customers, the owner's quotes, and what the AI picked up. */
+/**
+ * Practice customers, the owner's quotes and what the AI picked up: three during setup, and as
+ * many more as the owner likes from the Train page.
+ */
 export const practiceRouter = Router();
 const runId = z.uuid();
 
@@ -26,6 +30,21 @@ practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req
   await kickPreparation(businessId);
   res.json(ok(await practiceState(businessId)));
 });
+
+/** Another practice customer, from the Train page once setup is done. */
+practiceRouter.post(
+  '/onboarding/practice/more',
+  rateLimit(10, 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    const { businessId, draft } = workspace(req);
+    if (draft)
+      throw new ApiError(409, 'PRACTICE_SETUP', 'Finish setting up before practicing more.');
+    const id = await addPracticeRun(businessId);
+    await kickPreparation(businessId);
+    res.status(201).json(ok({ runId: id, state: await practiceState(businessId) }));
+  },
+);
 
 practiceRouter.get('/onboarding/practice', requireWorkspace, async (req, res) => {
   const { businessId } = workspace(req);

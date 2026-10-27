@@ -1,5 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -200,5 +201,44 @@ test(
       'It would have asked to see the loose stones',
     );
     assert.equal((await owner.get('/api/v1/onboarding')).body.data.step, 'ready');
+
+    // More practice is for after signup, from the Train page.
+    const more = () =>
+      owner.post('/api/v1/onboarding/practice/more').set('Origin', origin).send({});
+    assert.equal((await more()).body.error?.code, 'PRACTICE_SETUP');
+    await owner
+      .post('/api/v1/auth/register')
+      .set('Origin', origin)
+      .send({
+        firstName: 'Maya',
+        lastName: 'Lopez',
+        email: `qa-practice-more-${randomUUID()}@example.test`,
+        password: 'test password strong123',
+      })
+      .expect(201);
+    const added = await more();
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    const extraId = added.body.data.runId as string;
+    assert.equal(
+      (await more()).body.data.runId,
+      extraId,
+      'An unfinished practice customer is reused, never a second one written',
+    );
+    state = await practice();
+    assert.equal(state.runs.length, 4);
+    assert.equal(state.runs[state.current].id, extraId);
+    await owner
+      .post(`/api/v1/onboarding/practice/${extraId}/quote`)
+      .set('Origin', origin)
+      .send({ lines: [{ id: 'a', label: 'Patio wash, about 550 sq ft', amountCents: 28000 }] })
+      .expect(200);
+    const extra = (await owner.get('/api/v1/onboarding/practice')).body.data;
+    assert.equal(extra.finished, 4);
+    assert.equal(extra.results.length, 4, 'Extra practice counts like setup practice');
+    const another = (await more()).body.data.runId;
+    assert.notEqual(another, extraId, 'Once done, the next one is new');
+    // Let it finish writing, so nothing is still running when the test closes the database.
+    state = await practice();
+    assert.equal(state.runs[state.current].id, another);
   },
 );

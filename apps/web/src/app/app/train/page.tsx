@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Hand, MessageSquareText, Receipt } from 'lucide-react';
+import { buttonClass } from '@/components/button-class';
 import { PastJobsEditor } from '@/components/jobs/PastJobs';
 import { api, errorMessage } from '@/lib/api';
 import type { Profile } from '@/lib/account';
@@ -46,7 +48,9 @@ export default function TrainPage() {
         {profile
           ? `It learned from ${[
               `${profile.jobsCount} past ${profile.jobsCount === 1 ? 'job' : 'jobs'}`,
-              profile.practiceCount ? `${profile.practiceCount} practice customers` : '',
+              profile.practiceCount
+                ? `${profile.practiceCount} practice ${profile.practiceCount === 1 ? 'customer' : 'customers'}`
+                : '',
             ]
               .filter(Boolean)
               .join(' and ')}. Add jobs to sharpen its prices.`
@@ -86,6 +90,19 @@ export default function TrainPage() {
       ) : (
         <div className="shimmer mt-10 h-40 rounded-md" aria-busy="true" />
       )}
+
+      <section className="mt-14 border-t border-line pt-10" aria-labelledby="practice-title">
+        <h2 id="practice-title" className="t-h2">
+          Practice
+        </h2>
+        <p className="mt-2 max-w-xl text-ink-2">
+          A pretend customer for your trade, like the ones in setup. Answer them like a real lead
+          and your AI learns how you ask and how you price. Do as many as you like.
+        </p>
+        <Link href="/app/train/practice" className={buttonClass('secondary', 'md', 'mt-6')}>
+          Practice with a customer
+        </Link>
+      </section>
 
       <section className="mt-14 border-t border-line pt-10" aria-labelledby="jobs-title">
         <h2 id="jobs-title" className="t-h2">

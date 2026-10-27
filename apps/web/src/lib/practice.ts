@@ -87,6 +87,18 @@ export const retryPractice = (runId: string) =>
   api<PracticeState>(`/onboarding/practice/${runId}/retry`, { method: 'POST', ...json({}) });
 export const finishPractice = () =>
   api<PracticeState>('/onboarding/practice/done', { method: 'POST', ...json({}) });
+/** Another practice customer, once setup is done. An unfinished one comes back instead. */
+export const morePractice = () =>
+  api<{ runId: string; state: PracticeState }>('/onboarding/practice/more', {
+    method: 'POST',
+    ...json({}),
+  });
+
+/** The practice runs, with one of them swapped for a newer copy. */
+export function withRun(state: PracticeState, run: PracticeRun): PracticeState {
+  const runs = state.runs.map((item) => (item.id === run.id ? run : item));
+  return { ...state, runs, finished: runs.filter((item) => item.finished).length };
+}
 
 export function typingDelay(text = ''): number {
   return Math.min(2200, 700 + text.length * 14);

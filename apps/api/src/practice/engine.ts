@@ -81,6 +81,40 @@ export async function ensurePracticeRuns(businessId: string, count = PRACTICE_CO
     ]);
 }
 
+/** Practice customers one business can have in all, setup's three included. */
+export const MAX_PRACTICE_RUNS = 50;
+
+/**
+ * Another practice customer after setup, for training whenever the owner likes. If one is still
+ * being written or answered, that's the one: the AI never writes two at once for a business.
+ */
+export async function addPracticeRun(businessId: string): Promise<string> {
+  return transaction(async (connection) => {
+    await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [businessId], connection);
+    const runs = await rows(
+      'SELECT id,position,status FROM practice_runs WHERE business_id=? ORDER BY position',
+      [businessId],
+      connection,
+    );
+    const open = runs.find((run) => run.status !== 'finished');
+    if (open) return String(open.id);
+    if (runs.length >= MAX_PRACTICE_RUNS)
+      throw new ApiError(
+        409,
+        'PRACTICE_LIMIT',
+        'That’s a lot of practice. Your AI keeps learning from the quotes you send and the jobs you add.',
+      );
+    const id = randomUUID();
+    const position = runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1;
+    await mutate(
+      'INSERT INTO practice_runs (id,business_id,position) VALUES (?,?,?)',
+      [id, businessId, position],
+      connection,
+    );
+    return id;
+  });
+}
+
 /** Starts preparing customers that are waiting, earliest first, outside the request. */
 export async function kickPreparation(businessId: string) {
   const due = await rows(
