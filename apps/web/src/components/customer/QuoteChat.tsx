@@ -25,6 +25,7 @@ import {
   type ChatView,
 } from '@/lib/chat';
 import { useHumanCheck } from '@/lib/human-check';
+import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { cx, readPhoto } from '@/lib/util';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -88,11 +89,7 @@ export function QuoteChat({
       .finally(() => setRestoring(false));
   }, [slug]);
 
-  const messageCount = chat?.messages.length ?? 0;
-  useEffect(() => {
-    const element = scroller.current;
-    element?.scrollTo({ top: element.scrollHeight, behavior: 'smooth' });
-  }, [messageCount, pending, busy, verification, chat?.status]);
+  const stickToBottom = useStickToBottom(scroller);
 
   const update = useCallback((view: ChatView) => {
     setChat((previous) => {
@@ -136,6 +133,7 @@ export function QuoteChat({
     setDraft('');
     setError('');
     setPending({ text: trimmed });
+    stickToBottom();
     setBusy(true);
     try {
       const current = await ensureChat();
@@ -155,6 +153,7 @@ export function QuoteChat({
     try {
       const dataUrl = await readPhoto(file, 1600);
       setPending({ photo: dataUrl });
+      stickToBottom();
       const blob = await (await fetch(dataUrl)).blob();
       const current = await ensureChat();
       const known = new Set(chat?.messages.flatMap((message) => message.photos.map((p) => p.id)));
@@ -293,67 +292,73 @@ export function QuoteChat({
 
       <div
         ref={scroller}
-        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-4"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4"
         aria-live="polite"
       >
-        {!chat && !restoring && (
-          <AssistantBubble profile={profile}>{greeting(profile.name)}</AssistantBubble>
-        )}
-        {messages.map((message, index) => (
-          <div key={message.id} className="contents">
-            <Message
-              message={message}
-              profile={profile}
-              access={access}
-              local={localPhotos.current}
-            />
-            {index === cardAfter && chat?.quote && (
-              <div className="pr-3 pb-3">
-                <QuoteForm
-                  quote={chat.quote.card}
-                  business={profile.name}
-                  stamp={chat.quote.status === 'accepted' ? 'accepted' : undefined}
-                  animate={freshQuote}
-                  footnote="Estimate based on the photos and details you shared."
-                  actions={
-                    quoteOpen ? (
-                      <>
-                        <PaperButton primary disabled={busy} onClick={() => void choose('accept')}>
-                          <Check aria-hidden /> Accept quote
-                        </PaperButton>
-                        <PaperButton onClick={() => composer.current?.focus()}>
-                          Ask a question
-                        </PaperButton>
-                        <PaperButton disabled={busy} onClick={() => void choose('visit')}>
-                          Request a site visit
-                        </PaperButton>
-                      </>
-                    ) : undefined
-                  }
-                />
-              </div>
-            )}
-          </div>
-        ))}
-        {pending && (
-          <div className="fade-up flex justify-end">
-            <CustomerBubble photo={!!pending.photo}>
-              {pending.photo ? (
-                <img
-                  src={pending.photo}
-                  alt="Your photo"
-                  className="w-56 max-w-full rounded-[12px] opacity-70"
-                />
-              ) : (
-                <p className="text-[15px]">{pending.text}</p>
-              )}
-            </CustomerBubble>
-          </div>
-        )}
-        {busy &&
-          (status === 'chatting' || verification || (chat?.test && status === 'contact')) && (
-            <Typing name={profile.name} initials={profile.initials} tone="blue" />
+        <div className="flex flex-col gap-3">
+          {!chat && !restoring && (
+            <AssistantBubble profile={profile}>{greeting(profile.name)}</AssistantBubble>
           )}
+          {messages.map((message, index) => (
+            <div key={message.id} className="contents">
+              <Message
+                message={message}
+                profile={profile}
+                access={access}
+                local={localPhotos.current}
+              />
+              {index === cardAfter && chat?.quote && (
+                <div className="pr-3 pb-3">
+                  <QuoteForm
+                    quote={chat.quote.card}
+                    business={profile.name}
+                    stamp={chat.quote.status === 'accepted' ? 'accepted' : undefined}
+                    animate={freshQuote}
+                    footnote="Estimate based on the photos and details you shared."
+                    actions={
+                      quoteOpen ? (
+                        <>
+                          <PaperButton
+                            primary
+                            disabled={busy}
+                            onClick={() => void choose('accept')}
+                          >
+                            <Check aria-hidden /> Accept quote
+                          </PaperButton>
+                          <PaperButton onClick={() => composer.current?.focus()}>
+                            Ask a question
+                          </PaperButton>
+                          <PaperButton disabled={busy} onClick={() => void choose('visit')}>
+                            Request a site visit
+                          </PaperButton>
+                        </>
+                      ) : undefined
+                    }
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+          {pending && (
+            <div className="fade-up flex justify-end">
+              <CustomerBubble photo={!!pending.photo}>
+                {pending.photo ? (
+                  <img
+                    src={pending.photo}
+                    alt="Your photo"
+                    className="w-56 max-w-full rounded-[12px] opacity-70"
+                  />
+                ) : (
+                  <p className="text-[15px]">{pending.text}</p>
+                )}
+              </CustomerBubble>
+            </div>
+          )}
+          {busy &&
+            (status === 'chatting' || verification || (chat?.test && status === 'contact')) && (
+              <Typing name={profile.name} initials={profile.initials} tone="blue" />
+            )}
+        </div>
       </div>
 
       <footer

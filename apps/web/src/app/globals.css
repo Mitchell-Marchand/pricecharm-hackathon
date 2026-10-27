@@ -173,6 +173,21 @@
     -webkit-text-size-adjust: 100%;
     scroll-behavior: smooth;
   }
+  /* Tailwind resets buttons to the arrow cursor. Anything you can click shows the hand. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  select:not(:disabled),
+  summary,
+  input[type='checkbox']:not(:disabled),
+  input[type='radio']:not(:disabled),
+  input[type='file']:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled,
+  select:disabled,
+  [aria-disabled='true'] {
+    cursor: not-allowed;
+  }
   body {
     background: var(--bg);
     color: var(--ink);
