@@ -45,7 +45,9 @@ The provider cap is the hard backstop. The API also counts AI calls per UTC day,
 | `AI_DAILY_CUSTOMER_IP_LIMIT` | 60 | Customer chat from one address, across all businesses |
 | `AI_DAILY_DRAFT_APP_LIMIT` | 400 | Setups that haven't signed up yet, together |
 | `AI_DRAFT_LIFETIME_LIMIT` | 150 | One setup before signup, in total |
+| `AI_DAILY_DEMO_LIMIT` | 300 | The live demo on the website, all visitors together |
+| `AI_DAILY_DEMO_IP_LIMIT` | 40 | The live demo, from one address |
 
-Customer chat can't touch an owner's allowance, and customers together can't use more than their pool, so signed-up owners always have the rest of the app limit. Setups before signup have a pool of their own for the same reason. Starting setup, signup and new customer chats also need a Turnstile check on staging and production.
+Customer chat can't touch an owner's allowance, and customers together can't use more than their pool, so signed-up owners always have the rest of the app limit. Setups before signup have a pool of their own for the same reason, and so does the live demo, where each chat is also capped at 12 calls. Starting setup, signup, demo chats and new customer chats also need a Turnstile check on staging and production.
 
 The pools count calls, not tokens, so a chat with several photos costs more than its count suggests. Set the provider cap with that in mind.

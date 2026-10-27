@@ -28,6 +28,7 @@ import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
+import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
 
 export function createApp() {
@@ -116,7 +117,15 @@ export function createApp() {
     ),
   );
   app.use('/api/v1', csrfProtection);
-  app.use('/api/v1', onboardingRouter, pastJobsRouter, practiceRouter, profileRouter, chatRouter);
+  app.use(
+    '/api/v1',
+    onboardingRouter,
+    pastJobsRouter,
+    practiceRouter,
+    profileRouter,
+    chatRouter,
+    demoRouter,
+  );
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);

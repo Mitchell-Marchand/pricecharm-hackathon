@@ -90,6 +90,17 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               </li>
               <li>The quote you receive and whether you accept or decline it.</li>
             </ul>
+            <h3>From people trying the demo</h3>
+            <ul>
+              <li>
+                What you type in the demo on our website goes to our AI provider so it can reply. We
+                don’t save it, and it isn’t linked to you.
+              </li>
+              <li>
+                To stop abuse, we count how much each visitor uses the demo each day, using a
+                scrambled form of your IP address that changes every day, never the address itself.
+              </li>
+            </ul>
             <h3>Collected automatically</h3>
             <ul>
               <li>
@@ -102,7 +113,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               </li>
               <li>
                 Signals that Cloudflare reads from your browser to tell people from automated
-                scripts, when you sign up, try a preview or start a request.
+                scripts, when you start setting up, sign up, try the demo or start a request.
               </li>
               <li>
                 Error reports when something breaks: what went wrong, the page and your browser
@@ -217,7 +228,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
                 [
                   'Cloudflare',
-                  'Checking for bots on signup, previews and new requests',
+                  'Checking for bots on setup, signup, the demo and new requests',
                   'IP address and browser signals',
                 ],
                 [
@@ -271,11 +282,6 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   '180 days',
                 ],
                 [
-                  'quotient_guest_preview',
-                  'Connects a landing-page preview to your browser before you have an account',
-                  '30 minutes',
-                ],
-                [
                   'Browser storage',
                   'Lets you return to a quote request you started, and keeps unsent drafts',
                   'Until you clear it. Drafts last until you close the tab.',
@@ -283,8 +289,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               ]}
             />
             <p>
-              Cloudflare’s bot check runs in your browser when you sign up, try a preview or start a
-              request, and Cloudflare handles the signals it reads under its own privacy policy.
+              Cloudflare’s bot check runs in your browser when you start setting up, sign up, try
+              the demo or start a request, and Cloudflare handles the signals it reads under its own
+              privacy policy.
             </p>
           </>
         ),
@@ -309,7 +316,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Setups that never become an account, including their photos',
                   '14 days after you start',
                 ],
-                ['Landing-page previews that aren’t saved to an account', '30 minutes'],
+                ['What you type in the demo', 'Not saved'],
                 [
                   'Verification codes, and sign-in, verification and password-reset links',
                   'Deleted 7 days after they expire',

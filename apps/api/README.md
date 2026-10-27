@@ -23,15 +23,16 @@ npm run dev
 
 Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures `{ "error": { "code", "message" } }`. Money is integer cents. Requests that change something need an allowed `Origin`.
 
-| Area      | Routes                                                                                                                                       | Who                         |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Area      | Routes                                                                                                                                        | Who                          |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Setup     | `/onboarding` (start, business, step, resume link), `/onboarding/jobs`, `/onboarding/photos`, `/onboarding/practice/*`, `/onboarding/profile` | A draft or a signed-in owner |
-| Accounts  | `/auth/register`, `/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`, `/request-verification`, `/verify-email`                 | Anyone, or the owner        |
-| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit                                                  | Anyone with the chat token  |
-| Quotes    | `/app/home`, `/app/quotes`, `/app/quotes/:id` with approve, decline and messages; `/app/profile`, `/app/settings`, `/app/billing`             | The owner                   |
-| Sharing   | `/share`, `/share/instructions`                                                                                                              | The owner                   |
-| Billing   | `PATCH /billing`, `/billing/checkout`, `/billing/portal`, signed `/billing/webhook`; public `/pricing`, `/site`                               | The owner, Stripe, anyone   |
-| Account   | `/account/export`, `DELETE /account`, `/uploads/:id` (a customer's photo)                                                                    | The owner                   |
+| Accounts  | `/auth/register`, `/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`, `/request-verification`, `/verify-email`                 | Anyone, or the owner         |
+| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit                                                   | Anyone with the chat token   |
+| Demo      | `/demo/start` (bot check), `/demo/turn`, `/demo/quote`: the live demo with the sample businesses                                              | Anyone with a demo pass      |
+| Quotes    | `/app/home`, `/app/quotes`, `/app/quotes/:id` with approve, decline and messages; `/app/profile`, `/app/settings`, `/app/billing`             | The owner                    |
+| Sharing   | `/share`, `/share/instructions`                                                                                                               | The owner                    |
+| Billing   | `PATCH /billing`, `/billing/checkout`, `/billing/portal`, signed `/billing/webhook`; public `/pricing`, `/site`                               | The owner, Stripe, anyone    |
+| Account   | `/account/export`, `DELETE /account`, `/uploads/:id` (a customer's photo)                                                                     | The owner                    |
 
 `/health` and `/ready` sit outside the prefix.
 
@@ -44,6 +45,8 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 **Pricing.** The AI drafts line items only from this business's own past jobs, practice quotes and the lessons the owner confirmed. The server adds them up and checks the result: it must be priced, under the owner's limit, for a listed service, inside the area, and close to what similar past jobs cost. Anything that fails a check, or any quote while automatic sending is off, waits for the owner.
 
 **Customers.** A chat token, stored only as a hash, scopes each customer to their own chat. Customers confirm their email with a six-digit code (five tries, ten minutes) before they see a price. Emailed links carry a separate token in the URL fragment. An owner chatting with their own link gets a test chat that is never emailed or billed.
+
+**The live demo.** Visitors to the website can chat with a sample business for any trade and get a quote. The sample businesses and prices live in `@quotefolk/trades/demos`, on the server, so a visitor can't change them. Each demo chat starts with a bot check that earns a signed pass, good for an hour. Demo AI calls have their own daily pool inside the app-wide one, plus caps per visitor and per chat. Messages are short, nothing is saved, and replies or quote lines with links, emails or phone numbers are replaced.
 
 **Billing.** Each quote a verified customer receives has a fee (1% by default, at least $1 and at most $25), recorded once in `quote_usage` and reported to Stripe by the worker. Owners add a payment method before their first customer quote; until then, quotes wait for them. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
 

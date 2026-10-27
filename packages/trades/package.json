@@ -10,6 +10,10 @@
     ".": {
       "types": "./index.d.ts",
       "default": "./index.js"
+    },
+    "./demos": {
+      "types": "./demos.d.ts",
+      "default": "./demos.js"
     }
   }
 }

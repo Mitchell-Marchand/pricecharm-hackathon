@@ -31,6 +31,12 @@ export function draftIpBudgetKey(ip: string, day: string): string {
   return `draft-start:${day}:${fingerprint}`;
 }
 
+export function demoIpBudgetKey(ip: string, day: string): string {
+  const fingerprint = ipFingerprint('public-demo', ip, day);
+  if (!fingerprint) throw new ApiError(503, 'DEMO_UNAVAILABLE', 'The live demo is unavailable.');
+  return `public-demo:${day}:${fingerprint}`;
+}
+
 export function customerIpBudgetKey(ip: string, day: string): string {
   const fingerprint = ipFingerprint('customer-chat', ip, day);
   if (!fingerprint)
@@ -239,4 +245,82 @@ export async function reserveCustomerAiCall(input: {
       connection,
     );
   });
+}
+
+/** AI calls one demo chat may make: enough for a full conversation and its quote. */
+export const DEMO_CHAT_CALLS = 12;
+
+/**
+ * The public demo on the marketing site. Anyone can use it, so it gets the tightest limits: a
+ * small daily pool inside the app-wide one, a daily cap per visitor and a cap per chat. It never
+ * touches a business's allowance. Unlike the others, the caps apply in demo mode too, since they
+ * guard against abuse as much as spending.
+ */
+export async function reserveDemoAiCall(input: { sessionId: string; ip: string }) {
+  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
+  const demoLimit = Math.min(dailyLimit('AI_DAILY_DEMO_LIMIT', 300), appLimit);
+  const ipLimit = dailyLimit('AI_DAILY_DEMO_IP_LIMIT', 40);
+  await transaction(async (connection) => {
+    await mutate(
+      'INSERT INTO ai_daily_budgets (budget_day,total_reserved) VALUES (UTC_DATE(),0) ON DUPLICATE KEY UPDATE total_reserved = total_reserved',
+      [],
+      connection,
+    );
+    const [budget] = await rows(
+      "SELECT total_reserved,demo_reserved,DATE_FORMAT(budget_day,'%Y-%m-%d') AS day FROM ai_daily_budgets WHERE budget_day = UTC_DATE() FOR UPDATE",
+      [],
+      connection,
+    );
+    if (Number(budget.total_reserved) >= appLimit || Number(budget.demo_reserved) >= demoLimit)
+      throw new ApiError(429, 'DEMO_BUSY', 'The live demo is busy right now.');
+    const limits: [string, number, number, string, string][] = [
+      [
+        demoIpBudgetKey(input.ip, String(budget.day)),
+        ipLimit,
+        24 * 60 * 60_000,
+        'DEMO_DAILY_LIMIT',
+        'You’ve tried the live demo a lot today. Come back tomorrow, or set up your own.',
+      ],
+      [
+        `public-demo-chat:${input.sessionId}`,
+        DEMO_CHAT_CALLS,
+        2 * 60 * 60_000,
+        'DEMO_CHAT_LIMIT',
+        'This demo chat has gone as far as it can. Start over to try again.',
+      ],
+    ];
+    for (const [key, maximum, windowMs, code, message] of limits) {
+      try {
+        await consumeAuthRateLimit(key, maximum, windowMs, connection);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
+          throw new ApiError(429, code, message);
+        throw error;
+      }
+    }
+    await mutate(
+      'UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1, demo_reserved = demo_reserved + 1 WHERE budget_day = UTC_DATE()',
+      [],
+      connection,
+    );
+  });
+}
+
+/** A demo AI call: reserved first, and its token use logged, since there's no business to bill. */
+export function withDemoAiUsage<T>(
+  input: { sessionId: string; ip: string },
+  task: () => Promise<T>,
+): Promise<T> {
+  return reserveDemoAiCall(input).then(() =>
+    runWithAiUsage(
+      {
+        businessId: 'public-demo',
+        conversationId: input.sessionId,
+        record: async (usage: AiUsage) => {
+          console.info(JSON.stringify({ event: 'demo_ai_call', ...usage }));
+        },
+      },
+      task,
+    ),
+  );
 }

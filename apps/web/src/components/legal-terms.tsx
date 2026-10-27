@@ -127,7 +127,7 @@ export function termsOfService(operator?: Operator): LegalDocument {
             <li>
               A quote qualifies when a customer whose email address has been verified receives it,
               whether the assistant sent it automatically or you approved it first. We don’t charge
-              for practice, previews, your own test requests, or sending the same quote again. The
+              for practice, the demo, your own test requests, or sending the same quote again. The
               fee applies once a qualifying quote is delivered, whether or not the customer accepts
               it.
             </li>
