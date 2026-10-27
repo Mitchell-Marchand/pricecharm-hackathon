@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectQuoteFromTop } from './helpers';
 
 test('the hero cycles through accepted quotes from different trades', async ({ page }) => {
   await page.goto('/');
@@ -23,6 +24,10 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
   const demo = page.locator('#demo');
   await demo.getByLabel('Pick an industry').selectOption('junk');
   await expect(demo.getByText(/quote assistant for Clean Sweep Junk Removal/)).toBeVisible();
+  await expect(demo.getByRole('link', { name: 'Open the full demo' })).toHaveAttribute(
+    'href',
+    '/demo?trade=junk',
+  );
 
   const message = demo.getByLabel('Message', { exact: true });
   await message.fill('We need a garage cleanouts quote, please.');
@@ -37,6 +42,7 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
   const quote = demo.getByRole('article', { name: /^Quote number/ });
   await expect(quote).toHaveAttribute('aria-label', /Clean Sweep Junk Removal, total \$395/);
   await expect(quote).toContainText('not an offer from a real business');
+  await expectQuoteFromTop(quote);
   await message.fill('Can you come Saturday?');
   await message.press('Enter');
   await expect(demo.getByText(/this goes straight to Marcus/)).toBeVisible();
@@ -117,4 +123,26 @@ test('when the live demo is busy, it carries on as a quick scripted version', as
     'aria-label',
     /True Coat Painting, total \$1,320/,
   );
+});
+
+test('the demo page starts setup on the trade being tried', async ({ page }) => {
+  await page.goto('/demo?trade=painting');
+  await page
+    .getByRole('navigation', { name: 'Industries' })
+    .getByRole('button')
+    .filter({ hasText: 'Roofing' })
+    .click();
+  await expect(page.getByText('Want this for your roofing business?')).toBeVisible();
+  const create = page.getByRole('link', { name: 'Create my agent' });
+  await expect(create).toHaveCount(2);
+  await expect(create.last()).toHaveAttribute('href', '/start?trade=roofing');
+  await create.first().click();
+  await expect(page).toHaveURL(/\/start\/business#services$/);
+  await expect(page.getByRole('radio', { name: 'Roofing' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await expect(
+    page.getByRole('heading', { name: 'Which of these do you offer?' }),
+  ).toBeInViewport();
 });

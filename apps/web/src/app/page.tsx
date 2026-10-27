@@ -121,32 +121,33 @@ export default async function LandingPage() {
           id="demo"
           className="gutter mx-auto grid max-w-6xl scroll-mt-6 items-start gap-14 py-20 md:grid-cols-2"
         >
-          <div className="max-w-md md:sticky md:top-10">
-            <h2 className="t-h1">Your customers get a real quote in about two minutes.</h2>
-            <p className="mt-5 text-lg text-ink-2">
-              Try it as a customer. Pick an industry, answer a few questions and see the quote they
-              get. The prices are samples; yours come from your own jobs.
-            </p>
-            <ul className="mt-8 flex flex-col gap-4 text-ink-2">
-              {[
-                {
-                  icon: MessageSquareText,
-                  text: 'Asks the questions you would ask, one at a time',
-                },
-                { icon: Camera, text: 'Asks for photos on every job' },
-                { icon: Receipt, text: 'Prices it the way you do, line by line' },
-                { icon: Hand, text: 'Sends anything unusual to you first' },
-              ].map(({ icon: Icon, text }) => (
-                <li key={text} className="flex gap-3">
-                  <Icon className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
-                  {text}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="mx-auto w-full max-w-[460px]">
-            <DemoExplorer />
-          </div>
+          <DemoExplorer
+            intro={
+              <>
+                <h2 className="t-h1">Your customers get a real quote in about two minutes.</h2>
+                <p className="mt-5 text-lg text-ink-2">
+                  Try it as a customer. Pick an industry, answer a few questions and see the quote
+                  they get. The prices are samples; yours come from your own jobs.
+                </p>
+                <ul className="mt-8 flex flex-col gap-4 text-ink-2">
+                  {[
+                    {
+                      icon: MessageSquareText,
+                      text: 'Asks the questions you would ask, one at a time',
+                    },
+                    { icon: Camera, text: 'Asks for photos on every job' },
+                    { icon: Receipt, text: 'Prices it the way you do, line by line' },
+                    { icon: Hand, text: 'Sends anything unusual to you first' },
+                  ].map(({ icon: Icon, text }) => (
+                    <li key={text} className="flex gap-3">
+                      <Icon className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
+                      {text}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            }
+          />
         </section>
 
         <section className="border-t border-line bg-surface">

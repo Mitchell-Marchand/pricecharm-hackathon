@@ -171,14 +171,23 @@ export function termsOfService(operator?: Operator): LegalDocument {
             </li>
             <li>
               You let us host, copy, process, display and send your content, including to the
-              service providers in our <DocumentLink to="privacy">Privacy Policy</DocumentLink>,
-              only as needed to run Quotefolk for you, keep it secure and meet the law. This
-              permission ends when your content is deleted, apart from copies in backups until
-              they’re overwritten.
+              service providers in our <DocumentLink to="privacy">Privacy Policy</DocumentLink>, as
+              needed to run Quotefolk for you, keep it secure, meet the law and make the combined
+              figures described below. This permission ends when your content is deleted, apart from
+              copies in backups until they’re overwritten.
             </li>
             <li>
-              We don’t use your content to teach any other business’s assistant, and we don’t sell
-              it.
+              We don’t sell your content. No other business ever sees your prices, quotes, jobs,
+              customers or name, and your assistant never shows them to anyone else.
+            </li>
+            <li>
+              We may combine prices and job details, like sizes and what was included, from many
+              businesses into figures that can’t be traced back to any one business or customer,
+              such as the typical price per square foot for washing a driveway. We use these figures
+              to improve Quotefolk, for example to give a business a starting price for a service it
+              hasn’t priced yet, and we may share them with others. A figure always combines at
+              least five businesses and never includes names, addresses or contact details. Once
+              your content is deleted, it stops counting toward new figures.
             </li>
             <li>
               Make sure you have the right to everything you upload, including photos and documents,
@@ -255,7 +264,9 @@ export function termsOfService(operator?: Operator): LegalDocument {
             <ul>
               <li>
                 use it only to run Quotefolk for you, following the instructions you give through
-                your settings and how you use Quotefolk, or as the law requires;
+                your settings and how you use Quotefolk, or as the law requires, apart from job
+                details that go into combined figures without anything that identifies a customer,
+                as <SectionLink id="content">Your content</SectionLink> describes;
               </li>
               <li>make sure everyone who works on Quotefolk keeps it confidential;</li>
               <li>protect it with the measures described in our Privacy Policy;</li>

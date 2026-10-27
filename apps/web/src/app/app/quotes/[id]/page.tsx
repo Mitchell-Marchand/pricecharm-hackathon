@@ -29,6 +29,8 @@ const STAMPS: Partial<Record<QuoteDetail['status'], Stamp>> = {
   sent: 'sent',
   accepted: 'accepted',
   visit_requested: 'sent',
+  lost: 'sent',
+  expired: 'sent',
 };
 
 export default function QuotePage() {
@@ -107,6 +109,12 @@ export default function QuotePage() {
         <div className="order-2 min-w-0 lg:order-1">
           <h2 className="t-h3">The conversation</h2>
           {quote.summary && <p className="mt-2 text-ink-2">{quote.summary}</p>}
+          {quote.details && (
+            <p className="mt-2 text-sm text-muted">
+              <span className="font-semibold text-ink-2">Details: </span>
+              {quote.details}
+            </p>
+          )}
           <Thread messages={quote.messages} customer={quote.customer} />
           <Reply quote={quote} first={first} onSent={setQuote} />
         </div>
@@ -143,6 +151,18 @@ export default function QuotePage() {
           )}
           {quote.status === 'declined' && (
             <p className="text-sm text-muted">You declined this one. {first} was told politely.</p>
+          )}
+          {quote.outcome && (
+            <p className="text-sm text-ink-2">
+              <span className="font-semibold text-ink">{first} isn&apos;t going ahead: </span>
+              {quote.outcome.reason.charAt(0).toLowerCase() + quote.outcome.reason.slice(1)}.
+              {quote.outcome.note && <> They added: &ldquo;{quote.outcome.note}&rdquo;</>}
+            </p>
+          )}
+          {quote.status === 'expired' && (
+            <p className="text-sm text-muted">
+              {first} didn&apos;t answer before the quote ran out. They can still accept it.
+            </p>
           )}
         </div>
       </div>
@@ -206,11 +226,21 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
           ))}
         </ul>
       )}
-      {quote.reasoning && (
-        <p className="mt-3 border-t border-ink/10 pt-3 text-sm text-ink-2">
-          <span className="font-semibold text-ink">How your AI priced it: </span>
-          {quote.reasoning}
-        </p>
+      {(quote.reasoning || quote.basis) && (
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-ink/10 pt-3 text-sm text-ink-2">
+          {quote.basis && (
+            <p>
+              <span className="font-semibold text-ink">Started from: </span>
+              {quote.basis}
+            </p>
+          )}
+          {quote.reasoning && (
+            <p>
+              <span className="font-semibold text-ink">How your AI priced it: </span>
+              {quote.reasoning}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );

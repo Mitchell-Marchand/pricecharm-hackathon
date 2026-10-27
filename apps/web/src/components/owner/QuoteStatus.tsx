@@ -7,6 +7,8 @@ const LABELS: Record<QuoteStatus, { text: string; tone: 'neutral' | 'accent' | '
     sent: { text: 'Sent', tone: 'accent' },
     accepted: { text: 'Accepted', tone: 'go' },
     visit_requested: { text: 'Wants a visit', tone: 'accent' },
+    lost: { text: 'Not going ahead', tone: 'neutral' },
+    expired: { text: 'No answer', tone: 'neutral' },
     declined: { text: 'Declined', tone: 'neutral' },
     void: { text: 'Closed', tone: 'neutral' },
   };

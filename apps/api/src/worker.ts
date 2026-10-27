@@ -19,6 +19,7 @@ import { json } from './models.js';
 import { flushErrorReports, reportError, startErrorReporting } from './error-reporting.js';
 import { scheduleExpiredDraftDeletion } from './workspace.js';
 import { cleanupUnattachedJobPhotos } from './past-jobs.js';
+import { followUpQuotes } from './live/followup.js';
 
 type Job = RowDataPacket & {
   id: string;
@@ -118,6 +119,7 @@ async function maintenance(): Promise<void> {
     }
   });
   await cleanupUnattachedJobPhotos();
+  await followUpQuotes();
 }
 async function processJob(job: Job): Promise<void> {
   const payload = z.record(z.string(), z.unknown()).parse(json(job.payload_json, {}));

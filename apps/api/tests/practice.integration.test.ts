@@ -17,7 +17,7 @@ test(
   async () => {
     process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'quotefolk-practice-'));
     const { createApp } = await import('../src/app.js');
-    const { pricingHistory } = await import('../src/practice/engine.js');
+    const { pricingHistory } = await import('../src/pricing/history.js');
     const app = createApp();
     const owner = request.agent(app),
       stranger = request.agent(app);

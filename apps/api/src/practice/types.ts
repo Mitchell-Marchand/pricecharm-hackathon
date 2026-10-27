@@ -30,6 +30,11 @@ export type PracticeScenario = {
   siteVisitReply: string;
   /** Set for the demo customers, which answer from fixed patterns instead of the AI. */
   demoId?: string;
+  /** The job's main size as a number, like 550 and "sq ft". Older customers don't have it. */
+  quantity?: number | null;
+  unit?: string;
+  /** What kind of request this was written to be, so the next one can be different. */
+  situation?: string;
 };
 
 export const discountSchema = z
@@ -87,7 +92,22 @@ export type DraftedQuote = {
   reasoning: string;
 };
 
-export type Shadow = DraftedQuote & { cents: number };
+/** What drafted a quote: the model and instructions, and what the server priced it from. */
+export type DraftEngine = {
+  provider: string;
+  model: string | null;
+  promptVersion: string;
+  /** The main work at the owner's usual rate, when the size and their history allowed it. */
+  estimateCents: number | null;
+  estimateBasis: string;
+  estimateSolid: boolean;
+  /** Other businesses' rate was offered because this owner had never priced the service. */
+  startingPoint: boolean;
+  examples: { pastJobs: number; practice: number; liveQuotes: number };
+  referencePhotos: number;
+};
+
+export type Shadow = DraftedQuote & { cents: number; engine?: DraftEngine };
 
 export type Insight = { id: string; text: string };
 

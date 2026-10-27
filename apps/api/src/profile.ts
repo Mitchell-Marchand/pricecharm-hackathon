@@ -4,6 +4,8 @@ import { ok } from './http.js';
 import { json } from './models.js';
 import { listPastJobs } from './past-jobs.js';
 import { practiceState } from './practice/engine.js';
+import { liveReady, liveRecord, LIVE_WINDOW } from './pricing/accuracy.js';
+import { loadPricingData } from './pricing/history.js';
 import type { Insight, PracticeScenario, Quote } from './practice/types.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
@@ -14,9 +16,27 @@ const money = (cents: number) =>
     maximumFractionDigits: 0,
   }).format(cents / 100);
 
+/** The questions the customer chat asks, from what the owner asked their practice customers. */
+export async function questionChecklist(businessId: string): Promise<string[]> {
+  const runs = await rows(
+    "SELECT scenario_json,asked_json FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
+    [businessId],
+  );
+  const asks = ['Can you send a few photos?'];
+  for (const run of runs) {
+    const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+    for (const key of json<string[]>(run.asked_json, [])) {
+      const question = scenario.facts?.find((fact) => fact.key === key)?.question;
+      if (question && !asks.includes(question)) asks.push(question);
+    }
+  }
+  return asks.slice(0, 6);
+}
+
 /**
  * What the AI knows, in the owner's words: the questions it asks, how it prices and when it hands
- * a job back. It's built from the owner's practice, including any line they corrected.
+ * a job back. It's built from the owner's practice, including any line they corrected, and from
+ * their real quotes.
  */
 export async function pricingProfile(businessId: string) {
   const [business] = await rows(
@@ -24,18 +44,12 @@ export async function pricingProfile(businessId: string) {
     [businessId],
   );
   const runs = await rows(
-    "SELECT scenario_json,asked_json,insights_json FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
+    "SELECT insights_json FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
     [businessId],
   );
-  const asks = ['Can you send a few photos?'];
   const prices: string[] = [];
   const handoffs: string[] = [];
   for (const run of runs) {
-    const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-    for (const key of json<string[]>(run.asked_json, [])) {
-      const question = scenario.facts?.find((fact) => fact.key === key)?.question;
-      if (question && !asks.includes(question)) asks.push(question);
-    }
     for (const { text } of json<Insight[]>(run.insights_json, [])) {
       if (/^(Charges|Prices|Adds|Gives|Takes)\b/.test(text) && !prices.includes(text))
         prices.push(text);
@@ -53,12 +67,27 @@ export async function pricingProfile(businessId: string) {
     'Services you don’t offer, or anything it hasn’t seen before',
   );
   const practice = await practiceState(businessId);
+  const record = await liveRecord(businessId);
+  const recent = record.slice(0, LIVE_WINDOW);
+  const ready = liveReady(record);
+  const data = await loadPricingData(businessId);
   return {
-    asks: asks.slice(0, 6),
+    asks: await questionChecklist(businessId),
     prices: prices.slice(0, 6),
+    /** Rates worked out from every job and quote with a size. */
+    rates: data.history.rates.slice(0, 8),
     handoffs,
     results: practice.results,
-    autoSendReady: practice.autoSendReady,
+    /** Once enough real quotes are reviewed, their record decides; until then, practice does. */
+    autoSendReady: ready ?? practice.autoSendReady,
+    live: {
+      reviewed: record.length,
+      considered: recent.length,
+      agreed: recent.filter((item) => item.agree).length,
+      decides: ready !== null,
+      recent: recent.slice(0, 5),
+    },
+    liveQuotesLearned: data.history.liveQuotes.length,
     autoSend: Boolean(business?.auto_send),
     jobsCount: (await listPastJobs(businessId)).length,
     practiceCount: practice.finished,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { cleanSpec, specFromText, specSchema, type JobSpec } from '../pricing/spec.js';
 import { aiMode, requestJson, type AiImage } from './index.js';
 
 export type IntakeTurn = {
@@ -12,6 +13,8 @@ export type IntakeTurn = {
   summary: string;
   /** Why this isn't a job for this business (a service it doesn't offer, too far away), or empty. */
   outOfScope: string;
+  /** The job as fields, from everything the customer has said and shown so far. */
+  spec: JobSpec;
 };
 
 export type IntakeInput = {
@@ -45,8 +48,21 @@ const intakeJson = {
     ready: { type: 'boolean' },
     summary: { type: 'string' },
     outOfScope: { type: 'string' },
+    spec: {
+      type: 'object',
+      properties: {
+        quantity: { type: ['number', 'null'] },
+        unit: { type: 'string' },
+        condition: { type: 'string' },
+        access: { type: 'string' },
+        extras: { type: 'array', items: { type: 'string' } },
+        timing: { type: 'string' },
+      },
+      required: ['quantity', 'unit', 'condition', 'access', 'extras', 'timing'],
+      additionalProperties: false,
+    },
   },
-  required: ['reply', 'chips', 'askPhoto', 'serviceName', 'ready', 'summary', 'outOfScope'],
+  required: ['reply', 'chips', 'askPhoto', 'serviceName', 'ready', 'summary', 'outOfScope', 'spec'],
   additionalProperties: false,
 };
 const intakeSchema = z.object({
@@ -57,6 +73,7 @@ const intakeSchema = z.object({
   ready: z.boolean(),
   summary: z.string().trim().max(600),
   outOfScope: z.string().trim().max(300),
+  spec: specSchema,
 });
 
 /** The next thing the assistant says to a customer who wants a quote. */
@@ -86,7 +103,8 @@ ${
         : ''
     }
 - outOfScope: a few plain words when it's clearly not a job this business does or it's outside their area; otherwise empty. Stay polite and still set ready.
-- summary: one or two sentences describing the job so far, for the owner.`,
+- summary: one or two sentences describing the job so far, for the owner.
+- spec: the job so far as fields, from the messages and photos. quantity is the main size or count as a number and unit what it's counted in, like 600 and "sq ft", 24 and "windows" or 3 and "bedrooms"; null and "" until the customer says. condition: what state it's in, in a few words, like "heavy moss". access: anything about getting to it, like "second story" or "steep driveway". extras: add-ons they asked for. timing: when they want it done. Leave anything unknown empty; never guess.`,
     input,
     intakeJson,
     intakeSchema,
@@ -96,7 +114,7 @@ ${
     input.business.services.find(
       (name) => name.toLowerCase() === result.serviceName.toLowerCase(),
     ) ?? input.serviceName;
-  return { ...result, serviceName };
+  return { ...result, serviceName, spec: cleanSpec(result.spec) };
 }
 
 /** Demo mode: a short fixed script, so local runs and tests work without a model. */
@@ -109,6 +127,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
     .map((message) => message.text)
     .join(' ');
   const summary = customerText.slice(0, 300);
+  const spec = specFromText(customerText);
   const serviceName =
     input.serviceName ||
     input.business.services.find((name) =>
@@ -124,6 +143,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       ready: false,
       summary,
       outOfScope: '',
+      spec,
     };
   if (asked === 2 && input.photosReceived === 0 && input.photosAllowed !== false)
     return {
@@ -134,6 +154,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       ready: false,
       summary,
       outOfScope: '',
+      spec,
     };
   return {
     reply: "[Demo] Thanks, that's what we need. Let's get your quote together.",
@@ -143,5 +164,6 @@ function demoIntake(input: IntakeInput): IntakeTurn {
     ready: true,
     summary,
     outOfScope: '',
+    spec,
   };
 }

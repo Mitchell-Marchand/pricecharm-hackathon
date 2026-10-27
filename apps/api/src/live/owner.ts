@@ -6,10 +6,12 @@ import { ApiError, ok, rateLimit } from '../http.js';
 import { queueEmail } from '../integrations/email.js';
 import { json } from '../models.js';
 import { pricingProfile } from '../profile.js';
-import { quoteDraftSchema, quoteTotal, type Quote } from '../practice/types.js';
+import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
+import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { owner } from '../auth.js';
 import { liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
+import { lossReasonLabel } from './outcomes.js';
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
@@ -94,7 +96,7 @@ ownerQuotesRouter.get('/app/quotes', async (req, res) => {
 
 async function quoteDetail(businessId: string, quoteId: string) {
   const [quote] = await rows(
-    `SELECT q.*,c.customer_name,c.customer_email,c.service_name,c.source,c.summary,c.id AS chat_id
+    `SELECT q.*,c.customer_name,c.customer_email,c.service_name,c.source,c.summary,c.spec_json,c.id AS chat_id
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id WHERE q.id=? AND q.business_id=?`,
     [quoteId, businessId],
   );
@@ -104,10 +106,24 @@ async function quoteDetail(businessId: string, quoteId: string) {
     [quote.chat_id],
   );
   const draft = json<{ reasoning?: string; confidence?: string }>(quote.draft_json, {});
+  const engine = json<Partial<DraftEngine>>(quote.engine_json, {});
   return {
     ...listItem(quote),
     customerEmail: quote.customer_email ? String(quote.customer_email) : null,
     summary: String(quote.summary || ''),
+    /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
+    details: describeSpec(json<JobSpec | null>(quote.spec_json, null)),
+    /** What the server priced it from, like the owner's usual rate for this size. */
+    basis: engine.startingPoint
+      ? 'You haven’t priced this service yet, so it started from what other businesses in your trade charge.'
+      : String(engine.estimateBasis || ''),
+    outcome:
+      quote.status === 'lost'
+        ? {
+            reason: lossReasonLabel(String(quote.outcome_reason)),
+            note: String(quote.outcome_note || ''),
+          }
+        : null,
     card: json<Quote>(quote.quote_json, {} as Quote),
     reasoning: draft.reasoning ?? '',
     confidence: draft.confidence ?? '',

@@ -1,4 +1,4 @@
-import { expect, request, type Browser } from '@playwright/test';
+import { expect, request, type Browser, type Locator } from '@playwright/test';
 
 export const OWNER_PASSWORD = 'test password strong123';
 
@@ -83,4 +83,22 @@ export async function waitingQuote(baseURL: string, slug: string, name: string) 
   });
   expect(verified.ok(), await verified.text()).toBe(true);
   await customer.dispose();
+}
+
+/**
+ * Waits until a quote in a chat shows from its top: its first line sits just under the top of
+ * the chat's scrolling area, rather than above it with only the buttons in view.
+ */
+export async function expectQuoteFromTop(quote: Locator) {
+  await expect
+    .poll(() =>
+      quote.evaluate((card) => {
+        let scroller = card.parentElement;
+        while (scroller && getComputedStyle(scroller).overflowY !== 'auto')
+          scroller = scroller.parentElement;
+        const offset = card.getBoundingClientRect().top - scroller!.getBoundingClientRect().top;
+        return offset >= 0 && offset < 60;
+      }),
+    )
+    .toBe(true);
 }

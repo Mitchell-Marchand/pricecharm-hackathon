@@ -9,6 +9,7 @@ import { api, errorMessage } from '@/lib/api';
 import type { Profile } from '@/lib/account';
 import type { Onboarding } from '@/lib/onboarding';
 import { loadOwnerProfile } from '@/lib/owner';
+import { money } from '@/lib/util';
 import { TRADES_BY_ID } from '@/lib/trades';
 
 export default function TrainPage() {
@@ -51,9 +52,13 @@ export default function TrainPage() {
               profile.practiceCount
                 ? `${profile.practiceCount} practice ${profile.practiceCount === 1 ? 'customer' : 'customers'}`
                 : '',
+              profile.liveQuotesLearned
+                ? `${profile.liveQuotesLearned} real ${profile.liveQuotesLearned === 1 ? 'quote' : 'quotes'}`
+                : '',
             ]
               .filter(Boolean)
-              .join(' and ')}. Add jobs to sharpen its prices.`
+              .join(', ')
+              .replace(/, ([^,]*)$/, ' and $1')}. Add jobs to sharpen its prices.`
           : 'Everything it uses to quote for you.'}
       </p>
       {error && (
@@ -69,8 +74,8 @@ export default function TrainPage() {
             {
               icon: Receipt,
               title: 'How it prices',
-              items: profile.prices.length
-                ? profile.prices
+              items: [...profile.rates, ...profile.prices].length
+                ? [...profile.rates, ...profile.prices].slice(0, 8)
                 : ['From what you charged for the past jobs below.'],
             },
             { icon: Hand, title: 'When it checks with you', items: profile.handoffs },
@@ -89,6 +94,10 @@ export default function TrainPage() {
         </div>
       ) : (
         <div className="shimmer mt-10 h-40 rounded-md" aria-busy="true" />
+      )}
+
+      {profile && profile.live.reviewed > 0 && (
+        <LiveRecord live={profile.live} ready={profile.autoSendReady} />
       )}
 
       <section className="mt-14 border-t border-line pt-10" aria-labelledby="practice-title">
@@ -122,5 +131,38 @@ export default function TrainPage() {
         </div>
       </section>
     </>
+  );
+}
+
+/** How close its drafts came to what the owner sent real customers. */
+function LiveRecord({ live, ready }: { live: Profile['live']; ready: boolean }) {
+  const toGo = Math.max(0, 5 - live.reviewed);
+  return (
+    <section className="mt-14 border-t border-line pt-10" aria-labelledby="record-title">
+      <h2 id="record-title" className="t-h2">
+        On real quotes
+      </h2>
+      <p className="mt-2 max-w-xl text-ink-2">
+        Of the last {live.considered} {live.considered === 1 ? 'quote' : 'quotes'} you checked
+        before sending, its draft was within 15% of what you sent on {live.agreed}.{' '}
+        {live.decides
+          ? ready
+            ? 'That’s close enough to let quotes go out on their own. You can turn that on in Settings.'
+            : 'It needs 8 of the last 10 before quotes go out on their own. Every change you make teaches it.'
+          : `After ${toGo} more, this record decides when quotes can go out on their own, instead of practice.`}
+      </p>
+      <ul className="mt-5 flex max-w-xl flex-col gap-2 text-[15px]">
+        {live.recent.map((item) => (
+          <li key={item.quoteId} className="flex justify-between gap-4 border-b border-line pb-2">
+            <span className="truncate">{item.customer}</span>
+            <span className={item.agree ? 'text-go' : 'text-ink-2'}>
+              {item.draftCents === null
+                ? `It didn’t price it. You sent ${money(item.sentCents)}`
+                : `${money(item.draftCents)} → you sent ${money(item.sentCents)}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

@@ -15,7 +15,7 @@ Only you can create these keys. They live in your provider accounts.
 **OpenAI** (platform.openai.com):
 
 1. Create a project for each environment.
-2. In the project's limits, set a monthly budget with email alerts, and allow only the models Quotefolk uses: the chat model in `OPENAI_MODEL` and the image model in `OPENAI_IMAGE_MODEL`.
+2. In the project's limits, set a monthly budget with email alerts, and allow only the models Quotefolk uses: the chat model in `OPENAI_MODEL`, the drafting model in `OPENAI_DRAFT_MODEL` if you set one, and the image model in `OPENAI_IMAGE_MODEL`.
 3. Create an API key inside that project.
 
 Practice photos always use OpenAI, so production needs an OpenAI key even when chat runs on Anthropic.

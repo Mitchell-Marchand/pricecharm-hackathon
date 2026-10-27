@@ -8,7 +8,7 @@ Quotefolk lets a service business train an AI to quote jobs the way the owner wo
 | [`apps/web`](apps/web) | The Next.js web app: the public site, setup, the owner's app and the customer chat |
 | [`apps/prototype`](apps/prototype) | The clickable prototype the web app was built from, on mock data |
 | [`packages/trades`](packages/trades) | The trades and their services, shared by the API and the web app |
-| [`docs`](docs) | Operations guides ([database](docs/ops/database.md), [AI keys](docs/ops/ai-keys.md)) |
+| [`docs`](docs) | [How pricing works](docs/pricing.md) and operations guides ([database](docs/ops/database.md), [AI keys](docs/ops/ai-keys.md)) |
 | [`scripts`](scripts) | Local development, test and setup scripts |
 
 ## Get started

@@ -16,7 +16,13 @@ type UsageContext = {
   record: (usage: AiUsage) => Promise<void>;
   businessId: string;
 };
-export type AiRequestOptions = { maxAttempts?: 1 | 2 };
+export type AiRequestOptions = {
+  maxAttempts?: 1 | 2;
+  /** A model other than the one set for this operation, like a candidate in a pricing replay. */
+  model?: string;
+  /** Photos this request may carry. Three unless the operation needs more. */
+  maxImages?: number;
+};
 export type AiImage = { mimeType: string; dataBase64: string };
 export type AiDocument = { filename: string; mimeType: 'application/pdf'; dataBase64: string };
 const providerValue = process.env.AI_PROVIDER ?? 'openai';
@@ -25,6 +31,23 @@ if (!['openai', 'anthropic', 'demo'].includes(providerValue)) {
 }
 export const aiProvider = providerValue as AiProvider;
 export const aiMode: 'live' | 'demo' = aiProvider === 'demo' ? 'demo' : 'live';
+
+/**
+ * The model for an operation. Drafting a quote can use a stronger model than the chat
+ * (OPENAI_DRAFT_MODEL or ANTHROPIC_DRAFT_MODEL); everything else uses the provider's default.
+ */
+export function modelFor(operation: string): string | undefined {
+  if (aiProvider === 'demo') return undefined;
+  const prefix = aiProvider === 'openai' ? 'OPENAI' : 'ANTHROPIC';
+  const drafting = operation === 'draft_quote' ? process.env[`${prefix}_DRAFT_MODEL`]?.trim() : '';
+  return (
+    drafting ||
+    (aiProvider === 'openai'
+      ? (process.env.OPENAI_MODEL ?? 'gpt-4.1-mini')
+      : process.env.ANTHROPIC_MODEL) ||
+    undefined
+  );
+}
 const usageContexts = new AsyncLocalStorage<UsageContext>();
 
 export function runWithAiUsage<T>(context: UsageContext, task: () => Promise<T>): Promise<T> {
@@ -71,10 +94,7 @@ export async function requestJson<T>(
   if (aiProvider === 'demo')
     throw new AiError('A live model was requested while demo mode is enabled.');
   const key = aiProvider === 'openai' ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
-  const model =
-    aiProvider === 'openai'
-      ? (process.env.OPENAI_MODEL ?? 'gpt-4.1-mini')
-      : process.env.ANTHROPIC_MODEL;
+  const model = options.model || modelFor(operation);
   if (!key || !model) {
     throw new AiError(
       `Configure ${aiProvider === 'openai' ? 'OPENAI_API_KEY and OPENAI_MODEL' : 'ANTHROPIC_API_KEY and ANTHROPIC_MODEL'} to use the selected AI provider.`,
@@ -92,8 +112,9 @@ export async function requestJson<T>(
     )
   )
     throw new AiError('Upload one PDF smaller than 4 MB.');
+  const maxImages = Math.min(options.maxImages ?? 3, 6);
   if (
-    images.length > 3 ||
+    images.length > maxImages ||
     images.some(
       (image) =>
         !['image/jpeg', 'image/png', 'image/webp'].includes(image.mimeType) ||
@@ -101,7 +122,7 @@ export async function requestJson<T>(
         Buffer.byteLength(image.dataBase64, 'base64') > 1024 * 1024,
     )
   ) {
-    throw new AiError('Attach at most three supported photos, each no larger than 1 MB.');
+    throw new AiError(`Attach at most ${maxImages} supported photos, each no larger than 1 MB.`);
   }
   const timeout = boundedEnv('AI_TIMEOUT_MS', 25000, 1000, 60000);
   const controller = new AbortController();
@@ -327,6 +348,13 @@ export async function requestJson<T>(
         'missingInputs',
         'needsReview',
         'reviewReason',
+        'spec',
+        'unit',
+        'condition',
+        'access',
+        'extras',
+        'timing',
+        'situation',
       ]);
       console.error(
         JSON.stringify({

@@ -181,6 +181,8 @@ function sampleHistory(demo: Demo, photosSent = 0): PricingHistory {
         })),
     ),
     practice: [],
+    liveQuotes: [],
+    rates: [],
     notes: [
       ...(demo.extra?.options ?? [])
         .filter((option) => option.add)

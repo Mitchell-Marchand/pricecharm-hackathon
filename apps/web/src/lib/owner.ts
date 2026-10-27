@@ -3,7 +3,8 @@ import type { Profile } from './account';
 import { money } from './util';
 import type { Quote } from './quote';
 
-export type QuoteStatus = 'review' | 'sent' | 'accepted' | 'visit_requested' | 'declined' | 'void';
+export type QuoteStatus =
+  'review' | 'sent' | 'accepted' | 'visit_requested' | 'lost' | 'expired' | 'declined' | 'void';
 
 export interface QuoteListItem {
   id: string;
@@ -44,6 +45,12 @@ export interface ThreadMessage {
 export interface QuoteDetail extends QuoteListItem {
   customerEmail: string | null;
   summary: string;
+  /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
+  details: string;
+  /** What the price started from, like your usual rate for this size. */
+  basis: string;
+  /** Why the customer didn't go ahead, when they said. */
+  outcome: { reason: string; note: string } | null;
   card: Quote;
   reasoning: string;
   confidence: string;

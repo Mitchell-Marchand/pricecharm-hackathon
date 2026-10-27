@@ -121,11 +121,26 @@ export const verifyCode = (
     ...json({ verificationId, code }),
   });
 
-export const decide = (slug: string, access: ChatAccess, decision: 'accept' | 'visit') =>
+/** Why a customer isn't going ahead. The API keeps the same list. */
+export const LOSS_REASONS = [
+  { id: 'price', label: 'More than I want to spend' },
+  { id: 'someone_else', label: 'Went with someone else' },
+  { id: 'timing', label: 'The timing doesn’t work' },
+  { id: 'not_now', label: 'Not doing it for now' },
+  { id: 'other', label: 'Something else' },
+] as const;
+export type LossReason = (typeof LOSS_REASONS)[number]['id'];
+
+export const decide = (
+  slug: string,
+  access: ChatAccess,
+  decision: 'accept' | 'visit' | 'decline',
+  reason?: LossReason,
+) =>
   api<ChatView>(`${base(slug, access)}/${decision}`, {
     method: 'POST',
     headers: auth(access),
-    ...json({}),
+    ...json(decision === 'decline' ? { reason: reason ?? 'other' } : {}),
   });
 
 /** Chat photos need the chat's token, so they're fetched and shown as local object URLs. */

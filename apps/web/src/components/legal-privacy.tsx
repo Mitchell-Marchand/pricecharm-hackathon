@@ -141,12 +141,19 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               </li>
               <li>
                 <strong>To teach each business’s assistant</strong> from that business’s own jobs,
-                notes and practice quotes. We never use one business’s information to teach another
-                business’s assistant.
+                notes, practice quotes and real quotes, including whether its customers accepted
+                them. No other business’s assistant sees any of it.
+              </li>
+              <li>
+                <strong>To make combined figures,</strong> like the typical price for a kind of job
+                in a trade. They combine prices and job details from at least five businesses and
+                can’t be traced back to any one business or customer. They never include names,
+                addresses or contact details. We use them to improve Quotefolk and may share them.
               </li>
               <li>
                 <strong>To send the emails the service needs:</strong> verification codes, sign-in
-                and password-reset links, quotes, replies, and notices about requests and billing.
+                and password-reset links, quotes, one reminder about a quote you haven’t answered,
+                replies, and notices about requests and billing.
               </li>
               <li>
                 <strong>To bill businesses</strong> for delivered quotes through Stripe.
@@ -238,6 +245,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
               ]}
             />
+            <p>
+              <strong>Combined figures.</strong> We may share the combined figures described in{' '}
+              <SectionLink id="use">How we use it</SectionLink>. They don’t identify any business or
+              person.
+            </p>
             <p>
               <strong>For legal reasons.</strong> When the law requires it, or when it’s needed to
               protect the rights, property or safety of the people who use Quotefolk, the public or

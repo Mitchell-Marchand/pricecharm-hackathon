@@ -2,12 +2,33 @@ import { api, json } from './api';
 import type { PracticeResult } from './practice';
 import type { Quote } from './quote';
 
+/** One real quote the owner reviewed: the AI's draft against what they sent. */
+export interface ReviewedQuote {
+  quoteId: string;
+  customer: string;
+  draftCents: number | null;
+  sentCents: number;
+  gap: number | null;
+  agree: boolean;
+}
+
 export interface Profile {
   asks: string[];
   prices: string[];
+  /** Rates worked out from every job and quote with a size. */
+  rates: string[];
   handoffs: string[];
   results: PracticeResult[];
   autoSendReady: boolean;
+  /** The AI's record on real quotes. Once it `decides`, it replaces practice for auto-send. */
+  live: {
+    reviewed: number;
+    considered: number;
+    agreed: number;
+    decides: boolean;
+    recent: ReviewedQuote[];
+  };
+  liveQuotesLearned: number;
   autoSend: boolean;
   jobsCount: number;
   practiceCount: number;

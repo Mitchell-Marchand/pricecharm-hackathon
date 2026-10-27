@@ -27,18 +27,19 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
   const chosen = Boolean(trade || business.customTrade.trim());
   const firstChoice = useRef(!chosen);
 
+  // Picking a trade moves on to the services, as does arriving with one picked on a demo
+  // (/start/business#services). The address is read once the page is up, when it has the #.
   useEffect(() => {
-    if (chosen && firstChoice.current) {
-      firstChoice.current = false;
-      window.setTimeout(
-        () =>
-          details.current?.scrollIntoView({
-            behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-            block: 'start',
-          }),
-        80,
-      );
-    }
+    if (!chosen) return;
+    const picked = firstChoice.current;
+    firstChoice.current = false;
+    window.setTimeout(() => {
+      if (picked || window.location.hash === '#services')
+        details.current?.scrollIntoView({
+          behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+          block: 'start',
+        });
+    }, 80);
   }, [chosen]);
 
   const matches = TRADES.filter((item) =>

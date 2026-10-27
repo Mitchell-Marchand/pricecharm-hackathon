@@ -2,7 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { createBusiness } from './helpers';
+import { createBusiness, expectQuoteFromTop } from './helpers';
 
 const photo = path.resolve('public/photos/patio-stains.jpg');
 
@@ -43,10 +43,13 @@ test('a customer gets a quote on the link, comes back to it, and accepts it', as
   await expect(quote).toBeVisible();
   await expect(quote).toContainText('$275');
   await expect(page.getByText(/Here.s your quote, Sam/)).toBeVisible();
+  await expectQuoteFromTop(quote);
 
+  // Coming back to answer it, it opens on the quote again, once their photo has loaded above it.
   await page.reload();
   await expect(quote).toBeVisible();
   await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
+  await expectQuoteFromTop(quote);
   await page.getByRole('button', { name: 'Accept quote' }).click();
   await expect(page.getByText(/You.re all set\. Maya will be in touch/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Accept quote' })).toHaveCount(0);

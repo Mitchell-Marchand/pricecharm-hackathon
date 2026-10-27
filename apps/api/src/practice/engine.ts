@@ -1,23 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { tradeName } from '@quotefolk/trades';
 import { aiMode, type AiImage } from '../ai/index.js';
 import { describeRate, replyAsPracticeCustomer, writePracticeScenario } from '../ai/practice.js';
 import { generatePracticePhoto } from '../ai/practice-images.js';
-import { draftQuote, type PricingHistory } from '../ai/quote-engine.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
+import { draftForBusiness } from '../pricing/draft.js';
+import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
+import { specFromScenario } from '../pricing/spec.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
 import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
+import { planSituation, type PracticeMiss } from './plan.js';
 import {
   gapPercent,
   quoteDraftSchema,
   quoteTotal,
-  type DraftedQuote,
   type Insight,
   type PracticeScenario,
   type Quote,
@@ -29,15 +30,6 @@ import {
 export const PRACTICE_COUNT = 3;
 const MAX_MESSAGES = 40;
 const TONES = ['canary', 'pink', 'blue'] as const;
-/** Each practice customer covers a different kind of job, so the AI sees the range. */
-const SITUATIONS = [
-  'A typical, clear job for one of their main services, sized like their usual past jobs. Nothing unusual.',
-  'A bigger job that combines two of their services or adds an extra, where the customer also asks about a discount, for example because a neighbor wants the same work.',
-  'A trickier job: the photos and messages show something that could change the price a lot, like damage, hard access or unclear scope, so a careful owner might want to see it before pricing.',
-  'A small job at the low end of what they do, from a customer in a hurry.',
-  'A job near the edge of their service area, for a customer who wants it done soon.',
-];
-
 const centsFormat = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -48,29 +40,6 @@ const money = (cents: number) => centsFormat.format(cents / 100);
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 const joinList = (items: string[]) =>
   items.length < 3 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
-
-async function businessContext(businessId: string, connection?: Sql) {
-  const [business] = await rows(
-    'SELECT name,trade_id,custom_trade,service_area,travel_radius_miles FROM businesses WHERE id=?',
-    [businessId],
-    connection,
-  );
-  if (!business) throw new ApiError(404, 'BUSINESS_NOT_FOUND', 'This business is unavailable.');
-  const services = (
-    await rows(
-      'SELECT name FROM offerings WHERE business_id=? ORDER BY position',
-      [businessId],
-      connection,
-    )
-  ).map((row) => String(row.name));
-  return {
-    name: String(business.name || ''),
-    trade: tradeName(business.trade_id, business.custom_trade),
-    services,
-    area: String(business.service_area || ''),
-    radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
-  };
-}
 
 export async function ensurePracticeRuns(businessId: string, count = PRACTICE_COUNT) {
   for (let position = 0; position < count; position++)
@@ -127,6 +96,37 @@ export async function kickPreparation(businessId: string) {
     );
 }
 
+/** What the business has taught so far, for choosing what the next practice customer asks. */
+async function nextSituation(businessId: string, position: number, services: string[]) {
+  const data = await loadPricingData(businessId);
+  const runs = await rows(
+    "SELECT scenario_json,outcome,quote_json,shadow_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
+    [businessId, position],
+  );
+  const finished: PracticeMiss[] = runs.map((run) => {
+    const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+    const quote = json<Quote | null>(run.quote_json, null);
+    const shadow = json<Shadow | null>(run.shadow_json, null);
+    return {
+      service: scenario.serviceName,
+      situation: scenario.situation ?? '',
+      siteVisit: run.outcome === 'site_visit',
+      gap: quote && shadow?.cents ? gapPercent(shadow.cents, quoteTotal(quote)) : null,
+      confidence: shadow?.confidence ?? null,
+    };
+  });
+  return planSituation({
+    position,
+    setupCount: PRACTICE_COUNT,
+    services,
+    points: data.points,
+    examples: Object.fromEntries(
+      services.map((service) => [service.toLowerCase(), examplesFor(data.history, service)]),
+    ),
+    finished,
+  });
+}
+
 async function writeScenario(businessId: string, position: number): Promise<PracticeScenario> {
   const context = await businessContext(businessId);
   if (aiMode === 'demo') return demoScenario(position, context.services);
@@ -144,7 +144,8 @@ async function writeScenario(businessId: string, position: number): Promise<Prac
     const scenario = json<PracticeScenario>(row.scenario_json, {} as PracticeScenario);
     return { name: scenario.firstName, service: scenario.serviceName };
   });
-  return withAiUsage(businessId, `practice:${position}`, () =>
+  const situation = await nextSituation(businessId, position, context.services);
+  const scenario = await withAiUsage(businessId, `practice:${position}`, () =>
     writePracticeScenario({
       trade: context.trade,
       businessName: context.name,
@@ -152,10 +153,11 @@ async function writeScenario(businessId: string, position: number): Promise<Prac
       area: context.area,
       radiusMiles: context.radiusMiles,
       jobs,
-      situation: SITUATIONS[position % SITUATIONS.length],
+      situation,
       earlier,
     }),
   );
+  return { ...scenario, situation };
 }
 
 async function createPracticePhoto(
@@ -502,66 +504,6 @@ async function businessContextName(businessId: string) {
   return String(business?.name ?? '');
 }
 
-/** Everything the business has taught the AI so far, leaving out one practice run if asked. */
-export async function pricingHistory(
-  businessId: string,
-  excludeRunId?: string,
-): Promise<PricingHistory> {
-  const context = await businessContext(businessId);
-  const jobs = await listPastJobs(businessId);
-  const runs = await rows(
-    "SELECT * FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
-    [businessId],
-  );
-  const notes: string[] = [];
-  const practice = [];
-  for (const run of runs) {
-    if (run.id === excludeRunId) continue;
-    const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-    const quote = json<Quote | null>(run.quote_json, null);
-    const conversation = (await runMessages(String(run.id)))
-      .filter((message) => message.kind === 'text')
-      .map((message) => `${message.sender === 'owner' ? 'Owner' : 'Customer'}: ${message.text}`)
-      .join('\n')
-      .slice(0, 1500);
-    practice.push({
-      service: scenario.serviceName,
-      request: conversation,
-      outcome: run.outcome === 'site_visit' ? ('site_visit' as const) : ('quote' as const),
-      lines: quote?.lines.map(({ label, amountCents }) => ({ label, amountCents })) ?? [],
-      discount: quote?.discount ?? null,
-      start: quote?.start ?? '',
-      duration: quote?.duration ?? '',
-      note: quote?.note ?? '',
-      siteVisitReason: String(run.site_visit_reason ?? ''),
-    });
-    for (const insight of json<(Insight & { edited?: boolean })[]>(run.insights_json, []))
-      if (insight.edited) notes.push(insight.text);
-  }
-  return {
-    business: {
-      name: context.name,
-      trade: context.trade,
-      services: context.services,
-      area: context.area,
-      radiusMiles: context.radiusMiles,
-    },
-    pastJobs: jobs.map((job) => ({
-      service: job.serviceName,
-      description: job.description,
-      priceCents: job.priceCents,
-      size: job.size,
-      duration: job.duration,
-      when: job.when,
-      materialsCents: job.materialsCents,
-      discount: job.discount,
-      notes: job.notes,
-    })),
-    practice,
-    notes,
-  };
-}
-
 async function runImages(businessId: string, runId: string, messages: Row[]): Promise<AiImage[]> {
   const ids = messages
     .filter((message) => message.sender === 'customer')
@@ -594,46 +536,46 @@ export async function computeShadow(businessId: string, runId: string): Promise<
     throw new ApiError(409, 'PRACTICE_CLOSED', 'This practice request is already done.');
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   const messages = (await runMessages(runId)).filter((message) => message.kind === 'text');
-  let drafted: DraftedQuote;
-  if (aiMode === 'demo') {
+  // Demo customers keep their fixed pattern, which knows each one's size and add-ons.
+  const demo = async () => {
     const prior = await rows(
       "SELECT scenario_json,quote_json FROM practice_runs WHERE business_id=? AND status='finished' AND id<>? ORDER BY position",
       [businessId, runId],
     );
-    drafted = demoDraftQuote({
-      scenario,
-      jobs: await listPastJobs(businessId),
-      prior: prior.flatMap((row) => {
-        const quote = json<Quote | null>(row.quote_json, null);
-        return quote
-          ? [
-              {
-                scenario: json<PracticeScenario>(row.scenario_json, scenario),
-                lines: quote.lines,
-                discount: quote.discount,
-              },
-            ]
-          : [];
-      }),
-    });
-  } else {
-    const history = await pricingHistory(businessId, runId);
-    const images = await runImages(businessId, runId, messages);
-    drafted = await withAiUsage(businessId, `practice:${runId}`, () =>
-      draftQuote({
-        history,
-        request: {
-          serviceName: scenario.serviceName,
-          conversation: messages.map((message) => ({
-            from: message.sender as 'customer' | 'owner',
-            text: String(message.text),
-          })),
-        },
-        images,
-      }),
-    );
-  }
-  const shadow: Shadow = { ...drafted, cents: quoteTotal(drafted) };
+    const jobs = await listPastJobs(businessId);
+    return () =>
+      demoDraftQuote({
+        scenario,
+        jobs,
+        prior: prior.flatMap((row) => {
+          const quote = json<Quote | null>(row.quote_json, null);
+          return quote
+            ? [
+                {
+                  scenario: json<PracticeScenario>(row.scenario_json, scenario),
+                  lines: quote.lines,
+                  discount: quote.discount,
+                },
+              ]
+            : [];
+        }),
+      });
+  };
+  const { drafted, engine } = await withAiUsage(businessId, `practice:${runId}`, async () =>
+    draftForBusiness({
+      businessId,
+      serviceName: scenario.serviceName,
+      conversation: messages.map((message) => ({
+        from: message.sender as 'customer' | 'owner',
+        text: String(message.text),
+      })),
+      spec: specFromScenario(scenario),
+      images: aiMode === 'demo' ? [] : await runImages(businessId, runId, messages),
+      history: { excludeRunId: runId },
+      demo: aiMode === 'demo' ? await demo() : undefined,
+    }),
+  );
+  const shadow: Shadow = { ...drafted, cents: quoteTotal(drafted), engine };
   await mutate('UPDATE practice_runs SET shadow_json=? WHERE id=? AND shadow_json IS NULL', [
     JSON.stringify(shadow),
     runId,

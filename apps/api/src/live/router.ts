@@ -5,6 +5,7 @@ import { ApiError, ok, rateLimit } from '../http.js';
 import { verifyHuman } from '../human-check.js';
 import { imageUpload, saveImage, uploadSlot } from '../uploads.js';
 import { workspaceFromRequest } from '../workspace.js';
+import { lossReasons } from './outcomes.js';
 import {
   afterPhoto,
   businessBySlug,
@@ -117,4 +118,13 @@ chatRouter.post('/chat/:slug/:chatId/accept', async (req, res) => {
 
 chatRouter.post('/chat/:slug/:chatId/visit', async (req, res) => {
   res.json(ok(await customerDecision(req, 'visit')));
+});
+
+/** Not going ahead, and why. It's how the business learns which prices lose jobs. */
+chatRouter.post('/chat/:slug/:chatId/decline', async (req, res) => {
+  const why = z
+    .object({ reason: z.enum(lossReasons), note: z.string().trim().max(600).default('') })
+    .strict()
+    .parse(req.body ?? {});
+  res.json(ok(await customerDecision(req, 'decline', why)));
 });

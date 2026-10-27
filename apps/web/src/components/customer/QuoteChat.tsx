@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { ArrowUp, Camera, Check, X } from 'lucide-react';
 import { CustomerMessage, Typing } from '@/components/Chat';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
@@ -11,6 +19,7 @@ import {
   decide,
   greeting,
   loadChat,
+  LOSS_REASONS,
   photoUrl,
   requestCode,
   saveAccess,
@@ -23,6 +32,7 @@ import {
   type ChatAccess,
   type ChatMessage,
   type ChatView,
+  type LossReason,
 } from '@/lib/chat';
 import { useHumanCheck } from '@/lib/human-check';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
@@ -54,6 +64,7 @@ export function QuoteChat({
   const [restoring, setRestoring] = useState(true);
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
+  const [declining, setDeclining] = useState(false);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
   const [name, setName] = useState('');
@@ -89,7 +100,20 @@ export function QuoteChat({
       .finally(() => setRestoring(false));
   }, [slug]);
 
-  const stickToBottom = useStickToBottom(scroller);
+  const { toBottom: stickToBottom, showTop } = useStickToBottom(scroller);
+  const card = useRef<HTMLDivElement>(null);
+  const shownQuote = useRef<string | null>(null);
+
+  // A quote opens at its top, where the price is, when it first arrives and when the customer
+  // comes back to answer it from their email. Once they've answered, the chat opens at the end.
+  const quoteId = chat?.quote?.id ?? null;
+  // Past its valid days, a quote can still be answered.
+  const quoteOpen = ['sent', 'expired'].includes(chat?.quote?.status ?? '');
+  useLayoutEffect(() => {
+    if (!quoteId || shownQuote.current === quoteId || !card.current) return;
+    shownQuote.current = quoteId;
+    if (freshQuote || quoteOpen) showTop(card.current);
+  }, [quoteId, quoteOpen, freshQuote, showTop]);
 
   const update = useCallback((view: ChatView) => {
     setChat((previous) => {
@@ -208,12 +232,14 @@ export function QuoteChat({
     }
   }
 
-  async function choose(decision: 'accept' | 'visit') {
+  async function choose(decision: 'accept' | 'visit' | 'decline', reason?: LossReason) {
     if (!access || busy) return;
     setError('');
     setBusy(true);
+    stickToBottom();
     try {
-      update(await decide(slug, access, decision));
+      update(await decide(slug, access, decision, reason));
+      setDeclining(false);
     } catch (decideError) {
       setError(errorMessage(decideError));
     } finally {
@@ -244,7 +270,6 @@ export function QuoteChat({
       : [];
   const asksForPhoto =
     status === 'chatting' && !!lastFromAssistant && ASKS_FOR_PHOTO.test(lastFromAssistant.text);
-  const quoteOpen = chat?.quote?.status === 'sent';
   const finished = ['accepted', 'visit', 'closed'].includes(status);
   const canType = ['chatting', 'review', 'sent', 'accepted', 'visit'].includes(status);
 
@@ -308,7 +333,7 @@ export function QuoteChat({
                 local={localPhotos.current}
               />
               {index === cardAfter && chat?.quote && (
-                <div className="pr-3 pb-3">
+                <div ref={card} className="pr-3 pb-3">
                   <QuoteForm
                     quote={chat.quote.card}
                     business={profile.name}
@@ -331,10 +356,44 @@ export function QuoteChat({
                           <PaperButton disabled={busy} onClick={() => void choose('visit')}>
                             Request a site visit
                           </PaperButton>
+                          <PaperButton
+                            disabled={busy}
+                            onClick={() => {
+                              setDeclining(true);
+                              stickToBottom();
+                            }}
+                          >
+                            Not going ahead
+                          </PaperButton>
                         </>
                       ) : undefined
                     }
                   />
+                  {quoteOpen && declining && (
+                    <div className="fade-up mt-3 flex flex-col gap-2">
+                      <p className="text-sm text-ink-2">Mind saying why? It helps {ownerName}.</p>
+                      <div className="flex flex-wrap gap-2">
+                        {LOSS_REASONS.map((reason) => (
+                          <button
+                            key={reason.id}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void choose('decline', reason.id)}
+                            className="inline-flex min-h-10 items-center rounded-full border border-accent px-3.5 text-[15px] font-medium text-accent hover:bg-accent-soft disabled:opacity-50"
+                          >
+                            {reason.label}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDeclining(false)}
+                        className="self-start text-sm text-muted underline underline-offset-4 hover:text-ink"
+                      >
+                        Never mind
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

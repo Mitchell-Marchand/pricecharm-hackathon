@@ -1,0 +1,105 @@
+import { formatNumber, formatQuantity } from './units.js';
+
+/** One price the owner charged for a known size of one service. */
+export type PricePoint = {
+  service: string;
+  quantity: number;
+  unit: string;
+  /** For quotes, the main work line. For past jobs, what the job came to before any discount. */
+  cents: number;
+  source: 'job' | 'practice' | 'quote';
+};
+
+/** How this owner prices one service by size, worked out from their own points. */
+export type Rate = {
+  service: string;
+  unit: string;
+  centsPerUnit: number;
+  /** The lowest price they've charged for this service. Small jobs don't go under it. */
+  floorCents: number;
+  points: number;
+  smallest: number;
+  largest: number;
+};
+
+export type Estimate = {
+  cents: number;
+  quantity: number;
+  unit: string;
+  rate: Rate;
+  /** Enough jobs, and a size close to ones they've done, to hold the AI to it. */
+  solid: boolean;
+};
+
+/** Points to trust a rate, and how far outside the sizes they've done it still holds. */
+const SOLID_POINTS = 3;
+const STRETCH = { below: 0.5, above: 1.5 };
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+export function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/** A rate for each service and unit with at least one point. */
+export function fitRates(points: PricePoint[]): Rate[] {
+  const groups = new Map<string, PricePoint[]>();
+  for (const point of points) {
+    if (!(point.quantity > 0) || !(point.cents > 0) || !point.service.trim()) continue;
+    const key = `${point.service.trim().toLowerCase()}|${point.unit}`;
+    groups.set(key, [...(groups.get(key) ?? []), point]);
+  }
+  return [...groups.values()].map((group) => ({
+    service: group[0].service.trim(),
+    unit: group[0].unit,
+    centsPerUnit: median(group.map((point) => point.cents / point.quantity)),
+    floorCents: Math.min(...group.map((point) => point.cents)),
+    points: group.length,
+    smallest: Math.min(...group.map((point) => point.quantity)),
+    largest: Math.max(...group.map((point) => point.quantity)),
+  }));
+}
+
+/** The main work at this owner's usual rate, or null when they've never priced it by this unit. */
+export function estimateFor(
+  rates: Rate[],
+  service: string,
+  quantity: number | null,
+  unit: string,
+): Estimate | null {
+  if (!quantity || quantity <= 0 || !unit) return null;
+  const rate = rates.find((item) => same(item.service, service) && item.unit === unit);
+  if (!rate) return null;
+  const cents = Math.round(Math.max(rate.floorCents, rate.centsPerUnit * quantity) / 100) * 100;
+  const solid =
+    rate.points >= SOLID_POINTS &&
+    quantity >= rate.smallest * STRETCH.below &&
+    quantity <= rate.largest * STRETCH.above;
+  return { cents, quantity, unit, rate, solid };
+}
+
+const dollars = (cents: number) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: cents < 1000 && cents % 100 ? 2 : 0,
+    maximumFractionDigits: cents < 1000 ? 2 : 0,
+  }).format(cents / 100);
+
+/** "Driveways: about $0.46 per sq ft, lowest $250 (3 jobs, 500 to 1,200 sq ft)" */
+export function describeRate(rate: Rate): string {
+  const per = rate.unit.replace(/s$/, '') || rate.unit;
+  const floor = rate.points > 1 ? `, lowest ${dollars(rate.floorCents)}` : '';
+  const sizes =
+    rate.smallest === rate.largest
+      ? formatQuantity(rate.smallest, rate.unit)
+      : `${formatNumber(rate.smallest)} to ${formatQuantity(rate.largest, rate.unit)}`;
+  return `${rate.service}: about ${dollars(rate.centsPerUnit)} per ${per}${floor} (${rate.points} ${rate.points === 1 ? 'job' : 'jobs'}, ${sizes})`;
+}
+
+/** Checks the AI's total against the estimate. Add-ons can take it up, not down. */
+export function withinEstimate(totalCents: number, estimate: Estimate): boolean {
+  return totalCents >= estimate.cents * 0.75 && totalCents <= estimate.cents * 1.75;
+}

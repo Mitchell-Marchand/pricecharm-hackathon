@@ -2,9 +2,8 @@ import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { Request } from 'express';
 import { z } from 'zod';
 import { tradeName } from '@quotefolk/trades';
-import { aiMode, type AiImage } from '../ai/index.js';
+import type { AiImage } from '../ai/index.js';
 import { intakeTurn } from '../ai/intake.js';
-import { draftQuote } from '../ai/quote-engine.js';
 import { hashToken, newToken } from '../auth.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { isDisposableEmail } from '../email-domains.js';
@@ -14,13 +13,16 @@ import { hashingSecret } from '../config.js';
 import { mailProvider, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
-import { pricingHistory } from '../practice/engine.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
-import { pricingProfile } from '../profile.js';
+import { draftForBusiness } from '../pricing/draft.js';
+import { withinEstimate, type Estimate } from '../pricing/rates.js';
+import type { JobSpec } from '../pricing/spec.js';
+import { questionChecklist } from '../profile.js';
 import { getPhoto } from '../storage.js';
 import { withAiUsage, withCustomerAiUsage } from '../usage.js';
 import { consumeAuthRateLimit } from '../verification.js';
 import { recordLiveDelivery, liveBillingAccess } from './billing.js';
+import { lossReasonPhrase, type LossReason } from './outcomes.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -196,7 +198,9 @@ export async function chatView(business: Row, chat: Row) {
   );
   const quote = await liveQuoteFor(String(chat.id));
   // Customers only ever see a quote the business sent; a held or declined one stays private.
-  const visible = quote && ['sent', 'accepted', 'visit_requested'].includes(String(quote.status));
+  const visible =
+    quote &&
+    ['sent', 'accepted', 'visit_requested', 'lost', 'expired'].includes(String(quote.status));
   return {
     id: String(chat.id),
     status: String(chat.status),
@@ -268,7 +272,7 @@ async function runIntake(req: Request, business: Row, chat: Row) {
     'SELECT COUNT(*) AS count FROM attachments WHERE business_id=? AND conversation_id=?',
     [business.id, chat.id],
   );
-  const profile = await pricingProfile(String(business.id));
+  const checklist = await questionChecklist(String(business.id));
   const turn = await withChatUsage(req, business, chat, async () =>
     intakeTurn(
       {
@@ -279,7 +283,7 @@ async function runIntake(req: Request, business: Row, chat: Row) {
           area: String(business.service_area ?? ''),
           radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
         },
-        checklist: profile.asks,
+        checklist,
         serviceName: String(chat.service_name),
         conversation: messages.map((message) => ({
           from: message.sender as 'customer' | 'assistant',
@@ -299,8 +303,16 @@ async function runIntake(req: Request, business: Row, chat: Row) {
       chips: turn.chips,
     });
     await mutate(
-      "UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,status=IF(?,'contact',status) WHERE id=?",
-      [turn.serviceName, turn.ready, turn.summary, turn.outOfScope, turn.ready, chat.id],
+      "UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=IF(?,'contact',status) WHERE id=?",
+      [
+        turn.serviceName,
+        turn.ready,
+        turn.summary,
+        turn.outOfScope,
+        JSON.stringify(turn.spec),
+        turn.ready,
+        chat.id,
+      ],
       connection,
     );
   });
@@ -492,7 +504,13 @@ export async function verifyContact(req: Request, input: { verificationId: strin
 type Check = { id: string; passed: boolean; detail: string };
 
 /** The server's checks on the AI's draft. Any failure sends the quote to the owner first. */
-async function checkDraft(business: Row, chat: Row, drafted: DraftedQuote, totalCents: number) {
+async function checkDraft(
+  business: Row,
+  chat: Row,
+  drafted: DraftedQuote,
+  totalCents: number,
+  estimate: Estimate | null,
+) {
   const checks: Check[] = [];
   const add = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
   const limit = Number(business.auto_send_limit_cents);
@@ -528,6 +546,13 @@ async function checkDraft(business: Row, chat: Row, drafted: DraftedQuote, total
       `It’s far from what you charged for similar jobs (${money(low)} to ${money(high)}).`,
     );
   }
+  // With the size known and enough jobs at that size, the total has to match the owner's rate.
+  if (estimate?.solid && drafted.lines.length)
+    add(
+      'rate',
+      withinEstimate(totalCents, estimate),
+      `It’s far from your usual rate, which comes to about ${money(estimate.cents)} for this size.`,
+    );
   add('handoff', !chat.human_handoff, 'The customer asked to talk to you.');
   add('auto', Boolean(business.auto_send), 'You approve each quote for now.');
   return checks;
@@ -553,25 +578,6 @@ async function usualTerms(businessId: string, serviceName: string) {
   };
 }
 
-function demoLiveDraft(
-  jobs: { priceCents: number; serviceName: string; description: string }[],
-  serviceName: string,
-): DraftedQuote {
-  const similar = jobs.filter((job) => job.serviceName === serviceName);
-  const pool = (similar.length ? similar : jobs).map((job) => job.priceCents).sort((a, b) => a - b);
-  const median = pool.length ? pool[Math.floor(pool.length / 2)] : 0;
-  return {
-    decision: 'quote',
-    reason: '',
-    lines: median ? [{ label: serviceName || 'Job as described', amountCents: median }] : [],
-    discount: null,
-    start: 'Next week',
-    duration: '',
-    confidence: median ? 'medium' : 'low',
-    reasoning: 'Demo mode: the middle price of your similar past jobs.',
-  };
-}
-
 /** Drafts the quote, checks it, and either sends it or puts it in front of the owner. */
 export async function prepareLiveQuote(req: Request, businessId: string, chatId: string) {
   if (await liveQuoteFor(chatId)) return;
@@ -581,27 +587,25 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     "SELECT sender,text FROM lead_messages WHERE chat_id=? AND kind='text' ORDER BY created_at,id",
     [chatId],
   );
+  const spec = json<JobSpec | null>(chat.spec_json, null);
   let drafted: DraftedQuote;
+  let estimate: Estimate | null = null;
+  let engine: unknown = null;
   try {
-    drafted =
-      aiMode === 'demo'
-        ? demoLiveDraft(await listPastJobs(businessId), String(chat.service_name))
-        : await withChatUsage(req, business, chat, async () =>
-            draftQuote({
-              history: await pricingHistory(businessId),
-              request: {
-                serviceName: String(chat.service_name),
-                conversation: messages
-                  .filter((message) => message.text)
-                  .map((message) => ({
-                    from:
-                      message.sender === 'customer' ? ('customer' as const) : ('owner' as const),
-                    text: String(message.text),
-                  })),
-              },
-              images: await chatImages(businessId, chatId),
-            }),
-          );
+    ({ drafted, estimate, engine } = await withChatUsage(req, business, chat, async () =>
+      draftForBusiness({
+        businessId,
+        serviceName: String(chat.service_name),
+        conversation: messages
+          .filter((message) => message.text)
+          .map((message) => ({
+            from: message.sender === 'customer' ? ('customer' as const) : ('owner' as const),
+            text: String(message.text),
+          })),
+        spec,
+        images: await chatImages(businessId, chatId),
+      }),
+    ));
   } catch (error) {
     reportError(error, { event: 'live_draft' });
     drafted = {
@@ -616,7 +620,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     };
   }
   const totalCents = quoteTotal(drafted);
-  const checks = await checkDraft(business, chat, drafted, totalCents);
+  const checks = await checkDraft(business, chat, drafted, totalCents, estimate);
   const terms = await usualTerms(businessId, String(chat.service_name));
   const test = chat.source === 'test';
   await transaction(async (connection) => {
@@ -655,7 +659,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     let reason = failed.map((check) => check.detail).join(' ');
     const quoteId = randomUUID();
     await mutate(
-      'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,review_reason,total_cents) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,engine_json,review_reason,total_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       [
         quoteId,
         businessId,
@@ -665,6 +669,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
         JSON.stringify(card),
         JSON.stringify(drafted),
         JSON.stringify(checks),
+        engine ? JSON.stringify(engine) : null,
         reason.slice(0, 600),
         totalCents,
       ],
@@ -779,7 +784,7 @@ async function notifyCustomerQuote(
   );
 }
 
-type OwnerEvent = 'review' | 'sent' | 'accepted' | 'visit' | 'message';
+type OwnerEvent = 'review' | 'sent' | 'accepted' | 'visit' | 'message' | 'lost';
 
 /** Owners hear about every request that needs them and every quote that goes out. */
 export async function notifyOwner(
@@ -799,7 +804,7 @@ export async function notifyOwner(
     connection,
   );
   const [quote] = await rows(
-    'SELECT id,total_cents,review_reason FROM live_quotes WHERE chat_id=?',
+    'SELECT id,total_cents,review_reason,outcome_reason,outcome_note FROM live_quotes WHERE chat_id=?',
     [chatId],
     connection,
   );
@@ -830,6 +835,10 @@ export async function notifyOwner(
       subject: `${first} sent you a message`,
       text: `${first} sent a message about their quote request:\n${link}`,
     },
+    lost: {
+      subject: `${first} isn’t going ahead with your ${total} quote`,
+      text: `${first} isn’t going ahead with your quote for ${total}. Their reason: ${lossReasonPhrase(String(quote?.outcome_reason ?? ''))}.${quote?.outcome_note ? `\n\nThey added: “${quote.outcome_note}”` : ''}\n\nYour AI keeps this with the quote, so it knows how this price went.\n${link}`,
+    },
   };
   await queueEmail(
     {
@@ -843,21 +852,33 @@ export async function notifyOwner(
   );
 }
 
-export async function customerDecision(req: Request, decision: 'accept' | 'visit') {
+/** Statuses a customer can still answer: open, or past its valid days without an answer. */
+const ANSWERABLE = ['sent', 'expired'];
+
+export async function customerDecision(
+  req: Request,
+  decision: 'accept' | 'visit' | 'decline',
+  why: { reason: LossReason; note: string } = { reason: 'other', note: '' },
+) {
   await transaction(async (connection) => {
     const { business, chat } = await chatAccess(req, connection, true);
     const quote = await liveQuoteFor(String(chat.id), connection);
-    if (!quote || quote.status !== 'sent')
+    if (!quote || !ANSWERABLE.includes(String(quote.status)))
       throw new ApiError(409, 'QUOTE_NOT_OPEN', 'This quote can’t be changed now.');
-    const status = decision === 'accept' ? 'accepted' : 'visit_requested';
+    const status = { accept: 'accepted', visit: 'visit_requested', decline: 'lost' }[decision];
     await mutate(
-      'UPDATE live_quotes SET status=?,decided_at=UTC_TIMESTAMP(3) WHERE id=?',
-      [status, quote.id],
+      'UPDATE live_quotes SET status=?,decided_at=UTC_TIMESTAMP(3),outcome_reason=?,outcome_note=? WHERE id=?',
+      [
+        status,
+        decision === 'decline' ? why.reason : '',
+        decision === 'decline' ? why.note : '',
+        quote.id,
+      ],
       connection,
     );
     await mutate(
       'UPDATE lead_chats SET status=? WHERE id=?',
-      [decision === 'accept' ? 'accepted' : 'visit', chat.id],
+      [{ accept: 'accepted', visit: 'visit', decline: 'closed' }[decision], chat.id],
       connection,
     );
     const owner = await ownerFirstName(String(business.id));
@@ -866,26 +887,28 @@ export async function customerDecision(req: Request, decision: 'accept' | 'visit
       chatId: String(chat.id),
       sender: 'customer',
       kind: 'status',
-      text:
-        decision === 'accept'
-          ? 'Accepted the quote.'
-          : 'Asked for a site visit before going ahead.',
+      text: {
+        accept: 'Accepted the quote.',
+        visit: 'Asked for a site visit before going ahead.',
+        decline: `Isn’t going ahead: ${lossReasonPhrase(why.reason)}.`,
+      }[decision],
     });
     await addMessage(connection, {
       businessId: String(business.id),
       chatId: String(chat.id),
       sender: 'assistant',
       kind: 'status',
-      text:
-        decision === 'accept'
-          ? `You’re all set. ${owner || business.name} will be in touch to schedule.`
-          : `Got it. ${owner || business.name} will get in touch to set up a visit.`,
+      text: {
+        accept: `You’re all set. ${owner || business.name} will be in touch to schedule.`,
+        visit: `Got it. ${owner || business.name} will get in touch to set up a visit.`,
+        decline: `Thanks for letting ${owner || business.name} know.`,
+      }[decision],
     });
     if (chat.source !== 'test')
       await notifyOwner(
         String(business.id),
         String(chat.id),
-        decision === 'accept' ? 'accepted' : 'visit',
+        ({ accept: 'accepted', visit: 'visit', decline: 'lost' } as const)[decision],
         connection,
       );
   });

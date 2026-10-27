@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { ArrowUp, Camera, Check, RotateCcw } from 'lucide-react';
 import { CustomerMessage, Typing } from '@/components/Chat';
 import { PhotoGrid } from '@/components/Photos';
@@ -57,7 +64,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   // The bot check loads only when the visitor first sends something, not for every page view.
   const human = useHumanCheck('demo', false);
   const scroller = useRef<HTMLDivElement>(null);
-  const stickToBottom = useStickToBottom(scroller);
+  const card = useRef<HTMLDivElement>(null);
+  const { toBottom: stickToBottom, showTop } = useStickToBottom(scroller);
   const timers = useRef<number[]>([]);
   const pass = useRef('');
 
@@ -82,6 +90,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   }>({});
 
   useEffect(() => () => timers.current.forEach((id) => window.clearTimeout(id)), []);
+
+  // A quote is taller than the chat, so it opens at its top, where the price is, not its buttons.
+  useLayoutEffect(() => {
+    if (quote && card.current) showTop(card.current);
+  }, [quote, showTop]);
 
   const add = (line: Omit<Line, 'id'>) =>
     setLines((current) => [...current, { id: uid('d'), ...line }]);
@@ -312,6 +325,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   }
 
   const decide = (text: string, finish: boolean) => {
+    stickToBottom();
     later(() => {
       add({ from: 'bot', text });
       if (finish) setDone(true);
@@ -343,7 +357,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
           {lines.map((line) => {
             if (line.quote && quote)
               return (
-                <div key={line.id} className="pr-3 pb-3">
+                <div key={line.id} ref={card} className="pr-3 pb-3">
                   <QuoteForm
                     quote={quote}
                     business={demo.business}
