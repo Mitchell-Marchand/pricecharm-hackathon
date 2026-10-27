@@ -27,6 +27,7 @@ export const ONBOARDING_STEPS = [
   'practice',
   'ready',
   'account',
+  'try',
   'live',
 ] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];

@@ -8,8 +8,9 @@ import { useOwner } from '@/components/owner/OwnerShell';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
-import { Button, Field, MoneyInput, Segmented, TextInput } from '@/components/ui';
-import { logout } from '@/lib/account';
+import { LEARNING_TEXT } from '@/components/Charm';
+import { Button, Field, MoneyInput, Segmented, SelectInput, TextInput } from '@/components/ui';
+import { logout, OLD_SETTINGS, type CharmSettings, type LearningStyle } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import {
   choosePlan,
@@ -25,6 +26,14 @@ import {
 } from '@/lib/owner';
 import { planDetail, planName, type Plan } from '@/lib/plans';
 import { money, moneyInput, parseMoney, shortDate } from '@/lib/util';
+
+const TRAINED_MARKS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+
+const LEARNING_HINT: Record<LearningStyle, string> = {
+  range: 'Like “$380 to $460”. You confirm the final price before starting.',
+  estimate: 'One price, marked as an estimate. You confirm the final price before starting.',
+  firm: 'The price it works out, as a firm quote, even while it’s learning.',
+};
 
 function Section({
   title,
@@ -50,9 +59,8 @@ export default function SettingsPage() {
   const { me } = useOwner();
   const notify = useToast();
   const router = useRouter();
-  const [autoSend, setAutoSend] = useState<boolean | null>(null);
+  const [charm, setCharm] = useState<CharmSettings | null>(null);
   const [limit, setLimit] = useState('');
-  const [savedLimit, setSavedLimit] = useState(0);
   const [billing, setBilling] = useState<Billing | null>(null);
   const [cap, setCap] = useState('');
   const [error, setError] = useState('');
@@ -61,9 +69,13 @@ export default function SettingsPage() {
   useEffect(() => {
     loadHome()
       .then((home) => {
-        setAutoSend(home.autoSend);
-        setLimit(moneyInput(home.autoSendLimitCents));
-        setSavedLimit(home.autoSendLimitCents);
+        const settings = home.settings ?? {
+          ...OLD_SETTINGS,
+          autoSend: home.autoSend,
+          limitCents: home.autoSendLimitCents,
+        };
+        setCharm(settings);
+        setLimit(moneyInput(settings.limitCents));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
     loadBilling()
@@ -79,16 +91,35 @@ export default function SettingsPage() {
     }
   }, [notify]);
 
-  const saveLimit = () => {
-    const cents = parseMoney(limit);
-    if (cents === null || cents === savedLimit) return;
-    saveSettings({ autoSendLimitCents: cents })
-      .then((saved) => {
-        setSavedLimit(saved.autoSendLimitCents);
-        setLimit(moneyInput(saved.autoSendLimitCents));
-        notify(`Saved. Quotes over ${saved.limitText} wait for you.`);
+  /** Saves one change right away, and puts it back if it doesn't save. */
+  const change = (patch: Partial<CharmSettings>, saved: (settings: CharmSettings) => string) => {
+    if (!charm) return;
+    const before = charm;
+    setCharm({ ...charm, ...patch });
+    saveSettings(patch)
+      .then((next) => {
+        setCharm(next);
+        setLimit(moneyInput(next.limitCents));
+        notify(saved(next));
       })
-      .catch((saveError) => notify(errorMessage(saveError)));
+      .catch((saveError) => {
+        setCharm(before);
+        setLimit(moneyInput(before.limitCents));
+        notify(errorMessage(saveError));
+      });
+  };
+
+  // Empty is no limit. Anything else has to be a price.
+  const saveLimit = () => {
+    if (!charm) return;
+    const cents = limit.trim() ? parseMoney(limit) : null;
+    if (limit.trim() && cents === null) return setLimit(moneyInput(charm.limitCents));
+    if (cents === charm.limitCents) return;
+    change({ limitCents: cents }, (next) =>
+      next.limitCents === null
+        ? 'Saved. No price limit.'
+        : `Saved. Quotes over ${money(next.limitCents)} wait for you.`,
+    );
   };
 
   const go = (request: () => Promise<{ url: string }>) =>
@@ -107,45 +138,96 @@ export default function SettingsPage() {
 
       <div className="mt-10">
         <Section
-          title="Automatic quotes"
-          intro="Quotes that match your usual prices can go out without waiting for you."
+          title="Your Charm"
+          intro="How it quotes your customers. Unusual jobs, and anyone who asks for you, always come to you first."
         >
-          {autoSend === null ? (
+          {charm === null ? (
             <div className="shimmer h-24 rounded-md" />
           ) : (
-            <div className="flex flex-col gap-6">
-              <Segmented
-                label="Automatic quotes"
-                value={autoSend ? 'on' : 'off'}
-                onChange={(value) => {
-                  const on = value === 'on';
-                  setAutoSend(on);
-                  saveSettings({ autoSend: on })
-                    .then(() =>
-                      notify(
-                        on
-                          ? 'Quotes can go out on their own now.'
-                          : 'Every quote waits for your OK.',
-                      ),
-                    )
-                    .catch((saveError) => {
-                      setAutoSend(!on);
-                      notify(errorMessage(saveError));
-                    });
-                }}
-                options={[
-                  { value: 'on', label: 'Send them on their own' },
-                  { value: 'off', label: 'I approve each one' },
-                ]}
-              />
+            <div className="flex flex-col gap-7">
               <Field
-                label="Always ask me about quotes over"
+                label="Quotes customers on its own"
+                htmlFor="settings-auto"
+                hint={
+                  charm.autoSend
+                    ? 'Customers get a quote in about 2 minutes, day or night.'
+                    : 'Every quote waits for your OK. One tap from your email sends it.'
+                }
+              >
+                <div id="settings-auto">
+                  <Segmented
+                    label="Quotes customers on its own"
+                    value={charm.autoSend ? 'on' : 'off'}
+                    onChange={(value) =>
+                      change({ autoSend: value === 'on' }, (next) =>
+                        next.autoSend
+                          ? 'Your Charm quotes customers on its own.'
+                          : 'Every quote waits for your OK.',
+                      )
+                    }
+                    options={[
+                      { value: 'on', label: 'On' },
+                      { value: 'off', label: 'Check with me first' },
+                    ]}
+                  />
+                </div>
+              </Field>
+              <Field
+                label="Firm prices once a service is"
+                htmlFor="settings-trained"
+                hint="How trained your Charm has to be on a service before it gives firm prices for it."
+              >
+                <SelectInput
+                  id="settings-trained"
+                  className="max-w-48"
+                  value={charm.trainedPercent}
+                  onChange={(event) =>
+                    change(
+                      { trainedPercent: Number(event.target.value) },
+                      (next) => `Saved. Firm prices from ${next.trainedPercent}%.`,
+                    )
+                  }
+                >
+                  {TRAINED_MARKS.map((mark) => (
+                    <option key={mark} value={mark}>
+                      {mark}% trained
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              <Field
+                label="Before then, customers get"
+                htmlFor="settings-learning"
+                hint={LEARNING_HINT[charm.learningStyle]}
+              >
+                <div id="settings-learning">
+                  <Segmented<LearningStyle>
+                    label="Before then, customers get"
+                    value={charm.learningStyle}
+                    onChange={(value) =>
+                      change(
+                        { learningStyle: value },
+                        (next) => `Saved. Customers get ${LEARNING_TEXT[next.learningStyle]}.`,
+                      )
+                    }
+                    options={[
+                      { value: 'range', label: 'A price range' },
+                      { value: 'estimate', label: 'An estimate' },
+                      { value: 'firm', label: 'A firm price' },
+                    ]}
+                  />
+                </div>
+              </Field>
+              <Field
+                label="Always check with me about quotes over"
                 htmlFor="settings-limit"
-                hint="Jobs outside your area, or for a service you don't list, always wait for you too."
+                optional
+                hint="Leave it empty for no limit."
               >
                 <MoneyInput
                   id="settings-limit"
                   className="max-w-48"
+                  placeholder="No limit"
                   value={limit}
                   onChange={setLimit}
                   onBlur={saveLimit}

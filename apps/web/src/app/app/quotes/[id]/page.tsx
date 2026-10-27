@@ -11,7 +11,8 @@ import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { PaperButton, QuoteForm, type Stamp } from '@/components/QuoteForm';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
-import { Button, Field, Tag, TextArea, TextInput } from '@/components/ui';
+import { Button, Field, Segmented, Tag, TextArea, TextInput } from '@/components/ui';
+import type { LearningStyle } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
 import {
   approveQuote,
@@ -21,7 +22,7 @@ import {
   type QuoteDetail,
   type ThreadMessage,
 } from '@/lib/owner';
-import type { Quote } from '@/lib/quote';
+import { restyle, type Quote } from '@/lib/quote';
 import { cx, shortDate } from '@/lib/util';
 
 const STAMPS: Partial<Record<QuoteDetail['status'], Stamp>> = {
@@ -43,6 +44,8 @@ export default function QuotePage() {
   const [declining, setDeclining] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState('');
+  // How the price goes out: as the Charm drafted it, or the owner's pick.
+  const [style, setStyle] = useState<LearningStyle | null>(null);
 
   useEffect(() => {
     loadQuote(id)
@@ -63,12 +66,15 @@ export default function QuotePage() {
 
   const first = quote.customer.split(' ')[0];
   const waiting = quote.status === 'review';
+  const drafted: LearningStyle = quote.card.style ?? 'firm';
+  const chosen = style ?? drafted;
+  const shown = waiting && chosen !== drafted ? restyle(quote.card, chosen) : quote.card;
 
   async function approve(card?: Quote) {
     setBusy(true);
     setActionError('');
     try {
-      const sent = await approveQuote(id, card);
+      const sent = await approveQuote(id, card, chosen !== drafted ? chosen : undefined);
       setQuote(sent);
       setEditing(false);
       notify(
@@ -121,8 +127,23 @@ export default function QuotePage() {
 
         <div className="order-1 flex min-w-0 flex-col gap-5 lg:sticky lg:top-24 lg:order-2">
           {waiting && <WhyWaiting quote={quote} />}
+          {waiting && (
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm font-semibold">Send as</p>
+              <Segmented<LearningStyle>
+                label="Send as"
+                value={chosen}
+                onChange={setStyle}
+                options={[
+                  { value: 'firm', label: 'Firm price' },
+                  { value: 'range', label: 'Price range' },
+                  { value: 'estimate', label: 'Estimate' },
+                ]}
+              />
+            </div>
+          )}
           <QuoteForm
-            quote={quote.card}
+            quote={shown}
             business={me.business.name}
             stamp={STAMPS[quote.status]}
             actions={
@@ -203,7 +224,7 @@ function BackLink() {
   );
 }
 
-/** Why the quote didn't go out on its own, and what the AI based it on. */
+/** Why the quote didn't go out on its own, and what the Charm based it on. */
 function WhyWaiting({ quote }: { quote: QuoteDetail }) {
   const reasons = quote.checks
     .filter((check) => !check.passed && check.detail)
@@ -236,7 +257,7 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
           )}
           {quote.reasoning && (
             <p>
-              <span className="font-semibold text-ink">How your AI priced it: </span>
+              <span className="font-semibold text-ink">How your Charm priced it: </span>
               {quote.reasoning}
             </p>
           )}
@@ -278,7 +299,7 @@ function Thread({ messages, customer }: { messages: ThreadMessage[]; customer: s
           return <OwnerMessage key={message.id}>{message.text}</OwnerMessage>;
         return (
           <div key={message.id} className="flex flex-col items-end gap-1">
-            <p className="text-xs text-muted">Your AI</p>
+            <p className="text-xs text-muted">Your Charm</p>
             <p className="max-w-[85%] rounded-[16px] rounded-br-[4px] border border-line bg-surface-2 px-4 py-3 text-[15.5px] leading-[1.55] sm:max-w-[75%]">
               {message.text}
             </p>
@@ -349,7 +370,7 @@ function Reply({
         {error ||
           (quote.test
             ? 'This is your test chat, so nothing is emailed.'
-            : `${first} gets it by email and can reply in the chat. Your AI stops replying once you step in.`)}
+            : `${first} gets it by email and can reply in the chat. Your Charm stops replying once you step in.`)}
       </p>
     </form>
   );

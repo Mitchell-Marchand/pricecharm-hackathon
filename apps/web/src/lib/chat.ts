@@ -31,6 +31,8 @@ export interface ChatView {
   contact: { name: string; email: string | null; verified: boolean };
   quote: { id: string; status: string; card: Quote; sentAt: string | null } | null;
   waitingForOwner: boolean;
+  /** In an owner's test, why this quote would wait for them. Missing from older APIs. */
+  wouldWait?: { id: string; detail: string }[];
 }
 
 export type ChatAccess = { chatId: string; token: string };

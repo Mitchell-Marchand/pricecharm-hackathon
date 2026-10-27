@@ -335,7 +335,7 @@ export function PastJobsEditor({
                 Your other services
               </h2>
               <p className="mt-1 text-sm text-muted">
-                Add these whenever you like. Until then, it checks with you before quoting them.
+                Add these whenever you like. Each one sharpens its prices for that service.
               </p>
               <ul className="mt-3 divide-y divide-line border-y border-line">
                 {others.map(({ service }) => (
@@ -562,8 +562,8 @@ export function JobSheet({
       title={editing?.id ? 'Edit job' : 'Add a job'}
       subtitle={
         start.slot && !editing?.id
-          ? `${SLOTS[start.slot].sheet(serviceName)} Only you and your AI see this.`
-          : 'Only you and your AI see this.'
+          ? `${SLOTS[start.slot].sheet(serviceName)} Only you and your Charm see this.`
+          : 'Only you and your Charm see this.'
       }
       footer={
         <div className="flex items-center justify-between gap-3">

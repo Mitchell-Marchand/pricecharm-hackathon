@@ -78,6 +78,10 @@ export type Quote = QuoteDraft & {
   customer: string;
   place: string;
   issuedAt: string;
+  /** Set while the service is still learning, if the owner sends ranges or estimates until then. */
+  style?: 'range' | 'estimate';
+  /** What the customer sees instead of the total, with style 'range'. */
+  range?: { lowCents: number; highCents: number };
 };
 
 /** The AI's own quote for the same request, made before it sees the owner's. */

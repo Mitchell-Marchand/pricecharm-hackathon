@@ -14,7 +14,7 @@ import {
 import { api, ApiError, errorMessage, json } from './api';
 import { useHumanCheck } from './human-check';
 
-export type Step = 'business' | 'jobs' | 'practice' | 'ready' | 'account' | 'live';
+export type Step = 'business' | 'jobs' | 'practice' | 'ready' | 'account' | 'try' | 'live';
 
 export interface BusinessDraft {
   tradeId: string | null;
@@ -40,7 +40,7 @@ interface OnboardingValue {
   state: Onboarding | null;
   loadError: string;
   save: SaveState;
-  reload: () => void;
+  reload: () => Promise<void>;
   updateBusiness: (patch: Partial<BusinessDraft>) => void;
   /** Saves anything pending, records the step and opens it. */
   goTo: (step: Step) => Promise<void>;
@@ -154,7 +154,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ state, loadError, save, reload: () => void load(), updateBusiness, goTo, flush }),
+    () => ({ state, loadError, save, reload: load, updateBusiness, goTo, flush }),
     [state, loadError, save, load, updateBusiness, goTo, flush],
   );
   return (

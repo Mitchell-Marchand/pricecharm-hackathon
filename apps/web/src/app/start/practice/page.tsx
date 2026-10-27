@@ -106,7 +106,7 @@ export default function PracticeStep() {
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <WizardHeader step={3}>
+      <WizardHeader step={3} charm={finishedCount}>
         {!extra && <PracticeProgress index={index ?? 0} finished={finishedCount} count={count} />}
       </WizardHeader>
 
@@ -134,8 +134,8 @@ export default function PracticeStep() {
                       {run?.focus ? `Practice a ${run.focus} job` : 'One more practice customer'}
                     </h1>
                     <p className="mt-3 text-lg text-ink-2">
-                      Answer it like a real lead. If your price comes within 15% of its guess, that
-                      counts toward sending these on its own.
+                      Answer it like a real lead. If your price comes within 15% of its guess, your
+                      Charm&apos;s score goes up.
                     </p>
                   </>
                 )}
@@ -152,8 +152,8 @@ export default function PracticeStep() {
                 </button>
                 <h1 className="t-h1 mt-4">Answer it like a real lead.</h1>
                 <p className="mt-3 text-lg text-ink-2">
-                  Ask what you&apos;d normally ask, then send a quote. Your AI learns from how you
-                  handle it.
+                  Ask what you&apos;d normally ask, then send a quote. Your Charm learns from how
+                  you handle it, and its score goes up when its guess is close to your price.
                 </p>
               </div>
             )}
@@ -174,8 +174,7 @@ export default function PracticeStep() {
                   : `${count - finishedCount} to go. The next one is ready.`}
             </p>
             <Button size="lg" onClick={() => void next()}>
-              {last ? 'See what your AI learned' : 'Next practice request'}{' '}
-              <ArrowRight aria-hidden />
+              {last ? 'See your Charm' : 'Next practice request'} <ArrowRight aria-hidden />
             </Button>
           </div>
         }

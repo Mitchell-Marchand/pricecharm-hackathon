@@ -91,11 +91,7 @@ test(
         });
       assert.equal(signup.status, 201, JSON.stringify(signup.body));
       const [created] = await rows('SELECT auto_send FROM businesses WHERE id=?', [draftId]);
-      assert.equal(
-        Boolean(created.auto_send),
-        true,
-        'A learned service sends on its own from signup',
-      );
+      assert.equal(Boolean(created.auto_send), true, 'The Charm quotes on its own from signup');
       return {
         owner,
         id: String(signup.body.data.business.id),
@@ -349,6 +345,12 @@ test(
     assert.equal(trial.contact.verificationId, null);
     assert.equal(trial.contact.chat.test, true);
     assert.equal(trial.contact.chat.waitingForOwner, true);
+    assert.ok(trial.contact.chat.quote, 'The owner sees the quote their Charm drafted');
+    assert.deepEqual(
+      trial.contact.chat.wouldWait.map((check: { id: string }) => check.id),
+      ['auto'],
+      'And why a real customer would wait for it',
+    );
     const [trialQuote] = await rows('SELECT id FROM live_quotes WHERE chat_id=?', [
       trial.customer.id,
     ]);
@@ -370,7 +372,8 @@ test(
     );
     assert.equal(listedTests.length, 1);
 
-    // 4. Automatic quotes on, but a size it hasn't priced or a service it hasn't learned waits.
+    // 4. Automatic quotes on: a size it hasn't priced waits, and a service it's still learning goes
+    // out as a price range.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
@@ -393,16 +396,49 @@ test(
     const big = await waitsBecause({ service: 'Driveways', size: 'About 2,000 sq ft.' });
     const bigRequest = lastReached!;
     const bigChat = bigRequest.customer.id;
-    assert.ok(big.find((check) => check.id === 'learned')?.passed, 'Driveways is learned');
+    assert.deepEqual(
+      big.filter((check) => !check.passed).map((check) => check.id),
+      ['range', 'size'],
+      'Only things about the job hold it, never how trained the Charm is',
+    );
     assert.match(
-      big.find((check) => check.id === 'size' && !check.passed)?.detail ?? '',
+      big.find((check) => check.id === 'size')?.detail ?? '',
       /much bigger than the Driveways jobs you’ve priced, which go up to 600 sq ft/,
     );
-    const house = await waitsBecause({ service: 'House wash', size: 'About 2,000 sq ft.' });
-    assert.match(
-      house.find((check) => check.id === 'learned' && !check.passed)?.detail ?? '',
-      /needs 3 more House wash jobs with a size/,
+    const learning = await reachQuote(shop.slug, undefined, {
+      service: 'House wash',
+      size: 'About 2,000 sq ft.',
+    });
+    const ranged = (
+      await learning.customer.call('post', '/verify', {
+        verificationId: learning.contact.verificationId,
+        code: learning.contact.devCode,
+      })
+    ).body.data;
+    assert.equal(ranged.status, 'sent', 'A service with no jobs yet still gets a quote');
+    const { style, range } = ranged.quote.card;
+    const [rangedQuote] = await rows('SELECT total_cents FROM live_quotes WHERE chat_id=?', [
+      learning.customer.id,
+    ]);
+    assert.equal(style, 'range');
+    assert.ok(
+      range.lowCents < Number(rangedQuote.total_cents) &&
+        range.highCents > Number(rangedQuote.total_cents),
+      JSON.stringify(range),
     );
+    const [rangeEmail] = await rows(
+      'SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?',
+      [`live-quote:${learning.customer.id}:customer`],
+    );
+    assert.match(
+      decryptEmail(rangeEmail.payload_encrypted).text,
+      /for \$\d+ to \$\d+\./,
+      'The email quotes the range',
+    );
+    const firm = (await shop.owner.get('/api/v1/app/quotes?filter=all')).body.data.find(
+      (item: { id: string }) => item.id === sent.body.data.quote.id,
+    );
+    assert.equal(firm.range, null, 'A trained service quotes a firm price');
 
     // 5. The "needs your OK" email opens that one quote with an Approve button, no sign-in.
     const [tappedQuote] = await rows('SELECT id,total_cents FROM live_quotes WHERE chat_id=?', [

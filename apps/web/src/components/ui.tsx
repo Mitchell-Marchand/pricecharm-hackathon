@@ -6,6 +6,7 @@ import {
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from 'react';
 import Link from 'next/link';
@@ -81,6 +82,10 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
     );
   },
 );
+
+export function SelectInput({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return <select className={cx(control, 'h-12 px-3 text-base', className)} {...props} />;
+}
 
 export const TextArea = forwardRef<
   HTMLTextAreaElement,

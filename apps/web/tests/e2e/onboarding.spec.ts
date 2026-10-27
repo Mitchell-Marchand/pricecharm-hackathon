@@ -278,7 +278,9 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill(label);
     await builder.getByRole('textbox', { name: 'Price for item 1' }).fill(price);
     await builder.getByRole('button', { name: 'Send quote' }).click();
-    await expect(page.getByRole('heading', { name: /Here.s what your AI picked up/ })).toBeVisible({
+    await expect(
+      page.getByRole('heading', { name: /Here.s what your Charm picked up/ }),
+    ).toBeVisible({
       timeout: 15_000,
     });
   };
@@ -308,10 +310,13 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });
   await quote('Flagstone wash, about 350 sq ft', '175');
   await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
-  await page.getByRole('button', { name: 'See what your AI learned' }).click();
+  await page.getByRole('button', { name: 'See your Charm' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
 
-  await expect(page.getByRole('heading', { name: 'Your AI is ready.' })).toBeVisible();
+  // The headline says what the score means, never more.
+  await expect(
+    page.getByRole('heading', { name: /^Your Charm is (\d+% trained|ready to quote)\.$/ }),
+  ).toBeVisible();
   await expect(
     page.getByText('It learned from 1 past job and 3 practice customers.', { exact: false }),
   ).toBeVisible();
@@ -319,24 +324,31 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page.getByText('Asks about size and stains')).toHaveCount(0);
   await expect(page.getByText(/^Charges about \$0\.51 per sq ft for patios$/)).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Dana R.' })).toBeVisible();
-  await expect(page.getByText('Anything over $1,500')).toBeVisible();
   await expect(
-    page.getByText(/^You.ll approve each quote for now\.$/),
-    'One past job is too few for any service to send on its own',
-  ).toBeVisible();
-  const readiness = page.getByRole('region', { name: 'Agent readiness' });
-  await expect(readiness.getByRole('meter', { name: 'Agent readiness' })).toHaveAttribute(
+    page.getByText(/^Anything over \$/),
+    'No price limit unless they set one',
+  ).toHaveCount(0);
+  // Quoting is on from the start. While it's learning, it says so and recommends checking first.
+  const charm = page.getByRole('region', { name: 'Your Charm', exact: true });
+  await expect(charm.getByRole('meter', { name: 'How trained your Charm is' })).toHaveAttribute(
     'aria-valuenow',
     /^\d+$/,
   );
-  await expect(readiness).toContainText(/Next: (Add a .+ job with its size|Practice a .+ job)\./);
-  const services = page.getByRole('list', { name: 'Your services' });
+  await expect(charm).toContainText('customers get a price range for services under 60%');
+  const quoting = charm.getByRole('switch', { name: 'Quotes customers on its own' });
+  await expect(quoting).toBeChecked();
+  await charm.getByRole('button', { name: 'Check with me first' }).click();
+  await expect(quoting).not.toBeChecked();
+  await expect(charm).toContainText('Every quote waits for your OK first.');
+  await quoting.click();
+  await expect(quoting).toBeChecked();
+  const services = charm.getByRole('list', { name: 'Your services' });
   const driveways = services.getByRole('listitem').filter({ hasText: 'Driveways' });
   await expect(driveways).toContainText(
-    'Checks with you until it has 2 more Driveways jobs with a size.',
+    'Customers get a price range for now. Add 2 more Driveways jobs with a size.',
   );
   await expect(services.getByRole('listitem').filter({ hasText: 'House wash' })).toContainText(
-    'Checks with you until it has 3 House wash jobs with a size.',
+    'Add 3 House wash jobs with a size.',
   );
 
   // Each gap is one tap away: a job to add here, or a practice customer for that service.
@@ -346,15 +358,13 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await sheet.getByLabel('What did you charge?').fill('400');
   await sheet.getByLabel('How big was it?').fill('1,000 sq ft');
   await sheet.getByRole('button', { name: 'Save job' }).click();
-  await expect(driveways).toContainText(
-    'Checks with you until it has 1 more Driveways job with a size.',
-  );
+  await expect(driveways).toContainText('Add a Driveways job with a size.');
   await driveways.getByRole('button', { name: 'Practice a Driveways job' }).click();
   await expect(page).toHaveURL(/\/start\/practice$/);
   await expect(page.getByRole('heading', { name: 'Practice a Driveways job' })).toBeVisible();
   await expect(page.getByText('Dana R. · Eastgate')).toBeVisible({ timeout: 15_000 });
   await quote('Driveway wash, about 800 sq ft', '330');
-  await page.getByRole('button', { name: 'See what your AI learned' }).click();
+  await page.getByRole('button', { name: 'See your Charm' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
   await expect(
     page.getByText('It learned from 2 past jobs and 4 practice customers.', { exact: false }),
@@ -370,7 +380,17 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await page.getByLabel('Password', { exact: true }).fill('test password strong123');
   await page.getByRole('button', { name: 'Create account' }).click();
 
-  // Straight to the plans, then a card, then deploying. No email check first.
+  // Then trying it as a customer would, in the same chat, before any plan.
+  await expect(page).toHaveURL(/\/start\/try$/);
+  await expect(page.getByRole('heading', { name: 'Try your Charm.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Ask for a quote' }).click();
+  const trial = page.getByRole('dialog', { name: 'Try your Charm' });
+  await expect(trial.getByText(/this is a test\. Nothing is emailed or billed\./)).toBeVisible();
+  await expect(trial.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
+  await trial.getByRole('button', { name: 'Close' }).click();
+
+  // Then the plans, then a card, then going live. No email check first.
+  await page.getByRole('button', { name: 'Go live' }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByRole('heading', { name: 'Pick a plan. Then go live.' })).toBeVisible();
   const plans = page.getByRole('list', { name: 'Plans' });
@@ -388,9 +408,12 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     .click();
   await expect(page.getByRole('heading', { name: 'Ready when you are.' })).toBeVisible();
   await expect(page.getByText('$2 per quote, card added')).toBeVisible();
-  await expect(page.getByText(/It.s \d+% ready, so for now it drafts each quote/)).toBeVisible();
+  await expect(
+    page.getByText(/^Your Charm quotes on its own\. While it learns, customers get a price range/),
+  ).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Quotes customers on its own' })).toBeChecked();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Deploy your agent' }).click();
+  await page.getByRole('button', { name: 'Go live', exact: true }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await expect(page).toHaveURL(/\/start\/live$/);
   await expect(page.getByText(/You.re all set, Maya/)).toBeVisible();

@@ -80,6 +80,12 @@ test(
       .expect(200);
     await owner.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
     await owner.post('/api/v1/app/deploy').set('Origin', origin).send({}).expect(200);
+    // This owner has their Charm check with them first, so they price every draft themselves.
+    await owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ autoSend: false })
+      .expect(200);
 
     async function quoteRequest(slug: string, service: string, size: string) {
       const agent = request.agent(app);
@@ -141,7 +147,7 @@ test(
     const driveways = (body: { services: Readiness[] }) =>
       body.services.find((item) => item.service === 'Driveways')!;
     assert.equal(driveways(profile).ready, false, 'One close draft is too few');
-    assert.match(driveways(profile).reason, /within 15% of your price on 1 more Driveways job /);
+    assert.match(driveways(profile).reason, /within 15% of your price on 1 more Driveways job\./);
 
     // 3. The customer isn't going ahead, and says why. The owner hears, and the AI learns it.
     const lost = await first.call('post', '/decline', { reason: 'price' });

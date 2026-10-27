@@ -242,13 +242,23 @@ test(
         password: 'test password strong123',
       })
       .expect(201);
-    const [created] = await rows('SELECT auto_send FROM businesses WHERE id=?', [
-      signup.body.data.business.id,
-    ]);
-    assert.equal(
-      Boolean(created.auto_send),
-      false,
-      'One sized job is too few for quotes to go out on their own',
+    const [created] = await rows(
+      'SELECT auto_send,auto_send_limit_cents,trained_percent,learning_style FROM businesses WHERE id=?',
+      [signup.body.data.business.id],
+    );
+    assert.deepEqual(
+      {
+        ...created,
+        auto_send: Boolean(created.auto_send),
+        trained_percent: Number(created.trained_percent),
+      },
+      {
+        auto_send: true,
+        auto_send_limit_cents: null,
+        trained_percent: 60,
+        learning_style: 'range',
+      },
+      'It quotes on its own from the start, with no limit, in ranges until a service is 60% trained',
     );
     const added = await more();
     assert.equal(added.status, 201, JSON.stringify(added.body));

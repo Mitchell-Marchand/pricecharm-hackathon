@@ -90,22 +90,42 @@ test('a quote that needs the owner’s OK appears once they send it', async ({
   await shop.context.close();
 });
 
-test('the owner trying their own link gets a test chat with no code', async ({
+test('the owner trying their own link always sees the quote, and why it would wait', async ({
   browser,
   baseURL,
 }) => {
-  const shop = await createBusiness(browser, baseURL!);
+  const shop = await createBusiness(browser, baseURL!, { autoSend: true });
   const page = await shop.context.newPage();
+  const tryHouseWash = async () => {
+    await page.getByRole('button', { name: 'House wash' }).click();
+    await expect(page.getByText(/this is a test\. Nothing is emailed or billed/)).toBeVisible();
+    await expect(page.getByText(/\[Demo\] Thanks!/)).toBeVisible();
+    await page.getByLabel('Message').fill('Two-story house, vinyl siding.');
+    await page.getByLabel('Message').press('Enter');
+    await page.getByRole('button', { name: 'Skip photos' }).click();
+    await page.getByLabel('Your name').fill('Test Customer');
+    await page.getByLabel('Your email').fill('test@example.test');
+    await page.getByRole('button', { name: 'See my quote' }).click();
+  };
   await page.goto(`/q/${shop.slug}`);
-  await page.getByRole('button', { name: 'House wash' }).click();
-  await expect(page.getByText(/this is a test\. Nothing is emailed or billed/)).toBeVisible();
-  await page.getByLabel('Message').fill('Two-story house, vinyl siding.');
-  await page.getByLabel('Message').press('Enter');
-  await page.getByRole('button', { name: 'Skip photos' }).click();
-  await page.getByLabel('Your name').fill('Test Customer');
-  await page.getByLabel('Your email').fill('test@example.test');
-  await page.getByRole('button', { name: 'See my quote' }).click();
-  await expect(page.getByText(/will look this over/)).toBeVisible();
+
+  // Quoting on its own, for a service it hasn't priced yet: a price range, right away.
+  await tryHouseWash();
+  const quote = page.getByRole('article', { name: /from Moss & Stone.*price range \$/ });
+  await expect(quote).toBeVisible();
+  await expect(quote).toContainText('Price range');
+  await expect(page.getByText(/Maya confirms the final price before starting\./)).toBeVisible();
+  await expect(page.getByText(/will look this over/)).toHaveCount(0);
+
+  // Checking each quote first: it still shows the draft, and why a customer would wait.
+  await shop.autoSend(false);
+  await page.getByRole('button', { name: 'Try another request' }).click();
+  await tryHouseWash();
+  await expect(page.getByText('Here’s the quote your Charm drafted.')).toBeVisible();
+  await expect(page.getByText('A real customer would wait for your OK on this one.')).toBeVisible();
+  await expect(page.getByText('You approve each quote for now.')).toBeVisible();
+  await expect(page.getByRole('article', { name: /from Moss & Stone/ })).toContainText('Draft');
+  await expect(page.getByRole('link', { name: 'Open it in your quotes' })).toBeVisible();
   await shop.context.close();
 });
 

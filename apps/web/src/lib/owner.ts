@@ -1,5 +1,11 @@
 import { api, json } from './api';
-import type { AgentReadiness, Profile } from './account';
+import type {
+  AgentReadiness,
+  CharmSettings,
+  LearningStyle,
+  Profile,
+  ServiceReadiness,
+} from './account';
 import { money } from './util';
 import { DEFAULT_PRICING, type Plan, type PlanChoice, type Pricing } from './plans';
 import type { Quote } from './quote';
@@ -14,6 +20,8 @@ export interface QuoteListItem {
   customer: string;
   serviceName: string;
   totalCents: number;
+  /** What the customer sees instead of the total, for a range quote. Missing from older APIs. */
+  range?: { lowCents: number; highCents: number } | null;
   reviewReason: string;
   test: boolean;
   createdAt: string;
@@ -24,10 +32,13 @@ export interface Home {
   counts: { needsOk: number; sentThisMonth: number; acceptedThisMonth: number };
   waiting: QuoteListItem[];
   autoSend: boolean;
-  autoSendLimitCents: number;
+  /** Null for no limit. */
+  autoSendLimitCents: number | null;
   websiteDomain: string;
   /** Missing from an API older than this page, as when web and API deploy a moment apart. */
   readiness?: AgentReadiness;
+  settings?: CharmSettings;
+  services?: ServiceReadiness[];
 }
 
 export interface QuoteCheck {
@@ -67,22 +78,21 @@ export const loadHome = () => api<Home>('/app/home');
 export const listQuotes = (filter: QuoteFilter) =>
   api<QuoteListItem[]>(`/app/quotes?filter=${filter}`);
 export const loadQuote = (id: string) => api<QuoteDetail>(`/app/quotes/${id}`);
-export const approveQuote = (id: string, card?: Quote) =>
+export const approveQuote = (id: string, card?: Quote, style?: LearningStyle) =>
   api<QuoteDetail>(`/app/quotes/${id}/approve`, {
     method: 'POST',
-    ...json(card ? { card } : {}),
+    ...json({ ...(card ? { card } : {}), ...(style ? { style } : {}) }),
   });
 export const messageCustomer = (id: string, text: string) =>
   api<QuoteDetail>(`/app/quotes/${id}/messages`, { method: 'POST', ...json({ text }) });
 export const declineQuote = (id: string, message: string) =>
   api<QuoteDetail>(`/app/quotes/${id}/decline`, { method: 'POST', ...json({ message }) });
 
-export interface Settings {
-  autoSend: boolean;
-  autoSendLimitCents: number;
+export interface Settings extends CharmSettings {
+  /** "$1,500", or empty with no limit. */
   limitText: string;
 }
-export const saveSettings = (patch: Partial<Pick<Settings, 'autoSend' | 'autoSendLimitCents'>>) =>
+export const saveSettings = (patch: Partial<CharmSettings>) =>
   api<Settings>('/app/settings', { method: 'PATCH', ...json(patch) });
 
 export interface Billing {

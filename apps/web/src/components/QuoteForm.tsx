@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
-import { discountCents, total, type Quote } from '@/lib/quote';
+import { discountCents, rangeOf, total, type Quote } from '@/lib/quote';
 import { addDays, cx, lowerFirst, money, prefersReducedMotion, shortDate } from '@/lib/util';
 
 export type Stamp = 'practice' | 'sent' | 'accepted' | 'draft';
@@ -45,7 +45,8 @@ function FormField({ label, value }: { label: string; value: string }) {
 
 /**
  * The signature quote: an estimate-pad sheet over its canary and pink copies.
- * One component renders practice quotes, customer quotes and the landing page sample.
+ * One component renders practice quotes, customer quotes and the landing page sample. A quote for
+ * a service the Charm is still learning can be a price range, or a price marked as an estimate.
  */
 export function QuoteForm({
   quote,
@@ -66,15 +67,20 @@ export function QuoteForm({
 }) {
   const sum = total(quote);
   const off = discountCents(quote);
+  const range = rangeOf(quote);
   const shown = useCountUp(sum, animate);
+  const low = useCountUp(range?.lowCents ?? 0, animate);
+  const high = useCountUp(range?.highCents ?? 0, animate);
   const pad = compact ? 'px-4' : 'px-5 sm:px-6';
+  // A range shows what's included, not what each part costs.
+  const amount = (cents: string) => (range ? '' : cents);
   return (
     <div className={cx('qf-stack', animate && 'quote-in')}>
       <div className="qf-copy is-pink" aria-hidden />
       <div className="qf-copy is-canary" aria-hidden />
       <article
         className="qf"
-        aria-label={`Quote number ${quote.number} from ${business}, total ${money(sum)}`}
+        aria-label={`${quote.style === 'estimate' ? 'Estimate' : 'Quote'} number ${quote.number} from ${business}, ${range ? `price range ${money(range.lowCents)} to ${money(range.highCents)}` : `total ${money(sum)}`}`}
       >
         <header
           className={cx('flex items-start justify-between gap-4', compact ? 'pt-6' : 'pt-7', pad)}
@@ -87,7 +93,7 @@ export function QuoteForm({
                 compact ? 'mt-1 text-[22px]' : 'mt-1.5 text-[28px]',
               )}
             >
-              Quote
+              {quote.style === 'estimate' ? 'Estimate' : 'Quote'}
             </p>
           </div>
           <p className="qf-no shrink-0 text-sm">No. {quote.number}</p>
@@ -120,7 +126,7 @@ export function QuoteForm({
                     compact ? 'pr-4' : 'pr-5 sm:pr-6',
                   )}
                 >
-                  {money(line.amountCents)}
+                  {amount(money(line.amountCents))}
                 </td>
               </tr>
             ))}
@@ -136,7 +142,7 @@ export function QuoteForm({
                     compact ? 'pr-4' : 'pr-5 sm:pr-6',
                   )}
                 >
-                  −{money(off)}
+                  {amount(`−${money(off)}`)}
                 </td>
               </tr>
             )}
@@ -144,16 +150,31 @@ export function QuoteForm({
         </table>
 
         <div className={cx('flex items-center justify-between gap-3 pt-4', pad)}>
-          <span className="t-label text-paper-muted">Total</span>
-          <div className="flex items-center gap-3">
+          <span className="t-label shrink-0 text-paper-muted">
+            {range ? 'Price range' : 'Total'}
+          </span>
+          <div className="flex min-w-0 items-center gap-3">
             {stamp && (
               <span className={cx('qf-stamp', `is-${stamp}`, animate && 'is-animated')}>
                 {STAMP_TEXT[stamp]}
               </span>
             )}
-            <span className={cx('qf-total', compact ? 'text-[32px]' : 'text-[42px]')}>
-              <span className="hl">{money(shown)}</span>
-            </span>
+            {range ? (
+              <span
+                className={cx(
+                  'qf-total whitespace-nowrap',
+                  compact ? 'text-[22px]' : 'text-[30px]',
+                )}
+              >
+                <span className="hl">
+                  {money(low)}–{money(high)}
+                </span>
+              </span>
+            ) : (
+              <span className={cx('qf-total', compact ? 'text-[32px]' : 'text-[42px]')}>
+                <span className="hl">{money(shown)}</span>
+              </span>
+            )}
           </div>
         </div>
 

@@ -11,11 +11,14 @@ export function LoadedChat({
   profile: initial,
   source,
   onClose,
+  owner,
 }: {
   slug: string;
   profile: BusinessProfile | undefined;
   source: 'link' | 'widget';
   onClose?: () => void;
+  /** The signed-in owner trying their own link. */
+  owner?: boolean;
 }) {
   const [profile, setProfile] = useState(initial);
   const [error, setError] = useState('');
@@ -39,7 +42,9 @@ export function LoadedChat({
       .catch(() => setOpen(false));
   }, [profile, slug]);
   if (profile && open)
-    return <QuoteChat slug={slug} profile={profile} source={source} onClose={onClose} />;
+    return (
+      <QuoteChat slug={slug} profile={profile} source={source} onClose={onClose} owner={owner} />
+    );
   if (profile && open === false)
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface p-6 text-center">

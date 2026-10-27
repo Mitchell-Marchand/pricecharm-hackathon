@@ -10,7 +10,7 @@ import { cx } from '@/lib/util';
 
 /**
  * Whatever is still between the owner and customers asking for quotes: a plan and a card, then
- * deploying, or turning a paused link back on. Nothing shows once the link is taking requests.
+ * going live, or turning a paused link back on. Nothing shows once the link is taking requests.
  */
 export function GoLiveCard({
   billing,
@@ -33,14 +33,14 @@ export function GoLiveCard({
         : 'Quotes are waiting for you'
       : paused
         ? 'Your quote link is paused'
-        : 'Deploy your agent';
+        : 'Go live';
   const text = !billing.plan
-    ? 'Your agent is set up. Pick how you’d like to pay and add a card, then deploy it and customers can ask for quotes.'
+    ? 'Your Charm is set up. Pick how you’d like to pay and add a card, then go live and customers can ask for quotes.'
     : !billing.canSend
       ? billing.reason
       : paused
         ? 'Customers who open it see that you aren’t taking requests right now.'
-        : 'Your plan and card are set. Deploy it and your quote link starts taking requests.';
+        : 'Your plan and card are set. Go live and your quote link starts taking requests.';
 
   return (
     <section
@@ -69,7 +69,7 @@ export function GoLiveCard({
           </Button>
         ) : billing.canSend || billing.checkoutAvailable ? (
           <a href="/start/live" className={buttonClass('primary', 'md')}>
-            {billing.canSend ? 'Deploy your agent' : 'Finish going live'}
+            {billing.canSend ? 'Go live' : 'Finish going live'}
           </a>
         ) : (
           <a href="/app/settings" className="text-accent underline underline-offset-4">

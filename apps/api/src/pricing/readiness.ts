@@ -6,17 +6,18 @@ import { businessContext, loadPricingData } from './history.js';
 import { fitRates, sizeRange, SOLID_POINTS, type Rate } from './rates.js';
 import { formatNumber, formatQuantity, roundSize } from './units.js';
 
-/** A service sends on its own once this many of its latest drafts were close to the owner's price. */
+/** A service is fully trained once this many of its latest drafts were close to the owner's price. */
 export const MATCHES_NEEDED = 2;
-/** Its latest drafts are this many. Two misses among them and it waits for the owner again. */
+/** Its latest drafts are this many. Two misses among them and it's back to learning. */
 export const RECENT_DRAFTS = 3;
 
 /** One AI draft next to the price the owner chose, from practice or a real quote. */
 export type Comparison = { service: string; agree: boolean; at: string };
 
-/** Whether one service's quotes can go out without the owner, and what it needs if not. */
+/** How well the Charm knows one service's prices, and what it still needs. */
 export type ServiceReadiness = {
   service: string;
+  /** Fully trained: enough sized jobs, and its latest drafts close to the owner's prices. */
   ready: boolean;
   /** Jobs and quotes with a size, in the unit it knows best. */
   sizedPrices: number;
@@ -27,11 +28,11 @@ export type ServiceReadiness = {
   jobsToGo: number;
   /** Close guesses in a row it still needs among its latest drafts. None once it's ready. */
   matchesToGo: number;
-  /** "150 to 1,800 sq ft": the sizes it sends on its own. Bigger or smaller jobs wait. */
+  /** "150 to 1,800 sq ft": the sizes it knows. Much bigger or smaller jobs wait for the owner. */
   covers: string;
-  /** 0 to 100: how far it is toward sending on its own. Half sized jobs, half close guesses. */
+  /** 0 to 100: how well it knows this service. Half sized jobs, half close guesses. */
   progress: number;
-  /** Why its quotes wait for the owner, in their terms. Empty once it's ready. */
+  /** What it still needs, in the owner's terms. Empty once it's ready. */
   reason: string;
 };
 
@@ -81,11 +82,11 @@ export function serviceReadiness(
     const toGo = ready ? 0 : matchesToGo(recent);
     let reason = '';
     if (jobsToGo)
-      reason = `It needs ${plural(jobsToGo, `more ${service} job`)} with a size before it sends these on its own.`;
+      reason = `It needs ${plural(jobsToGo, `more ${service} job`)} with a size to know your prices.`;
     else if (!ready) {
       const off =
         recent.length - matched >= 2 ? `Its recent ${service} prices were off from yours. ` : '';
-      reason = `${off}It needs to come within ${AGREE_PERCENT}% of your price on ${plural(toGo, `more ${service} job`)} before it sends these on its own.`;
+      reason = `${off}It needs to come within ${AGREE_PERCENT}% of your price on ${plural(toGo, `more ${service} job`)}.`;
     }
     const progress = ready
       ? 1
@@ -107,12 +108,24 @@ export function serviceReadiness(
   });
 }
 
-/** The agent as a whole: how close it is to quoting the owner's work without them. */
+/** One thing the owner can do to raise the score: add sized jobs, or practice. */
+export type ReadinessStep = {
+  service: string;
+  action: 'job' | 'practice';
+  /** How many more of it the service needs. */
+  count: number;
+  /** Points one more adds to the score. */
+  gain: number;
+};
+
+/** The Charm as a whole: how well it knows the owner's work. */
 export type AgentReadiness = {
-  /** 0 to 100. 100 once every service sends on its own. The services they do most count most. */
+  /** 0 to 100. 100 once every service is fully trained. The services they do most count most. */
   score: number;
-  /** The one step that would raise it most, and by how many points. Null at 100. */
-  next: { service: string; action: 'job' | 'practice'; gain: number } | null;
+  /** The step that would raise it most. Null at 100. */
+  next: ReadinessStep | null;
+  /** One step for each service still learning, the biggest gain first. */
+  steps: ReadinessStep[];
 };
 
 /**
@@ -125,20 +138,26 @@ export function agentReadiness(
 ): AgentReadiness {
   const weight = (service: string) => 1 + (workload[service.toLowerCase()] ?? 0);
   const total = services.reduce((sum, item) => sum + weight(item.service), 0);
-  if (!total) return { score: 0, next: null };
+  if (!total) return { score: 0, next: null, steps: [] };
   const score = Math.floor(
     services.reduce((sum, item) => sum + weight(item.service) * item.progress, 0) / total,
   );
-  let next: AgentReadiness['next'] = null;
-  for (const item of services) {
-    if (item.ready) continue;
-    // A job with a size is the quickest step while it's short of them; then guesses to check.
-    const action = item.jobsToGo ? 'job' : 'practice';
-    const step = action === 'job' ? 50 / SOLID_POINTS : 50 / MATCHES_NEEDED;
-    const gain = Math.max(1, Math.round((weight(item.service) * step) / total));
-    if (!next || gain > next.gain) next = { service: item.service, action, gain };
-  }
-  return { score: next ? Math.min(score, 99) : 100, next };
+  const steps = services
+    .filter((item) => !item.ready)
+    .map((item): ReadinessStep => {
+      // A job with a size is the quickest step while it's short of them; then guesses to check.
+      const action = item.jobsToGo ? 'job' : 'practice';
+      const step = action === 'job' ? 50 / SOLID_POINTS : 50 / MATCHES_NEEDED;
+      return {
+        service: item.service,
+        action,
+        count: action === 'job' ? item.jobsToGo : item.matchesToGo,
+        gain: Math.max(1, Math.round((weight(item.service) * step) / total)),
+      };
+    })
+    // Stable, so services with the same gain keep the owner's order.
+    .sort((a, b) => b.gain - a.gain);
+  return { score: steps.length ? Math.min(score, 99) : 100, next: steps[0] ?? null, steps };
 }
 
 /** How often each service comes up, by lowercase name: past jobs, and requests in 90 days. */

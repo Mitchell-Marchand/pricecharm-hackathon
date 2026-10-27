@@ -12,6 +12,15 @@ import {
   type PricePoint,
 } from '../src/pricing/rates.js';
 import { agentReadiness, serviceReadiness, type Comparison } from '../src/pricing/readiness.js';
+import {
+  priceStyle,
+  priceText,
+  pricedAs,
+  rangeAround,
+  rangeSpread,
+  restyle,
+} from '../src/pricing/style.js';
+import type { Quote } from '../src/practice/types.js';
 import { cleanSpec, describeSpec, specFromScenario } from '../src/pricing/spec.js';
 import { canonicalUnit, formatQuantity, parseQuantity, roundSize } from '../src/pricing/units.js';
 import { focusSituation, planSituation, SITUATIONS, type PlanInput } from '../src/practice/plan.js';
@@ -251,7 +260,7 @@ test('owner changes and the AI’s record on real quotes', () => {
   );
 });
 
-test('each service sends on its own once it has learned the owner’s prices for it', () => {
+test('each service is trained once it has learned the owner’s prices for it', () => {
   const rates = fitRates([
     ...points('Driveways', 'sq ft', [
       [300, 15000],
@@ -282,12 +291,9 @@ test('each service sends on its own once it has learned the owner’s prices for
   assert.deepEqual([house.jobsToGo, house.covers], [2, ''], 'No sizes to stand behind yet');
   assert.equal(
     driveways.reason,
-    'It needs to come within 15% of your price on 2 more Driveways jobs before it sends these on its own.',
+    'It needs to come within 15% of your price on 2 more Driveways jobs.',
   );
-  assert.equal(
-    house.reason,
-    'It needs 2 more House wash jobs with a size before it sends these on its own.',
-  );
+  assert.equal(house.reason, 'It needs 2 more House wash jobs with a size to know your prices.');
   assert.equal(patios.sizedPrices, 0);
 
   [driveways] = check(drafts('driveways', [true, true]));
@@ -305,7 +311,7 @@ test('each service sends on its own once it has learned the owner’s prices for
   assert.equal(driveways.matched, 1);
   assert.equal(
     driveways.reason,
-    'Its recent Driveways prices were off from yours. It needs to come within 15% of your price on 2 more Driveways jobs before it sends these on its own.',
+    'Its recent Driveways prices were off from yours. It needs to come within 15% of your price on 2 more Driveways jobs.',
     'One more match would still leave two misses among the last three',
   );
   [driveways] = check(drafts('Driveways', [false, false, true, true]));
@@ -324,15 +330,26 @@ test('each service sends on its own once it has learned the owner’s prices for
     'Three sized jobs and no guesses yet is halfway',
   );
   const busy = { driveways: 10 };
+  const practiceDriveways = { service: 'Driveways', action: 'practice', count: 2, gain: 21 };
   assert.deepEqual(agentReadiness([driveways, house, patios], busy), {
     score: 43,
-    next: { service: 'Driveways', action: 'practice', gain: 21 },
+    next: practiceDriveways,
+    steps: [
+      practiceDriveways,
+      { service: 'House wash', action: 'job', count: 2, gain: 1 },
+      { service: 'Patios', action: 'job', count: 3, gain: 1 },
+    ],
   });
   [driveways, house, patios] = check(drafts('Driveways', [true, true]));
   assert.equal(driveways.progress, 100);
+  const houseJobs = { service: 'House wash', action: 'job', count: 2, gain: 1 };
   assert.deepEqual(
     agentReadiness([driveways, house, patios], busy),
-    { score: 85, next: { service: 'House wash', action: 'job', gain: 1 } },
+    {
+      score: 85,
+      next: houseJobs,
+      steps: [houseJobs, { service: 'Patios', action: 'job', count: 3, gain: 1 }],
+    },
     'Services they rarely do barely move it',
   );
   assert.equal(
@@ -342,9 +359,53 @@ test('each service sends on its own once it has learned the owner’s prices for
   );
   assert.deepEqual(
     agentReadiness([driveways], busy),
-    { score: 100, next: null },
-    '100 only once every service sends on its own',
+    { score: 100, next: null, steps: [] },
+    '100 only once every service is fully trained',
   );
+});
+
+test('a service still learning gets the price style the owner chose, then firm prices', () => {
+  const settings = { trainedPercent: 60, learningStyle: 'range' as const };
+  assert.equal(priceStyle(59, settings), 'range');
+  assert.equal(priceStyle(60, settings), 'firm', 'At the mark it quotes firm');
+  assert.equal(priceStyle(10, { ...settings, learningStyle: 'estimate' }), 'estimate');
+  assert.equal(priceStyle(0, { ...settings, learningStyle: 'firm' }), 'firm');
+
+  assert.equal(rangeSpread(0, 60), 0.25, 'Widest when it knows nothing');
+  assert.equal(rangeSpread(60, 60), 0.1);
+  assert.ok(rangeSpread(30, 60) < 0.25 && rangeSpread(30, 60) > 0.1);
+  assert.deepEqual(rangeAround(42000, 0.1), { lowCents: 37000, highCents: 47000 });
+  assert.deepEqual(
+    rangeAround(165000, 0.25),
+    { lowCents: 122500, highCents: 207500 },
+    'Rounded outward to $25 under $2,000',
+  );
+  assert.deepEqual(rangeAround(900, 0.25), { lowCents: 900, highCents: 2000 }, 'Never below $10');
+  assert.deepEqual(pricedAs('range', 0, 0.25), {}, 'No price, no range');
+
+  const card = {
+    number: 1,
+    customer: 'Sam K.',
+    place: '',
+    issuedAt: '2026-10-27T00:00:00.000Z',
+    lines: [{ id: 'l0', label: 'House wash', amountCents: 40000 }],
+    discount: null,
+    start: '',
+    duration: '',
+    included: [],
+    excluded: [],
+    validDays: 14,
+    note: '',
+    ...pricedAs('range', 40000, 0.1),
+  } satisfies Quote;
+  assert.equal(priceText(card, 40000), '$360 to $440');
+  const raised = restyle({ ...card, lines: [{ ...card.lines[0], amountCents: 50000 }] }, undefined);
+  assert.equal(priceText(raised, 50000), '$450 to $550', 'The range follows the owner’s price');
+  const firm = restyle(card, 'firm');
+  assert.equal(firm.style, undefined);
+  assert.equal(firm.range, undefined);
+  assert.equal(priceText(firm, 40000), '$400');
+  assert.deepEqual(restyle(card, 'estimate').style, 'estimate');
 });
 
 test('a long history keeps the examples most like the request', () => {

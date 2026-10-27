@@ -94,7 +94,7 @@ function InsightCard({
     >
       <p className="t-label text-muted">Only you see this</p>
       <h2 id={`insight-${run.id}`} className="t-h2 mt-2">
-        Here&apos;s what your AI picked up
+        Here&apos;s what your Charm picked up
       </h2>
 
       {run.outcome === 'quote' && (
@@ -127,7 +127,7 @@ function InsightCard({
           {flagged ? (
             <>
               <span className="font-semibold text-ink">
-                Your AI would have asked to see this one too.
+                Your Charm would have asked to see this one too.
               </span>{' '}
               {reason ? `It spotted the ${reason} in the photos and messages.` : null}
             </>

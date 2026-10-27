@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { rows } from './db.js';
 import { ok } from './http.js';
-import { json } from './models.js';
+import { json, type Row } from './models.js';
+import { settingsFromRow } from './charm.js';
 import { listPastJobs } from './past-jobs.js';
 import { practiceState } from './practice/engine.js';
 import { liveRecord, LIVE_WINDOW } from './pricing/accuracy.js';
@@ -41,10 +42,8 @@ export async function questionChecklist(businessId: string): Promise<string[]> {
  * their real quotes.
  */
 export async function pricingProfile(businessId: string) {
-  const [business] = await rows(
-    'SELECT service_area,travel_radius_miles,auto_send,auto_send_limit_cents FROM businesses WHERE id=?',
-    [businessId],
-  );
+  const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
+  const settings = settingsFromRow(business ?? ({} as Row));
   const runs = await rows(
     "SELECT insights_json FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
     [businessId],
@@ -61,13 +60,14 @@ export async function pricingProfile(businessId: string) {
   }
   const area = String(business?.service_area ?? '').trim();
   const radius = business?.travel_radius_miles ? Number(business.travel_radius_miles) : null;
+  if (settings.limitCents !== null) handoffs.push(`Anything over ${money(settings.limitCents)}`);
   handoffs.push(
-    `Anything over ${money(Number(business?.auto_send_limit_cents ?? 150000))}`,
     area && radius
       ? `Jobs more than ${radius} miles from ${area}`
       : 'Jobs outside your service area',
-    'Services you don’t offer, or anything it hasn’t seen before',
+    'Services you don’t offer',
     'Jobs much bigger or smaller than ones you’ve priced',
+    'Anyone who asks to talk to you',
   );
   const practice = await practiceState(businessId);
   const record = await liveRecord(businessId);
@@ -81,9 +81,10 @@ export async function pricingProfile(businessId: string) {
     rates: data.history.rates.slice(0, 8),
     handoffs,
     results: practice.results,
-    /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
+    /** How well it knows each service. One it's still learning goes out as the owner chose. */
     services,
     autoSendReady: services.some((item) => item.ready),
+    settings,
     readiness: agentReadiness(services, await serviceWorkload(businessId)),
     live: {
       reviewed: record.length,
@@ -92,7 +93,7 @@ export async function pricingProfile(businessId: string) {
       recent: recent.slice(0, 5),
     },
     liveQuotesLearned: data.history.liveQuotes.length,
-    autoSend: Boolean(business?.auto_send),
+    autoSend: settings.autoSend,
     jobsCount: (await listPastJobs(businessId)).length,
     practiceCount: practice.finished,
     practiceQuotes: practice.runs

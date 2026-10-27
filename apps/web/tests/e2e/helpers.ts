@@ -6,12 +6,13 @@ export const OWNER_PASSWORD = 'test password strong123';
 
 /**
  * A signed-up business with three past driveway jobs, set up through the API. It's live unless
- * asked otherwise, done the way an owner does it: a plan, a card, then deploying.
+ * asked otherwise, done the way an owner does it: a plan, a card, then going live. New accounts
+ * quote on their own; this owner has their Charm check with them first unless asked otherwise.
  */
 export async function createBusiness(
   browser: Browser,
   baseURL: string,
-  { billing = true }: { billing?: boolean } = {},
+  { billing = true, autoSend = false }: { billing?: boolean; autoSend?: boolean } = {},
 ) {
   const context = await browser.newContext({ baseURL });
   const owner = context.request;
@@ -41,6 +42,7 @@ export async function createBusiness(
     email: `maya-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`,
     password: OWNER_PASSWORD,
   });
+  if (!autoSend) await send('patch', '/api/v1/app/settings', { autoSend });
   if (billing) {
     await send('post', '/api/v1/app/billing/plan', { plan: 'per_quote' });
     await send('post', '/api/v1/billing/checkout', {});

@@ -77,7 +77,7 @@ export async function addPracticeRun(
         'PRACTICE_LIMIT',
         draft
           ? 'That’s plenty for now. Create your account to keep practicing from the Train page.'
-          : 'That’s a lot of practice. Your AI keeps learning from the quotes you send and the jobs you add.',
+          : 'That’s a lot of practice. Your Charm keeps learning from the quotes you send and the jobs you add.',
       );
     const id = randomUUID();
     const position = runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1;

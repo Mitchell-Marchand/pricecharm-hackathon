@@ -17,7 +17,6 @@ import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './
 import { devTokensAllowed, hashingSecret } from './config.js';
 import { mailProvider } from './integrations/email.js';
 import { clearDraftCookie, draftFromRequest } from './workspace.js';
-import { businessReadiness } from './pricing/readiness.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -236,11 +235,10 @@ export const register: RequestHandler = async (req, res) => {
       if (draft) {
         businessId = String(draft.id);
         claimed = true;
-        // Quotes go out on their own from day one only for a service it has already learned.
-        const autoSendReady = (await businessReadiness(businessId)).some((item) => item.ready);
+        // Quoting on its own, and the rest of the Charm's settings, carry over from setup.
         await mutate(
-          "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',auto_send=?,draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
-          [businessName, businessSlug(businessName, businessId), autoSendReady, businessId],
+          "UPDATE businesses SET status='active',name=?,slug=?,onboarding_step='live',draft_token_hash=NULL,draft_resume_hash=NULL,draft_expires_at=NULL WHERE id=? AND status='draft'",
+          [businessName, businessSlug(businessName, businessId), businessId],
           connection,
         );
       } else

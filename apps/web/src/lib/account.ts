@@ -2,7 +2,7 @@ import { api, json } from './api';
 import type { PracticeResult } from './practice';
 import type { Quote } from './quote';
 
-/** One real quote the owner reviewed: the AI's draft against what they sent. */
+/** One real quote the owner reviewed: the Charm's draft against what they sent. */
 export interface ReviewedQuote {
   quoteId: string;
   customer: string;
@@ -14,9 +14,10 @@ export interface ReviewedQuote {
   agree: boolean;
 }
 
-/** Whether one service's quotes can go out without the owner, and what it needs if not. */
+/** How well the Charm knows one service's prices, and what it still needs. */
 export interface ServiceReadiness {
   service: string;
+  /** Fully trained. */
   ready: boolean;
   sizedPrices: number;
   checked: number;
@@ -25,21 +26,66 @@ export interface ServiceReadiness {
   jobsToGo: number;
   /** Close guesses it still needs among its latest ones. None once it's ready. */
   matchesToGo: number;
-  /** "150 to 1,800 sq ft": the sizes it sends on its own. Bigger or smaller jobs wait. */
+  /** "150 to 1,800 sq ft": the sizes it knows. Much bigger or smaller jobs wait for the owner. */
   covers: string;
-  /** 0 to 100: how far it is toward sending on its own. */
+  /** 0 to 100: how well it knows this service. */
   progress: number;
-  /** Why its quotes wait for the owner. Empty once it's ready. */
+  /** What it still needs. Empty once it's ready. */
   reason: string;
 }
 
-/** How close the agent is to quoting the owner's work without them. Never needed to go live. */
-export interface AgentReadiness {
-  /** 0 to 100. 100 once every service sends on its own; the services they do most count most. */
-  score: number;
-  /** The one step that would raise it most, and by how many points. */
-  next: { service: string; action: 'job' | 'practice'; gain: number } | null;
+/** One thing that raises the score: sized jobs to add, or practice for one service. */
+export interface ReadinessStep {
+  service: string;
+  action: 'job' | 'practice';
+  /** How many more of it. Missing from older APIs. */
+  count?: number;
+  /** Points one more adds. */
+  gain: number;
 }
+
+/** How well the Charm knows the owner's work. Never needed to go live. */
+export interface AgentReadiness {
+  /** 0 to 100. 100 once every service is fully trained; the services they do most count most. */
+  score: number;
+  /** The step that would raise it most. */
+  next: ReadinessStep | null;
+  /** One step for each service still learning, the biggest first. Missing from older APIs. */
+  steps?: ReadinessStep[];
+}
+
+/** What goes out while a service is still learning. */
+export type LearningStyle = 'range' | 'estimate' | 'firm';
+
+/** How the owner's Charm quotes. */
+export interface CharmSettings {
+  /** Quotes go out without waiting for the owner. */
+  autoSend: boolean;
+  /** Quotes over this always wait. Null for no limit. */
+  limitCents: number | null;
+  /** A service gets firm prices from this score on. */
+  trainedPercent: number;
+  learningStyle: LearningStyle;
+}
+
+/** Settings from an API older than this page: what it did before there were any. */
+export const OLD_SETTINGS: CharmSettings = {
+  autoSend: false,
+  limitCents: null,
+  trainedPercent: 100,
+  learningStyle: 'firm',
+};
+
+/** The Charm card's data. */
+export interface CharmView {
+  readiness: AgentReadiness;
+  services: ServiceReadiness[];
+  settings: CharmSettings;
+}
+
+export const loadCharm = () => api<CharmView>('/onboarding/charm');
+export const saveCharm = (patch: Partial<CharmSettings>) =>
+  api<CharmView>('/onboarding/charm', { method: 'PATCH', ...json(patch) });
 
 export interface Profile {
   asks: string[];
@@ -48,12 +94,14 @@ export interface Profile {
   rates: string[];
   handoffs: string[];
   results: PracticeResult[];
-  /** Each service's quotes go out on their own once it has learned the owner's prices for it. */
+  /** How well it knows each service. */
   services: ServiceReadiness[];
   autoSendReady: boolean;
+  /** Missing from an API older than this page. */
+  settings?: CharmSettings;
   /** Missing from an API older than this page, as when web and API deploy a moment apart. */
   readiness?: AgentReadiness;
-  /** The AI's record on real quotes the owner checked before sending. */
+  /** The Charm's record on real quotes the owner checked before sending. */
   live: {
     reviewed: number;
     considered: number;

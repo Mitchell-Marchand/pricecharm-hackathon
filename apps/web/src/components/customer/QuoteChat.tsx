@@ -35,6 +35,7 @@ import {
   type LossReason,
 } from '@/lib/chat';
 import { useHumanCheck } from '@/lib/human-check';
+import { quoteFootnote } from '@/lib/quote';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { cx, readPhoto } from '@/lib/util';
 
@@ -53,11 +54,14 @@ export function QuoteChat({
   profile,
   source,
   onClose,
+  owner = false,
 }: {
   slug: string;
   profile: BusinessProfile;
   source: 'link' | 'widget';
   onClose?: () => void;
+  /** Opened by the signed-in owner to try it, so it says it's a test before the chat starts. */
+  owner?: boolean;
 }) {
   const [access, setAccess] = useState<ChatAccess | null>(null);
   const [chat, setChat] = useState<ChatView | null>(null);
@@ -309,7 +313,7 @@ export function QuoteChat({
           </button>
         )}
       </header>
-      {chat?.test && (
+      {(chat ? chat.test : owner) && (
         <p className="bg-canary-soft px-4 py-2 text-xs text-ink">
           You&apos;re signed in, so this is a test. Nothing is emailed or billed.
         </p>
@@ -334,12 +338,21 @@ export function QuoteChat({
               />
               {index === cardAfter && chat?.quote && (
                 <div ref={card} className="pr-3 pb-3">
+                  {chat.test && chat.quote.status === 'review' && (
+                    <WouldWait quoteId={chat.quote.id} reasons={chat.wouldWait ?? []} />
+                  )}
                   <QuoteForm
                     quote={chat.quote.card}
                     business={profile.name}
-                    stamp={chat.quote.status === 'accepted' ? 'accepted' : undefined}
+                    stamp={
+                      chat.quote.status === 'accepted'
+                        ? 'accepted'
+                        : chat.quote.status === 'review'
+                          ? 'draft'
+                          : undefined
+                    }
                     animate={freshQuote}
-                    footnote="Estimate based on the photos and details you shared."
+                    footnote={quoteFootnote(chat.quote.card, ownerName)}
                     actions={
                       quoteOpen ? (
                         <>
@@ -594,13 +607,13 @@ export function QuoteChat({
           </form>
         )}
 
-        {finished && (
+        {(finished || (chat?.test && chat.quote)) && (
           <button
             type="button"
             onClick={startOver}
             className="self-start text-sm text-accent underline underline-offset-4"
           >
-            Need something else? Start a new request
+            {chat?.test ? 'Try another request' : 'Need something else? Start a new request'}
           </button>
         )}
 
@@ -616,6 +629,34 @@ export function QuoteChat({
           }}
         />
       </footer>
+    </div>
+  );
+}
+
+/** In an owner's test: a real customer would wait for their OK on this quote, and why. */
+function WouldWait({
+  quoteId,
+  reasons,
+}: {
+  quoteId: string;
+  reasons: { id: string; detail: string }[];
+}) {
+  return (
+    <div className="mb-3 rounded-md border border-line bg-canary-soft p-3 text-sm">
+      <p className="font-semibold">A real customer would wait for your OK on this one.</p>
+      {reasons.length > 0 && (
+        <ul className="mt-1.5 flex list-disc flex-col gap-0.5 pl-5 text-ink-2">
+          {reasons.map((reason) => (
+            <li key={reason.id}>{reason.detail}</li>
+          ))}
+        </ul>
+      )}
+      <a
+        href={`/app/quotes/${quoteId}`}
+        className="mt-2 inline-block font-semibold text-accent underline underline-offset-4"
+      >
+        Open it in your quotes
+      </a>
     </div>
   );
 }

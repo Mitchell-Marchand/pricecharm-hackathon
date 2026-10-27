@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Check, ChevronRight, Copy, ExternalLink, Inbox } from 'lucide-react';
+import { Check, ChevronRight, Copy, Inbox } from 'lucide-react';
+import { CharmCard } from '@/components/Charm';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { GoLiveCard } from '@/components/owner/GoLiveCard';
 import { QuoteStatusTag } from '@/components/owner/QuoteStatus';
-import { ReadinessCard } from '@/components/ReadinessCard';
+import { TryCharm } from '@/components/TryCharm';
 import { useToast } from '@/components/Toast';
 import { Button, Tag } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
@@ -19,6 +20,7 @@ import {
   type QuoteFilter,
   type QuoteListItem,
 } from '@/lib/owner';
+import type { CharmView } from '@/lib/account';
 import { cx, money, shortDate } from '@/lib/util';
 
 const FILTERS: { id: QuoteFilter; label: string }[] = [
@@ -68,6 +70,11 @@ export default function QuotesHome() {
   if (!home || !filter) return <div className="shimmer h-40 rounded-md" aria-busy="true" />;
 
   const waiting = home.counts.needsOk;
+  // Missing from an API older than this page, as when web and API deploy a moment apart.
+  const charm: CharmView | null =
+    home.readiness && home.settings && home.services
+      ? { readiness: home.readiness, settings: home.settings, services: home.services }
+      : null;
   const link = `${window.location.origin}/q/${home.business.slug}`;
   const firstName = me.user.firstName || me.user.name.split(' ')[0];
 
@@ -84,19 +91,9 @@ export default function QuotesHome() {
                 : `${waiting} quotes need your OK.`}
           </h1>
           <p className="mt-3 max-w-xl text-ink-2">
-            {home.autoSend ? (
-              <>
-                Quotes up to {money(home.autoSendLimitCents)} that match your usual prices go out on
-                their own. Anything else waits here.
-              </>
-            ) : (
-              <>
-                You approve every quote for now.{' '}
-                <Link href="/app/settings" className="text-accent underline underline-offset-4">
-                  Let them go out on their own
-                </Link>
-              </>
-            )}
+            {home.autoSend
+              ? 'Your Charm quotes customers on its own. Anything unusual waits here for you.'
+              : 'Every quote waits here for your OK.'}
           </p>
         </div>
         <dl className="flex gap-8">
@@ -116,8 +113,16 @@ export default function QuotesHome() {
       </div>
 
       {billing && <GoLiveCard billing={billing} onChange={setBilling} className="mt-8" />}
-      {home.readiness?.next && (
-        <ReadinessCard className="mt-8" readiness={home.readiness} nextHref="/app/train" />
+      {charm && (
+        <CharmCard
+          className="mt-8"
+          charm={charm}
+          onChange={(next) => {
+            setHome({ ...home, autoSend: next.settings.autoSend, settings: next.settings });
+          }}
+          compact
+          moreHref="/app/train"
+        />
       )}
 
       <div className="mt-10 flex flex-wrap gap-1.5" role="tablist" aria-label="Show quotes">
@@ -188,7 +193,9 @@ export default function QuotesHome() {
                     )}
                   </div>
                   <p className="tabular font-mono text-lg font-semibold">
-                    {money(quote.totalCents)}
+                    {quote.range
+                      ? `${money(quote.range.lowCents)}–${money(quote.range.highCents)}`
+                      : money(quote.totalCents)}
                   </p>
                   <ChevronRight className="size-5 shrink-0 text-muted" aria-hidden />
                 </Link>
@@ -223,14 +230,9 @@ export default function QuotesHome() {
           >
             {copied ? <Check aria-hidden /> : <Copy aria-hidden />} {copied ? 'Copied' : 'Copy'}
           </Button>
-          <a
-            href={`/q/${home.business.slug}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-11 items-center gap-2 rounded-sm px-4 text-[15px] font-semibold text-ink-2 hover:bg-surface-2 hover:text-ink [&_svg]:size-[1.1em]"
-          >
-            <ExternalLink aria-hidden /> Try it as a customer
-          </a>
+          <TryCharm slug={home.business.slug} variant="ghost" size="md">
+            Try it as a customer
+          </TryCharm>
         </div>
       </section>
     </>

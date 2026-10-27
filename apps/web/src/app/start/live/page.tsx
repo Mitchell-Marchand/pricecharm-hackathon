@@ -4,21 +4,20 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, Lock, Mail, MessageSquareText, Receipt } from 'lucide-react';
 import { Logo } from '@/components/Logo';
-import { ReadinessCard } from '@/components/ReadinessCard';
+import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
 import { SetupLoading } from '@/components/SetupLoading';
 import { AccountMenu } from '@/components/owner/AccountMenu';
 import { EmailCode } from '@/components/owner/EmailCode';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { ShareSections } from '@/components/share/ShareSections';
 import { Button, ButtonLink } from '@/components/ui';
-import { loadMe, loadShare, type AgentReadiness, type Me, type Share } from '@/lib/account';
+import { loadMe, loadShare, type CharmView, type Me, type Share } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
 import {
   choosePlan,
   deployAgent,
   loadBilling,
-  loadHome,
   startCheckout,
   syncBilling,
   type Billing,
@@ -38,7 +37,8 @@ export default function LiveStep() {
   const [me, setMe] = useState<Me | null>(null);
   const [share, setShare] = useState<Share | null>(null);
   const [billing, setBilling] = useState<Billing | null>(null);
-  const [readiness, setReadiness] = useState<AgentReadiness | null>(null);
+  // Only to show beside the plans and the deploy step; going live doesn't wait on it.
+  const [charm, setCharm] = useCharm();
   const [checkingCard, setCheckingCard] = useState(false);
   const [error, setError] = useState('');
   const fromCheckout = useRef<boolean | null>(null);
@@ -56,10 +56,6 @@ export default function LiveStep() {
     loadShare()
       .then(setShare)
       .catch((loadError) => setError(errorMessage(loadError)));
-    // Only to show at the deploy step; going live doesn't wait on it.
-    loadHome()
-      .then((home) => setReadiness(home.readiness ?? null))
-      .catch(() => {});
     fromCheckout.current ??=
       new URLSearchParams(window.location.search).get('billing') === 'active';
     if (!fromCheckout.current) return refresh();
@@ -135,11 +131,12 @@ export default function LiveStep() {
             business={business}
             link={share.url}
             billing={billing}
-            readiness={readiness}
+            charm={charm}
+            onCharm={setCharm}
             onDeployed={setBilling}
           />
         ) : (
-          <Plans business={business} billing={billing} />
+          <Plans business={business} billing={billing} charm={charm} />
         )}
       </main>
     </div>
@@ -150,7 +147,15 @@ export default function LiveStep() {
  * The ask: three plans, each a button straight to adding a card. What it's for is said once,
  * plainly, above them.
  */
-function Plans({ business, billing }: { business: string; billing: Billing }) {
+function Plans({
+  business,
+  billing,
+  charm,
+}: {
+  business: string;
+  billing: Billing;
+  charm: CharmView | null;
+}) {
   const [busy, setBusy] = useState<Plan | null>(null);
   const [error, setError] = useState('');
   const { pricing } = billing;
@@ -170,12 +175,14 @@ function Plans({ business, billing }: { business: string; billing: Billing }) {
   return (
     <>
       <p className="inline-flex items-center gap-2 font-semibold text-go">
-        <Check className="size-5" aria-hidden /> Your AI is trained
+        <Check className="size-5" aria-hidden />{' '}
+        {charm ? `Your Charm is ${charm.readiness.score}% trained` : 'Your Charm is set up'}
       </p>
       <h1 className="t-hero mt-4 max-w-3xl">Pick a plan. Then go live.</h1>
       <p className="mt-5 max-w-2xl text-lg text-ink-2">
-        Customers get a real quote from {business} in about 2 minutes, day or night. Until your AI
-        is ready to send on its own, each quote waits for your OK, one tap from your email.
+        {charm && !charm.settings.autoSend
+          ? `Customers ask ${business} for a quote any time, and each one waits for your OK, one tap from your email.`
+          : `Customers get a quote from ${business} in about 2 minutes, day or night.`}
       </p>
       <div className="mt-10">
         {billing.checkoutAvailable ? (
@@ -219,24 +226,27 @@ function Plans({ business, billing }: { business: string; billing: Billing }) {
   );
 }
 
-/** Card added: one button to start taking requests, with how ready the agent is beside it. */
+/** Card added: one button to start taking requests, with the Charm and its switch beside it. */
 function Deploy({
   business,
   link,
   billing,
-  readiness,
+  charm,
+  onCharm,
   onDeployed,
 }: {
   business: string;
   /** The quote link that starts taking requests. */
   link: string;
   billing: Billing;
-  readiness: AgentReadiness | null;
+  charm: CharmView | null;
+  onCharm: (charm: CharmView) => void;
   onDeployed: (billing: Billing) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const learning = readiness && readiness.score < 100;
+  const settings = charm?.settings;
+  const learning = charm && settings && charm.readiness.score < settings.trainedPercent;
 
   async function deploy() {
     setBusy(true);
@@ -259,21 +269,25 @@ function Deploy({
         </p>
         <h1 className="t-hero mt-4">Ready when you are.</h1>
         <p className="mt-5 max-w-xl text-lg text-ink-2">
-          Deploying turns on your quote link and website widget, so customers can ask {business} for
-          a quote straight away.
+          Going live turns on your quote link and website widget, so customers can ask {business}{' '}
+          for a quote straight away.
         </p>
         <p className="mt-5 inline-flex max-w-full items-center gap-2 rounded-sm border border-line bg-surface px-3 py-2 font-mono text-sm">
           <span className="size-2 shrink-0 rounded-full bg-line-strong" aria-hidden />
           <span className="truncate">{link.replace(/^https?:\/\//, '')}</span>
         </p>
-        <p className="mt-5 max-w-xl text-ink-2">
-          {learning
-            ? `It’s ${readiness.score}% ready, so for now it drafts each quote and you approve it with one tap. It sends more on its own as it learns your prices.`
-            : 'It sends quotes on its own where it knows your prices, and asks you about anything unusual.'}
-        </p>
+        {settings && (
+          <p className="mt-5 max-w-xl text-ink-2">
+            {!settings.autoSend
+              ? 'Your Charm drafts each quote and you send it with one tap.'
+              : learning && settings.learningStyle !== 'firm'
+                ? `Your Charm quotes on its own. While it learns, customers get ${LEARNING_TEXT[settings.learningStyle]}, and anything unusual comes to you first.`
+                : 'Your Charm quotes on its own, and anything unusual comes to you first.'}
+          </p>
+        )}
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Button size="lg" disabled={busy} onClick={() => void deploy()}>
-            {busy ? 'Deploying…' : 'Deploy your agent'} <ArrowRight aria-hidden />
+            {busy ? 'Going live…' : 'Go live'} <ArrowRight aria-hidden />
           </Button>
           {learning && (
             <Link
@@ -290,7 +304,7 @@ function Deploy({
           </p>
         )}
       </div>
-      {readiness && <ReadinessCard readiness={readiness} nextHref="/app/train" />}
+      {charm && <CharmCard charm={charm} onChange={onCharm} compact moreHref="/app/train" />}
     </div>
   );
 }

@@ -27,9 +27,9 @@ export default function AccountStep() {
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<{ message: string; exists?: boolean } | null>(null);
-  // Signed up already: the live page has the plans and whatever else is left.
+  // Signed up already: trying the Charm, then the plans, is what's left.
   useEffect(() => {
-    if (state && !state.draft) router.replace('/start/live');
+    if (state && !state.draft) router.replace('/start/try');
   }, [state, router]);
 
   if (!state || !state.draft) return <SetupLoading />;
@@ -53,8 +53,9 @@ export default function AccountStep() {
         },
         await human.headers(),
       );
-      reload();
-      await goTo('live');
+      // The try page needs the account's quote link, so wait for it.
+      await reload();
+      await goTo('try');
     } catch (registerError) {
       setError({
         message: errorMessage(registerError),
@@ -78,7 +79,7 @@ export default function AccountStep() {
           <ArrowLeft className="size-4" aria-hidden /> Back
         </button>
         <h1 className="t-h1 mt-5">Create your free account</h1>
-        <p className="mt-3 text-lg text-ink-2">Save your AI and get your quote link.</p>
+        <p className="mt-3 text-lg text-ink-2">Save your Charm, then try it as a customer would.</p>
 
         <div className="mt-6 rounded-md border border-line bg-surface px-4 py-3">
           <p className="font-semibold">{business}</p>

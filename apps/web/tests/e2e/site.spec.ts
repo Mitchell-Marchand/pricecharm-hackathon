@@ -83,7 +83,7 @@ test('uploads are off in the demo, and a demo link opens on its trade', async ({
   await page.goto('/demo?trade=hvac');
   await expect(page.getByText(/quote assistant for Comfort Air Heating & Cooling/)).toBeVisible();
   await expect(
-    page.getByText('[DEMO] Your AI will actually chat and quote like you would.'),
+    page.getByText('[DEMO] Your Charm will actually chat and quote like you would.'),
   ).toBeVisible();
   const camera = page.getByRole('button', { name: 'Add a photo' });
   await expect(camera).toHaveAttribute('aria-disabled', 'true');
@@ -133,7 +133,7 @@ test('the demo page starts setup on the trade being tried', async ({ page }) => 
     .filter({ hasText: 'Roofing' })
     .click();
   await expect(page.getByText('Want this for your roofing business?')).toBeVisible();
-  const create = page.getByRole('link', { name: 'Create my agent' });
+  const create = page.getByRole('link', { name: 'Create my Charm' });
   await expect(create).toHaveCount(2);
   await expect(create.last()).toHaveAttribute('href', '/start?trade=roofing');
   await create.first().click();

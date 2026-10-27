@@ -348,7 +348,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
         <Tag>Demo</Tag>
       </header>
       <p className="bg-canary-soft px-4 py-2 text-xs text-ink">
-        [DEMO] Your AI will actually chat and quote like you would.
+        [DEMO] Your Charm will actually chat and quote like you would.
       </p>
 
       {/* No overscroll containment: past the end of the chat, the page keeps scrolling. */}

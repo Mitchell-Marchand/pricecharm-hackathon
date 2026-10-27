@@ -29,6 +29,7 @@ import { approveLinkRouter } from './live/approve-link.js';
 import { pastJobsRouter } from './past-jobs.js';
 import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
+import { charmRouter } from './charm.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { demoRouter } from './demo.js';
@@ -136,6 +137,7 @@ export function createApp() {
     jobImportsRouter,
     practiceRouter,
     profileRouter,
+    charmRouter,
     chatRouter,
     demoRouter,
   );

@@ -23,7 +23,7 @@ export function QuoteBuilder({
   open,
   customer,
   initial,
-  subtitle = 'Price it the way you normally would. Your AI learns from every line.',
+  subtitle = 'Price it the way you normally would. Your Charm learns from every line.',
   sending,
   error,
   onClose,
@@ -394,8 +394,8 @@ function BuilderForm({
             htmlFor="quote-note"
             hint={
               <span className="inline-flex items-center gap-1.5">
-                <Lock className="size-3.5" aria-hidden /> Only your AI sees this. It's the best way
-                to teach it.
+                <Lock className="size-3.5" aria-hidden /> Only your Charm sees this. It's the best
+                way to teach it.
               </span>
             }
           >
@@ -459,7 +459,7 @@ export function SiteVisitSheet({
       open={open}
       onClose={onClose}
       title="Ask for a site visit"
-      subtitle={`Some jobs need a look first. Tell ${customer.firstName} why, and your AI will learn when to do the same.`}
+      subtitle={`Some jobs need a look first. Tell ${customer.firstName} why, and your Charm will learn when to do the same.`}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>

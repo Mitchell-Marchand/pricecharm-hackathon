@@ -10,12 +10,20 @@ import { isDisposableEmail } from '../email-domains.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { hashingSecret } from '../config.js';
+import { settingsFromRow } from '../charm.js';
 import { mailProvider, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
 import { draftForBusiness } from '../pricing/draft.js';
-import { businessReadiness } from '../pricing/readiness.js';
+import { businessReadiness, type ServiceReadiness } from '../pricing/readiness.js';
+import {
+  priceStyle,
+  priceText,
+  pricedAs,
+  rangeSpread,
+  type LearningStyle,
+} from '../pricing/style.js';
 import {
   estimateGap,
   SOLID_POINTS,
@@ -225,10 +233,19 @@ export async function chatView(business: Row, chat: Row) {
     [chat.id],
   );
   const quote = await liveQuoteFor(String(chat.id));
-  // Customers only ever see a quote the business sent; a held or declined one stays private.
+  const test = chat.source === 'test';
+  // Customers only ever see a quote the business sent; a held or declined one stays private. The
+  // owner testing their own link sees a held one too, with why it would wait.
   const visible =
     quote &&
-    ['sent', 'accepted', 'visit_requested', 'lost', 'expired'].includes(String(quote.status));
+    (['sent', 'accepted', 'visit_requested', 'lost', 'expired'].includes(String(quote.status)) ||
+      (test && quote.status === 'review'));
+  const wouldWait =
+    test && quote?.status === 'review'
+      ? json<Check[]>(quote.checks_json, [])
+          .filter((check) => !check.passed)
+          .map((check) => ({ id: check.id, detail: check.detail }))
+      : [];
   return {
     id: String(chat.id),
     status: String(chat.status),
@@ -260,6 +277,8 @@ export async function chatView(business: Row, chat: Row) {
         }
       : null,
     waitingForOwner: quote?.status === 'review',
+    /** In an owner's test, why this quote would wait for them. */
+    wouldWait,
   };
 }
 
@@ -549,19 +568,25 @@ function sizeProblem(service: string, spec: JobSpec | null, estimate: Estimate |
   }
 }
 
-/** The server's checks on the AI's draft. Any failure sends the quote to the owner first. */
+/**
+ * The server's checks on the Charm's draft. Any failure sends the quote to the owner first. They
+ * are about the job, not about how trained the Charm is: a service it's still learning goes out
+ * in the style the owner picked, like a price range.
+ */
 async function checkDraft(
   business: Row,
   chat: Row,
   drafted: DraftedQuote,
   totalCents: number,
   estimate: Estimate | null,
-  rates?: Rate[],
+  learned: ServiceReadiness | undefined,
+  style: LearningStyle,
 ) {
   const checks: Check[] = [];
   const add = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
-  const limit = Number(business.auto_send_limit_cents);
+  const { limitCents, autoSend } = settingsFromRow(business);
   const offered = await services(String(business.id));
+  const service = String(chat.service_name || '');
   add(
     'priced',
     drafted.lines.length > 0 && totalCents > 0,
@@ -572,12 +597,20 @@ async function checkDraft(
     drafted.decision === 'quote',
     `It thinks you should see it first${drafted.reason ? `: ${drafted.reason}` : '.'}`,
   );
-  add('confidence', drafted.confidence !== 'low', 'It isn’t sure about this one.');
-  add('limit', totalCents <= limit, `It’s over your ${money(limit)} limit.`);
+  // A range or an estimate already tells the customer the price may move.
+  add(
+    'confidence',
+    drafted.confidence !== 'low' || style !== 'firm',
+    'It isn’t sure about this one.',
+  );
+  if (limitCents !== null)
+    add('limit', totalCents <= limitCents, `It’s over your ${money(limitCents)} limit.`);
   add(
     'service',
-    !chat.service_name || offered.includes(String(chat.service_name)),
-    `${chat.service_name} isn’t one of your services.`,
+    Boolean(service) && offered.includes(service),
+    service
+      ? `${service} isn’t one of your services.`
+      : 'It couldn’t tell which of your services this is.',
   );
   add('scope', !chat.out_of_scope, String(chat.out_of_scope));
   const similar = (await listPastJobs(String(business.id))).filter(
@@ -593,16 +626,8 @@ async function checkDraft(
       `It’s far from what you charged for similar jobs (${money(low)} to ${money(high)}).`,
     );
   }
-  // Each service sends alone only once it has learned the owner's prices for it.
-  const service = String(chat.service_name || '');
-  const learned = (await businessReadiness(String(business.id), rates)).find(
-    (item) => service && item.service.toLowerCase() === service.toLowerCase(),
-  );
-  // A service they don't offer already fails above.
-  if (learned) add('learned', learned.ready, learned.reason);
-  else if (!service) add('learned', false, 'It couldn’t tell which of your services this is.');
   // The size has to be one it can hold to the owner's rate: known, and near jobs they've priced.
-  // Without enough sized prices for the service, the reason above already says what to add.
+  // Until it has enough sized prices for the service, there's no rate to hold it to.
   if (learned && learned.sizedPrices >= SOLID_POINTS) {
     const size = sizeProblem(service, json<JobSpec | null>(chat.spec_json, null), estimate);
     add('size', !size, size);
@@ -615,7 +640,7 @@ async function checkDraft(
       `It’s far from your usual rate, which comes to about ${money(estimate.cents)} for this size.`,
     );
   add('handoff', !chat.human_handoff, 'The customer asked to talk to you.');
-  add('auto', Boolean(business.auto_send), 'You approve each quote for now.');
+  add('auto', autoSend, 'You approve each quote for now.');
   return checks;
 }
 
@@ -682,7 +707,14 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     };
   }
   const totalCents = quoteTotal(drafted);
-  const checks = await checkDraft(business, chat, drafted, totalCents, estimate, rates);
+  const service = String(chat.service_name || '').toLowerCase();
+  const learned = (await businessReadiness(businessId, rates)).find(
+    (item) => service && item.service.toLowerCase() === service,
+  );
+  const settings = settingsFromRow(business);
+  const progress = learned?.progress ?? 0;
+  const style = priceStyle(progress, settings);
+  const checks = await checkDraft(business, chat, drafted, totalCents, estimate, learned, style);
   const terms = await usualTerms(businessId, String(chat.service_name));
   const test = chat.source === 'test';
   await transaction(async (connection) => {
@@ -703,6 +735,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     const name = String(chat.customer_name).trim();
     const parts = name.split(/\s+/);
     const card: Quote = {
+      ...pricedAs(style, totalCents, rangeSpread(progress, settings.trainedPercent)),
       number,
       customer: parts.length > 1 ? `${parts[0]} ${parts.at(-1)?.[0]}.` : name,
       place: String(business.service_area ?? ''),
@@ -759,7 +792,10 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
         chatId,
         sender: 'assistant',
         kind: 'status',
-        text: `Thanks! ${owner ? `${owner} at ` : ''}${business.name} will look this over and send your quote shortly. We’ll email you when it’s ready.`,
+        // The owner testing their own link sees what their Charm drafted, and why it would wait.
+        text: test
+          ? 'Here’s the quote your Charm drafted.'
+          : `Thanks! ${owner ? `${owner} at ` : ''}${business.name} will look this over and send your quote shortly. We’ll email you when it’s ready.`,
       });
       if (!test) await notifyOwner(businessId, chatId, 'review', connection);
     }
@@ -827,7 +863,7 @@ async function notifyCustomerQuote(
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId], connection);
   const [business] = await rows('SELECT slug FROM businesses WHERE id=?', [businessId], connection);
   const [quote] = await rows(
-    'SELECT total_cents FROM live_quotes WHERE chat_id=?',
+    'SELECT total_cents,quote_json FROM live_quotes WHERE chat_id=?',
     [chatId],
     connection,
   );
@@ -840,7 +876,7 @@ async function notifyCustomerQuote(
       dedupeKey: `live-quote:${chatId}:customer`,
       to: String(chat.customer_email),
       subject: `Your quote from ${businessName}`,
-      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${money(Number(quote.total_cents))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
+      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
     },
     connection,
   );
@@ -866,7 +902,7 @@ export async function notifyOwner(
     connection,
   );
   const [quote] = await rows(
-    'SELECT id,total_cents,review_reason,outcome_reason,outcome_note FROM live_quotes WHERE chat_id=?',
+    'SELECT id,total_cents,quote_json,review_reason,outcome_reason,outcome_note FROM live_quotes WHERE chat_id=?',
     [chatId],
     connection,
   );
@@ -874,7 +910,9 @@ export async function notifyOwner(
   const why = quote?.review_reason ? `\n\nWhy it’s waiting: ${quote.review_reason}` : '';
   const first = String(chat.customer_name).trim().split(/\s+/)[0] || 'A customer';
   const service = String(chat.service_name || '').toLowerCase();
-  const total = quote ? money(Number(quote.total_cents)) : '';
+  const total = quote
+    ? priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))
+    : '';
   const link = quote ? `${appOrigin()}/app/quotes/${quote.id}` : `${appOrigin()}/app`;
   // A quote with no price can't go out as it is, so it only gets the link to change it.
   const approve =
@@ -884,11 +922,11 @@ export async function notifyOwner(
   const message: Record<OwnerEvent, { subject: string; text: string }> = {
     review: {
       subject: `${first} wants a ${service || 'quote'}${service ? ' quote' : ''}. It needs your OK.`,
-      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your AI drafted it${Number(quote?.total_cents) > 0 ? ` for ${total}` : ''}, and it’s waiting for you to approve or change it.${approve}${why}`,
+      text: `${first} asked for a ${service || 'quote'}${service ? ' quote' : ''}. Your Charm drafted it${Number(quote?.total_cents) > 0 ? ` for ${total}` : ''}, and it’s waiting for you to approve or change it.${approve}${why}`,
     },
     sent: {
       subject: `Quote sent: ${total} to ${first}`,
-      text: `Your AI sent ${first} a quote for ${total}.\n\nSee the quote and the conversation:\n${link}`,
+      text: `Your Charm sent ${first} a quote for ${total}.\n\nSee the quote and the conversation:\n${link}`,
     },
     accepted: {
       subject: `${first} accepted your ${total} quote`,
@@ -904,7 +942,7 @@ export async function notifyOwner(
     },
     lost: {
       subject: `${first} isn’t going ahead with your ${total} quote`,
-      text: `${first} isn’t going ahead with your quote for ${total}. Their reason: ${lossReasonPhrase(String(quote?.outcome_reason ?? ''))}.${quote?.outcome_note ? `\n\nThey added: “${quote.outcome_note}”` : ''}\n\nYour AI keeps this with the quote, so it knows how this price went.\n${link}`,
+      text: `${first} isn’t going ahead with your quote for ${total}. Their reason: ${lossReasonPhrase(String(quote?.outcome_reason ?? ''))}.${quote?.outcome_note ? `\n\nThey added: “${quote.outcome_note}”` : ''}\n\nYour Charm keeps this with the quote, so it knows how this price went.\n${link}`,
     },
   };
   await queueEmail(
@@ -973,7 +1011,10 @@ export async function customerDecision(
       sender: 'assistant',
       kind: 'status',
       text: {
-        accept: `You’re all set. ${owner || business.name} will be in touch to schedule.`,
+        accept:
+          json<Quote | null>(quote.quote_json, null)?.style === 'range'
+            ? `You’re all set. ${owner || business.name} will confirm the final price and be in touch to schedule.`
+            : `You’re all set. ${owner || business.name} will be in touch to schedule.`,
         visit: `Got it. ${owner || business.name} will get in touch to set up a visit.`,
         decline: `Thanks for letting ${owner || business.name} know.`,
       }[decision],

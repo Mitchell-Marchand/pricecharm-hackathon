@@ -86,7 +86,7 @@ export function DemoExplorer({
         {intro}
         <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3">
           <ButtonLink href={setUp} size="lg">
-            Create my agent <ArrowRight aria-hidden />
+            Create my Charm <ArrowRight aria-hidden />
           </ButtonLink>
           <p className="text-sm text-muted">About 5 minutes · Free to set up · No card to start</p>
         </div>
@@ -121,7 +121,7 @@ export function DemoExplorer({
             <p className="text-[15px] text-ink-2">
               Want this for your {tradeWords(TRADES_BY_ID[demo.tradeId]?.name ?? 'own')} business?
             </p>
-            <ButtonLink href={setUp}>Create my agent</ButtonLink>
+            <ButtonLink href={setUp}>Create my Charm</ButtonLink>
           </div>
         </div>
       </div>

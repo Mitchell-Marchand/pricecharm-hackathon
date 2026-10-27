@@ -94,7 +94,7 @@ export function MorePractice({
                 </h1>
                 <p className="mt-3 text-lg text-ink-2">
                   Same as in setup. Answer like it&apos;s a real lead, then quote it or ask to see
-                  it first. Your AI picks up how you handle it.
+                  it first. Your Charm picks up how you handle it.
                 </p>
               </>
             )}

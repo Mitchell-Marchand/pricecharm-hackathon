@@ -6,6 +6,7 @@ import { api, errorMessage, json } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
 import { cx } from '@/lib/util';
 import { Logo } from './Logo';
+import { CharmMeter } from './Charm';
 import { AccountMenu } from './owner/AccountMenu';
 import { Sheet } from './Sheet';
 import { useToast } from './Toast';
@@ -54,7 +55,16 @@ function Stepper({ step }: { step: 1 | 2 | 3 }) {
   );
 }
 
-export function WizardHeader({ step, children }: { step: 1 | 2 | 3; children?: ReactNode }) {
+export function WizardHeader({
+  step,
+  charm,
+  children,
+}: {
+  step: 1 | 2 | 3;
+  /** Shows the Charm's score, fetched again whenever this changes. */
+  charm?: unknown;
+  children?: ReactNode;
+}) {
   const { state, save, flush } = useOnboarding();
   const [saveOpen, setSaveOpen] = useState(false);
   // Before signup there's nothing to sign out of, and "Finish later" emails a link back instead.
@@ -70,6 +80,11 @@ export function WizardHeader({ step, children }: { step: 1 | 2 | 3; children?: R
         </div>
         <Stepper step={step} />
         <div className="flex items-center gap-1">
+          {charm !== undefined && (
+            <div className="mr-3 hidden lg:block">
+              <CharmMeter refreshKey={charm} />
+            </div>
+          )}
           {save === 'failed' ? (
             <button
               type="button"
@@ -115,14 +130,23 @@ export function WizardHeader({ step, children }: { step: 1 | 2 | 3; children?: R
       </div>
       <div
         className={cx(
-          'gutter mx-auto flex max-w-6xl items-center gap-3 pb-3 md:hidden',
+          'gutter mx-auto flex max-w-6xl items-center gap-3 pb-3',
+          charm !== undefined ? 'md:justify-end lg:hidden' : 'md:hidden',
           children ? 'hidden' : undefined,
         )}
       >
-        <p className="shrink-0 text-sm text-muted">
+        <p className="shrink-0 text-sm text-muted md:hidden">
           Step {step} of 3 · <span className="font-semibold text-ink">{STEPS[step - 1]}</span>
         </p>
-        <div className="flex flex-1 gap-1" aria-hidden>
+        {charm !== undefined && (
+          <div className="ml-auto lg:hidden">
+            <CharmMeter refreshKey={charm} />
+          </div>
+        )}
+        <div
+          className={cx('flex flex-1 gap-1 md:hidden', charm !== undefined && 'hidden')}
+          aria-hidden
+        >
           {STEPS.map((label, index) => (
             <span
               key={label}

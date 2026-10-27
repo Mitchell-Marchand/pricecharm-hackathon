@@ -1,36 +1,46 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, CircleCheckBig, Hand, MessageSquareText, Receipt } from 'lucide-react';
+import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
 import { JobSheet, newJob, type Editing } from '@/components/jobs/PastJobs';
 import { Logo } from '@/components/Logo';
 import { QuoteForm } from '@/components/QuoteForm';
-import { ReadinessCard } from '@/components/ReadinessCard';
-import { ServiceList, ServicesIntro } from '@/components/ServiceList';
 import { SetupLoading } from '@/components/SetupLoading';
+import { TryCharm } from '@/components/TryCharm';
 import { useToast } from '@/components/Toast';
 import { Button } from '@/components/ui';
-import { loadProfile, type Profile } from '@/lib/account';
+import { loadProfile, type CharmSettings, type Profile } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { useOnboarding } from '@/lib/onboarding';
 import { morePractice } from '@/lib/practice';
 import { tradeName, TRADES_BY_ID } from '@/lib/trades';
 import { money } from '@/lib/util';
 
+/**
+ * The end of training. Before signup it shows what the Charm learned and asks for the account.
+ * After it, the same page lets the owner try their Charm as a customer before going live.
+ */
 export default function ReadyStep() {
   const { state, goTo } = useOnboarding();
+  const pathname = usePathname();
   const notify = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState<Editing | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  const [changes, setChanges] = useState(0);
+  const [charm, setCharm] = useCharm(changes);
   const refresh = useCallback(() => {
     loadProfile()
       .then(setProfile)
       .catch((loadError) => setError(errorMessage(loadError)));
+    setChanges((current) => current + 1);
   }, []);
   useEffect(refresh, [refresh]);
   if (!state) return <SetupLoading />;
+  const trying = !state.draft && pathname === '/start/try';
   const business = state.business.name || 'Your business';
   const trade = tradeName(state.business.tradeId, state.business.customTrade).toLowerCase();
   const tradeHints = state.business.tradeId ? TRADES_BY_ID[state.business.tradeId] : null;
@@ -57,27 +67,52 @@ export default function ReadyStep() {
         <div className="grid items-center gap-12 md:grid-cols-[1fr_380px]">
           <div>
             <p className="inline-flex items-center gap-2 font-semibold text-go">
-              <CircleCheckBig className="size-5" aria-hidden /> Training complete
+              <CircleCheckBig className="size-5" aria-hidden />{' '}
+              {trying ? 'Account created' : 'Setup done'}
             </p>
-            <h1 className="t-hero mt-4">Your AI is ready.</h1>
-            <p className="mt-5 max-w-xl text-lg text-ink-2">
-              {profile ? (
+            <h1 className="t-hero mt-4">
+              {trying ? 'Try your Charm.' : headline(charm?.readiness.score, charm?.settings)}
+            </h1>
+            {trying && (
+              <p className="mt-5 max-w-xl text-lg text-ink-2">
+                Ask for a quote the way your customers will. You&apos;re signed in, so it&apos;s a
+                test: nothing is emailed or billed, and you see exactly what they&apos;d get.
+              </p>
+            )}
+            <p className={trying ? 'mt-3 max-w-xl text-ink-2' : 'mt-5 max-w-xl text-lg text-ink-2'}>
+              {profile && !trying && (
                 <>
                   It learned from {profile.jobsCount} past{' '}
-                  {profile.jobsCount === 1 ? 'job' : 'jobs'} and {profile.practiceCount} practice
-                  customers. Here&apos;s how it will handle {trade} requests for {business}.
+                  {profile.jobsCount === 1 ? 'job' : 'jobs'} and {profile.practiceCount} practice{' '}
+                  {profile.practiceCount === 1 ? 'customer' : 'customers'}.{' '}
+                </>
+              )}
+              {charm
+                ? charm.readiness.score >= charm.settings.trainedPercent ||
+                  charm.settings.learningStyle === 'firm'
+                  ? `It can quote ${trade} customers for ${business} now, and anything unusual comes to you first.`
+                  : `It can start quoting ${trade} customers for ${business} now. Until a service reaches ${charm.settings.trainedPercent}%, customers get ${LEARNING_TEXT[charm.settings.learningStyle]}.`
+                : `Here’s how it will handle ${trade} requests for ${business}.`}
+            </p>
+            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+              {trying && state.slug ? (
+                <>
+                  <TryCharm slug={state.slug} onClose={refresh} />
+                  <Button size="lg" variant="secondary" onClick={() => void goTo('live')}>
+                    Go live <ArrowRight aria-hidden />
+                  </Button>
                 </>
               ) : (
                 <>
-                  Here&apos;s how it will handle {trade} requests for {business}.
+                  <Button size="lg" onClick={() => void goTo(state.draft ? 'account' : 'try')}>
+                    {state.draft ? 'Create your free account' : 'Try your Charm'}{' '}
+                    <ArrowRight aria-hidden />
+                  </Button>
+                  {state.draft && (
+                    <p className="text-sm text-muted">Then try it as a customer would.</p>
+                  )}
                 </>
               )}
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button size="lg" onClick={() => void goTo(state.draft ? 'account' : 'live')}>
-                {state.draft ? 'Create your free account' : 'Get your quote link'}{' '}
-                <ArrowRight aria-hidden />
-              </Button>
             </div>
           </div>
           <div
@@ -105,28 +140,19 @@ export default function ReadyStep() {
         )}
         {profile && (
           <>
-            <section className="mt-16 border-t border-line pt-12" aria-labelledby="services-title">
-              <h2 id="services-title" className="t-h2">
-                Your services
-              </h2>
-              <ReadinessCard
-                className="mt-5 max-w-3xl"
-                readiness={profile.readiness}
-                onNext={(next) =>
-                  next.action === 'job'
-                    ? setAdding(newJob(next.service))
-                    : void practice(next.service)
+            {charm && (
+              <CharmCard
+                className="mt-16 max-w-3xl"
+                charm={charm}
+                onChange={setCharm}
+                busyService={starting}
+                onStep={(step) =>
+                  step.action === 'job'
+                    ? setAdding(newJob(step.service))
+                    : void practice(step.service)
                 }
               />
-              <ServicesIntro services={profile.services} autoSend />
-              <ServiceList
-                services={profile.services}
-                autoSend
-                busy={starting}
-                onAddJob={(service) => setAdding(newJob(service))}
-                onPractice={(service) => void practice(service)}
-              />
-            </section>
+            )}
 
             <div className="mt-16 grid gap-10 border-t border-line pt-12 md:grid-cols-3 md:gap-8">
               <section>
@@ -151,7 +177,7 @@ export default function ReadyStep() {
               </section>
               <section>
                 <h2 className="t-h3 flex items-center gap-2">
-                  <Hand className="size-5 text-accent" aria-hidden /> When it checks with you
+                  <Hand className="size-5 text-accent" aria-hidden /> When it checks with you first
                 </h2>
                 <ul className="mt-4 flex flex-col gap-2.5 text-ink-2">
                   {profile.handoffs.map((line) => (
@@ -166,7 +192,7 @@ export default function ReadyStep() {
               aria-labelledby="accuracy-title"
             >
               <h2 id="accuracy-title" className="t-h2">
-                Its guesses next to yours
+                Your Charm&apos;s guesses next to yours
               </h2>
               <div className="mt-5">
                 <table className="w-full max-w-2xl text-left text-[15px]">
@@ -234,4 +260,12 @@ export default function ReadyStep() {
       />
     </div>
   );
+}
+
+/** The headline says what the score means, so it never claims more than the Charm knows. */
+function headline(score: number | undefined, settings: CharmSettings | undefined) {
+  if (score === undefined || !settings) return 'Your Charm is set up.';
+  if (score >= 100) return 'Your Charm is fully trained.';
+  if (score >= settings.trainedPercent) return 'Your Charm is ready to quote.';
+  return `Your Charm is ${score}% trained.`;
 }

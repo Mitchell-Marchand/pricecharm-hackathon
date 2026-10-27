@@ -8,6 +8,8 @@ import { json, type Row } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
 import { agentReadiness, businessReadiness, serviceWorkload } from '../pricing/readiness.js';
+import { LEARNING_STYLES, restyle, type LearningStyle } from '../pricing/style.js';
+import { charmSettingsInput, saveCharmSettings, settingsFromRow } from '../charm.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { owner } from '../auth.js';
 import { billingProvider, changePlan, PLANS, reconcileStripeCustomer } from '../billing.js';
@@ -36,6 +38,7 @@ const FILTERS = {
 } as const;
 
 function listItem(row: Record<string, any>) {
+  const card = json<Partial<Quote>>(row.quote_json, {});
   return {
     id: String(row.id),
     number: Number(row.number),
@@ -43,6 +46,8 @@ function listItem(row: Record<string, any>) {
     customer: String(row.customer_name || 'A customer'),
     serviceName: String(row.service_name || ''),
     totalCents: Number(row.total_cents),
+    /** What the customer sees instead of the total, for a range quote. */
+    range: card.style === 'range' && card.range ? card.range : null,
     reviewReason: String(row.review_reason || ''),
     test: row.source === 'test',
     createdAt: new Date(row.created_at).toISOString(),
@@ -63,10 +68,9 @@ ownerQuotesRouter.get('/app/home', async (req, res) => {
      WHERE q.business_id=? AND q.status='review' ORDER BY q.created_at DESC LIMIT 10`,
     [businessId],
   );
-  const [business] = await rows(
-    'SELECT name,slug,auto_send,auto_send_limit_cents,website_domain FROM businesses WHERE id=?',
-    [businessId],
-  );
+  const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
+  const settings = settingsFromRow(business);
+  const services = await businessReadiness(businessId);
   res.json(
     ok({
       business: { name: business.name, slug: business.slug },
@@ -76,13 +80,13 @@ ownerQuotesRouter.get('/app/home', async (req, res) => {
         acceptedThisMonth: Number(counts.accepted),
       },
       waiting: waiting.map(listItem),
-      autoSend: Boolean(business.auto_send),
-      autoSendLimitCents: Number(business.auto_send_limit_cents),
+      autoSend: settings.autoSend,
+      /** Null for no limit. */
+      autoSendLimitCents: settings.limitCents,
+      settings,
       websiteDomain: String(business.website_domain || ''),
-      readiness: agentReadiness(
-        await businessReadiness(businessId),
-        await serviceWorkload(businessId),
-      ),
+      readiness: agentReadiness(services, await serviceWorkload(businessId)),
+      services,
     }),
   );
 });
@@ -161,11 +165,13 @@ export async function sendWaitingQuote(
   connection: Sql,
   quote: Row,
   edits: Partial<Quote> | null,
+  style?: LearningStyle,
 ): Promise<void> {
   if (quote.status !== 'review')
     throw new ApiError(409, 'QUOTE_NOT_WAITING', 'This quote has already gone out.');
-  if (edits) {
-    const card = { ...json<Quote>(quote.quote_json, {} as Quote), ...edits };
+  if (edits || style) {
+    // A range follows the owner's new price; they can also send it firm, or as an estimate.
+    const card = restyle({ ...json<Quote>(quote.quote_json, {} as Quote), ...edits }, style);
     const total = quoteTotal(card);
     if (total <= 0) throw new ApiError(422, 'QUOTE_EMPTY', 'Add at least one priced line.');
     await mutate(
@@ -188,6 +194,7 @@ ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (
   const quoteId = z.uuid().parse(req.params.id);
   // The card comes back whole. Only the parts an owner can edit are taken from it.
   const edits = req.body?.card ? cardEdits.parse(req.body.card) : null;
+  const style = req.body?.style ? z.enum(LEARNING_STYLES).parse(req.body.style) : undefined;
   await transaction(async (connection) => {
     const [quote] = await rows(
       `SELECT q.*,c.source FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id WHERE q.id=? AND q.business_id=? FOR UPDATE`,
@@ -195,7 +202,7 @@ ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (
       connection,
     );
     if (!quote) throw new ApiError(404, 'QUOTE_NOT_FOUND', 'That quote isn’t here.');
-    await sendWaitingQuote(connection, quote, edits);
+    await sendWaitingQuote(connection, quote, edits, style);
   });
   res.json(ok(await quoteDetail(businessId, quoteId)));
 });
@@ -309,9 +316,9 @@ ownerQuotesRouter.post('/app/billing/plan', async (req, res) => {
 });
 
 /**
- * Deploys the agent: the quote link starts taking requests. It needs a plan and a card, so every
- * quote it writes can reach the customer. How ready the agent is doesn't matter here; until a
- * service is ready, its quotes wait for the owner's OK.
+ * Deploys the Charm: the quote link starts taking requests. It needs a plan and a card, so every
+ * quote it writes can reach the customer. How trained it is doesn't matter here; the owner's
+ * settings say what goes out while it's learning.
  */
 ownerQuotesRouter.post('/app/deploy', async (req, res) => {
   const { businessId } = owner(req);
@@ -366,31 +373,16 @@ ownerQuotesRouter.get('/app/profile', async (req, res) => {
 });
 
 ownerQuotesRouter.patch('/app/settings', async (req, res) => {
-  const { businessId } = owner(req);
-  const input = z
-    .object({
-      autoSend: z.boolean(),
-      autoSendLimitCents: z.number().int().min(5000).max(10_000_000),
-    })
-    .partial()
-    .strict()
-    .parse(req.body);
-  if (input.autoSend !== undefined)
-    await mutate('UPDATE businesses SET auto_send=? WHERE id=?', [input.autoSend, businessId]);
-  if (input.autoSendLimitCents !== undefined)
-    await mutate('UPDATE businesses SET auto_send_limit_cents=? WHERE id=?', [
-      input.autoSendLimitCents,
-      businessId,
-    ]);
-  const [business] = await rows(
-    'SELECT auto_send,auto_send_limit_cents FROM businesses WHERE id=?',
-    [businessId],
+  const settings = await saveCharmSettings(
+    owner(req).businessId,
+    charmSettingsInput.parse(req.body),
   );
   res.json(
     ok({
-      autoSend: Boolean(business.auto_send),
-      autoSendLimitCents: Number(business.auto_send_limit_cents),
-      limitText: money(Number(business.auto_send_limit_cents)),
+      ...settings,
+      // The names older pages read.
+      autoSendLimitCents: settings.limitCents,
+      limitText: settings.limitCents === null ? '' : money(settings.limitCents),
     }),
   );
 });

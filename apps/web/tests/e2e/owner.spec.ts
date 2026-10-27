@@ -28,6 +28,10 @@ test('an owner signs in, edits and sends one quote, and declines another', async
   await expect(page.getByRole('heading', { name: 'Sam Kim' })).toBeVisible();
   await expect(page.getByText('You approve each quote for now.')).toBeVisible();
   await expect(page.getByText('[Demo] Thanks! About how big is the job?')).toBeVisible();
+  // Driveways is still learning, so it drafted a range. The owner sends their own firm price.
+  await expect(page.getByRole('radio', { name: 'Price range' })).toBeChecked();
+  await expect(page.getByRole('article', { name: /price range \$\d+ to \$\d+/ })).toBeVisible();
+  await page.getByRole('radio', { name: 'Firm price' }).click();
   await page.getByRole('button', { name: 'Edit' }).click();
   await page.getByLabel('Price for item 1').fill('260');
   await page.getByRole('dialog').getByRole('button', { name: 'Send quote' }).click();
@@ -83,7 +87,7 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
     .getByRole('listitem', { name: 'Pay when you win' })
     .getByRole('button', { name: 'Start with 1% a job' })
     .click();
-  await page.getByRole('button', { name: 'Deploy your agent' }).click();
+  await page.getByRole('button', { name: 'Go live', exact: true }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await visitor.reload();
   await expect(visitor.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
@@ -92,9 +96,11 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await page.goto('/app');
   await expect(page.getByText('Hi Maya')).toBeVisible();
   await expect(goLive).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Agent readiness' })).toContainText(
-    'Keep training',
-  );
+  const charm = page.getByRole('region', { name: 'Your Charm', exact: true });
+  await expect(charm).toContainText('Keep training');
+  await expect(
+    charm.getByRole('switch', { name: 'Quotes customers on its own' }),
+  ).not.toBeChecked();
   await page.goto('/app/settings');
   await expect(page.getByText('1% when they say yes', { exact: true })).toBeVisible();
   await page.getByRole('radio', { name: 'Paused' }).click();
@@ -102,16 +108,29 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await page.getByRole('radio', { name: 'Taking requests' }).click();
   await expect(page.getByText('Your quote link is on.')).toBeVisible();
 
-  await page.getByRole('radio', { name: 'Send them on their own' }).click();
-  await expect(page.getByText('Quotes can go out on their own now.')).toBeVisible();
-  await page.getByLabel('Always ask me about quotes over').fill('900');
-  await page.getByLabel('Always ask me about quotes over').blur();
+  await page.getByRole('radio', { name: 'On', exact: true }).click();
+  await expect(page.getByText('Your Charm quotes customers on its own.')).toBeVisible();
+  await expect(page.getByLabel('Firm prices once a service is')).toHaveValue('60');
+  await page.getByLabel('Firm prices once a service is').selectOption('70');
+  await expect(page.getByText('Saved. Firm prices from 70%.')).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'A price range' })).toBeChecked();
+  await page.getByRole('radio', { name: 'An estimate' }).click();
+  await expect(page.getByText('Saved. Customers get an estimate.')).toBeVisible();
+  const limit = page.getByLabel(/Always check with me about quotes over/);
+  await expect(limit).toHaveValue('');
+  await limit.fill('900');
+  await limit.blur();
   await expect(page.getByText('Saved. Quotes over $900 wait for you.')).toBeVisible();
+  await limit.fill('');
+  await limit.blur();
+  await expect(page.getByText('Saved. No price limit.')).toBeVisible();
 
   await page.goto('/app');
-  await expect(page.getByText(/Quotes up to \$900 that match your usual prices/)).toBeVisible();
+  await expect(
+    page.getByText('Your Charm quotes customers on its own. Anything unusual waits here for you.'),
+  ).toBeVisible();
   await page.getByRole('link', { name: 'Train', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'What your AI knows' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What your Charm knows' })).toBeVisible();
   await expect(page.getByText('It learned from 3 past jobs.')).toBeVisible();
   await expect(
     page.getByRole('list', { name: 'Your Driveways jobs' }).getByRole('listitem'),
@@ -119,7 +138,7 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   ).toHaveCount(3);
   await expect(
     page.getByRole('list', { name: 'Your services' }).getByRole('listitem').first(),
-  ).toContainText('Checks with you until it comes within 15% of your price on 2 jobs.');
+  ).toContainText('Customers get an estimate for now. Practice 2 Driveways jobs.');
   await page.getByRole('link', { name: 'Share' }).click();
   await expect(page.getByText(new RegExp(`/q/${shop.slug}$`))).toBeVisible();
 
@@ -196,9 +215,11 @@ test('after setup, an owner practices with as many customers as they like', asyn
   await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill('Patio wash');
   await builder.getByRole('textbox', { name: 'Price for item 1' }).fill('280');
   await builder.getByRole('button', { name: 'Send quote' }).click();
-  await expect(page.getByRole('heading', { name: /Here.s what your AI picked up/ })).toBeVisible({
-    timeout: 15_000,
-  });
+  await expect(page.getByRole('heading', { name: /Here.s what your Charm picked up/ })).toBeVisible(
+    {
+      timeout: 15_000,
+    },
+  );
   await expect(page.getByText('1 practice customer so far.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Practice another' }).click();
