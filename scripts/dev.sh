@@ -25,9 +25,9 @@ api_port=${API_PORT:-4100}
 if [ "$web_port" != 3100 ]; then
   export APP_ORIGIN="http://localhost:$web_port,http://127.0.0.1:$web_port"
 fi
-(cd "$TASK_WORKSPACE/apps/api" && PORT=$api_port exec node --import tsx src/server.ts) &
+(cd "$TASK_WORKSPACE/apps/api" && PORT=$api_port exec node --watch --import tsx src/server.ts) &
 TASK_API_PID=$!
-(cd "$TASK_WORKSPACE/apps/api" && exec node --import tsx src/worker.ts) &
+(cd "$TASK_WORKSPACE/apps/api" && exec node --watch --import tsx src/worker.ts) &
 TASK_WORKER_PID=$!
 (cd "$TASK_WORKSPACE/apps/web" && API_BASE_URL="http://127.0.0.1:$api_port" exec "$TASK_WORKSPACE/node_modules/.bin/next" dev --port "$web_port" --hostname 127.0.0.1) &
 TASK_WEB_PID=$!
