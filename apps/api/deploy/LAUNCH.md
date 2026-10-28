@@ -1,75 +1,116 @@
 # Deploy and launch PriceCharm
 
-One repository ships the product: the Next.js web app (`apps/web`) and the Node/Express API (`apps/api`). PriceCharm shares nothing with other applications. It has its own RDS database ([database guide](../../../docs/ops/database.md)) and its own AI keys with provider spending caps ([AI keys guide](../../../docs/ops/ai-keys.md)).
+PriceCharm runs on one EC2 instance. Nginx sits in front. PM2 runs the API, the worker and the web app, and MariaDB 11.4 runs in Docker on the same machine. When code changes on `main`, GitHub Actions builds each app, copies it to the server over SSH and restarts it. Certbot renews the HTTPS certificate on a timer. PriceCharm has its own AI keys with provider spending caps ([AI keys guide](../../../docs/ops/ai-keys.md)).
 
-## 1. Provision the new application host
+If the AWS account also runs other products, PriceCharm still gets its own instance, security group, key pair and Elastic IP. Don't reuse theirs, and don't put PriceCharm on their server or database.
 
-`infra/cloudformation.json` creates an Amazon Linux 2023 EC2 host, EIP, encrypted disk, HTTPS/HTTP security group, private encrypted photo bucket, a backup bucket that deletes database dumps after 28 days, runtime S3/SES role, SSM access and CPU/status alarms. It also creates the role GitHub deploys sign in to and an empty firewall group for deploy SSH (section 4). With `DatabaseMode=dedicated` (the default) it also creates PriceCharm's private RDS MariaDB database, reachable only from the app host, with TLS required, encrypted storage, automated backups, deletion protection and database alarms. It uses an existing VPC and subnets, and contains no secrets: RDS keeps the admin password in Secrets Manager. Photos are not versioned so account deletion can remove them; the bucket and instance disk are retained if the stack is deleted. Remove retained resources deliberately when decommissioning.
+## 1. Email (start this first)
 
-Set parameters in the AWS console or a local, ignored parameter file: VPC, public subnet for the app host, two or more private subnets for the database (`DbSubnetIds`), existing SSH key pair, verified SES domain ARN and an optional SNS alarm topic. The default VPC only has public subnets, so create two private ones (no route to the internet gateway) in different Availability Zones first. Leave `SshCidr` at its default: SSH stays closed to everyone, administrators use Session Manager, and each deploy opens SSH to its own runner and closes it afterwards. `GitHubRepository` defaults to `Mitchell-Marchand/pricecharm-hackathon`. If the AWS account already has a GitHub sign-in provider (IAM > Identity providers > token.actions.githubusercontent.com), pass its ARN as `GitHubOidcProviderArn`; otherwise the stack creates one. Do not make application ports public.
+PriceCharm sends email: customers' verification codes and quotes, owner alerts, signup verification and password resets. It sends through Amazon SES.
 
-```sh
-aws cloudformation validate-template --template-body file://deploy/infra/cloudformation.json
-aws cloudformation deploy --stack-name quotient \
-  --template-file deploy/infra/cloudformation.json \
-  --capabilities CAPABILITY_IAM \
-  --parameter-overrides file://quotient-parameters.json
-aws cloudformation describe-stacks --stack-name quotient --query 'Stacks[0].Outputs'
-```
+1. In the SES console, in the region you'll use for everything (`us-east-1` unless you have a reason), choose **Create identity**, pick **Domain**, enter `pricecharm.com` and keep Easy DKIM. Add the three CNAME records it shows to the domain's DNS, plus a DMARC record: TXT at `_dmarc` with `v=DMARC1; p=none; rua=mailto:hello@pricecharm.com`.
+2. Once the identity shows **Verified**, request production access from the SES **Account dashboard**. AWS usually answers within a day. Until then SES only delivers to addresses you've verified yourself: enough for testing, not for customers. If another product in the account already sends through SES in that region, the dashboard may already show production access. That access and the sending reputation are shared across the account in each region.
+3. Copy the identity's ARN from its page. The server's role needs it.
 
-`quotient-parameters.json` uses a JSON string array such as `["VpcId=vpc-…", "SubnetId=subnet-…", "DbSubnetIds=subnet-aaa,subnet-bbb", "KeyName=…", "SesIdentityArn=arn:aws:ses:us-east-1:123456789012:identity/pricecharm.com"]`; replace every example. Keep deployment parameters outside source control. CloudFormation invokes `bootstrap-ec2.sh` as user data. Inspect `/var/log/cloud-init-output.log` on the new host; confirm Node24, PM2, Nginx and certbot are installed and the `quotient-backup.timer` and `certbot-renew.timer` timers are enabled (`systemctl list-timers`). The deployment user is `quotient`, with no sudo privileges and no SSH key until you add the deploy key in section 4. A separate administrator handles TLS/system changes.
+`SUPPORT_EMAIL` needs a real inbox, such as `hello@pricecharm.com`. SES only sends.
 
-You may instead provision a new EC2 instance yourself and run `sudo bash deploy/bootstrap-ec2.sh`. This script is specific to Amazon Linux2023. The host needs outbound HTTPS for package installation, AI, Stripe, SES and S3, plus private access to MySQL. Enable AWS host monitoring/SSM and configure an external HTTPS uptime monitor for the product domain.
+## 2. The server
 
-## 2. Create isolated production storage
+1. **A role that can send email.** In IAM, choose **Roles → Create role → AWS service → EC2**, skip the managed policies and name it `pricecharm-server`. Then add an inline policy, with the ARN from section 1:
 
-Create the two database users with `sql/create-database-users.sql`, following the [database guide](../../../docs/ops/database.md): a rows-only `quotefolk_app` user for the running API and worker, and a `quotefolk_migrate` user that only deployments use. Both require TLS. The API refuses database names outside the `quotient…` / `quoting…` namespace.
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Action": "ses:SendEmail",
+         "Resource": "arn:aws:ses:us-east-1:ACCOUNT:identity/pricecharm.com"
+       }
+     ]
+   }
+   ```
 
-Copy `env.production.example` to `/srv/quotient-api/shared/.env` and `migrate.env.example` to `/srv/quotient-api/shared/migrate.env`, both owned by `quotient` with mode 600. The API refuses to start if a deployed configuration is unsafe: it requires `APP_ENV=staging` or `production`, `NODE_ENV=production`, explicit providers and `TRUST_PROXY`, `DB_SSL=1` for a remote database, no `EXPOSE_DEV_TOKENS`, and a live Stripe key in production or a test key in staging. Set:
+2. **Launch the instance** from the EC2 console:
+   - Name it `pricecharm`. The snapshot policy in step 5 finds it by this name.
+   - Amazon Linux 2023 (x86_64), `t3.medium`.
+   - A new key pair, `pricecharm-admin`. The `.pem` file stays on your machine and never goes into GitHub.
+   - The default VPC is fine. Keep **Auto-assign public IP** on: the bootstrap downloads software before the Elastic IP is attached.
+   - A new security group, `pricecharm-web`, allowing SSH (22), HTTP (80) and HTTPS (443) from anywhere. SSH only accepts keys.
+   - 30 GiB gp3. Under **Advanced**, set **Encrypted** to Yes and **Delete on termination** to No.
+   - Under **Advanced details**, choose the `pricecharm-server` instance profile and paste the whole of [`bootstrap-ec2.sh`](bootstrap-ec2.sh) into **User data**.
+3. **Elastic IP.** Under **Elastic IPs**, allocate one and associate it with the instance.
+4. **Check the bootstrap.** Connect with **Connect → EC2 Instance Connect**, or `ssh -i pricecharm-admin.pem ec2-user@<elastic IP>`. `sudo tail -n 5 /var/log/cloud-init-output.log` should end with "Bootstrap complete". `sudo docker ps` should list `pricecharm-db`, and `systemctl list-timers` should list `quotient-backup` and `certbot-renew`. If you skipped User data, copy the script up and run `sudo bash bootstrap-ec2.sh` instead. It's safe to run again.
+5. **Daily snapshots.** In **EC2 → Lifecycle Manager**, create an EBS snapshot policy for instances tagged `Name` = `pricecharm`: daily, keeping 14. With the database on the server, these are the backups that survive losing the instance. Keep retention at 30 days or less, because the privacy policy says deleted data leaves backups within 30 days.
 
-- `NODE_ENV=production`, `APP_ORIGIN=https://YOUR_PRODUCT_DOMAIN`, `HOST=127.0.0.1`, port4100.
-- The `quotefolk_app` credentials, the `DatabaseEndpoint` stack output as `DB_HOST`, `DB_CONNECTION_LIMIT=5`, `DB_SSL=1` and `DB_SSL_CA_FILE=/etc/pki/rds/global-bundle.pem`. Certificates are verified.
-- Selected `AI_PROVIDER=openai` or `anthropic`, its chat model and PriceCharm's own production API key from the [AI keys guide](../../../docs/ops/ai-keys.md). Practice photos also require `OPENAI_API_KEY` and an image-capable account, with `OPENAI_IMAGE_MODEL=gpt-image-2.5-flare` by default. Chat uses the selected provider; generated practice images use OpenAI. Set provider spending limits and the app/tenant daily call budgets.
-- `MAIL_PROVIDER=ses`, AWS region, verified `SES_EMAIL_FROM`, stable random32-byte/base64 `MAIL_ENCRYPTION_KEY`. Back up this encryption key with secrets; pending emails cannot be decrypted if it is lost.
-- The same key makes the daily fingerprints that stand in for visitors' addresses in the setup and customer chat limits, and the links in customer emails. Changing it retires links already sent.
-- `BILLING_PROVIDER=stripe`, Stripe secret, webhook signing secret, meter event name and metered price ID, using the exact setup in [COMMERCE.md](COMMERCE.md).
-- `S3_BUCKET` from the stack output, `S3_PREFIX=quotient/`, AWS region. AWS credentials come from the EC2 role.
-- `BACKUP_BUCKET` from the stack's `BackupBucket` output. The nightly backup copies each database dump there.
-- Optional `METRICS_EMAIL`: who gets the weekly numbers on Monday mornings (section 7).
-- Real `OPERATOR_NAME` (the legal entity), `OPERATOR_ADDRESS` (its postal address), `GOVERNING_LAW` (the US state whose laws govern the terms, such as `Texas`) and `SUPPORT_EMAIL`, such as `hello@pricecharm.com`. All four appear in the privacy policy and terms of service, and production refuses to start without them. Replies to PriceCharm's emails go to `SUPPORT_EMAIL`, except that a customer replying to a business's email reaches that business's owner, once the owner has confirmed their address. `SUPPORT_EMAIL` needs a real inbox: SES only sends.
-- `TURNSTILE_SECRET_KEY` from a Cloudflare Turnstile widget (free, and the domain doesn't need to be on Cloudflare). Add the product domain to the widget's hostnames and choose the Managed mode. Starting setup, signup, demo chats and new customer chats require a passing check. The widget's site key goes in a GitHub variable (section 4). Staging can use Cloudflare's published test keys; production refuses them.
-- `SENTRY_DSN` from a Sentry project for the API and worker. Production refuses to start without it. Reports carry the error, its stack and the request ID, never request bodies, headers, emails or AI prompts. Set an alert rule in Sentry so a new error emails you.
-- The customer chat budgets (`AI_DAILY_CUSTOMER_APP_LIMIT`, `AI_DAILY_BUSINESS_CUSTOMER_LIMIT`, `AI_DAILY_CUSTOMER_IP_LIMIT`) and the setup budgets for visitors who haven't signed up (`AI_DAILY_DRAFT_APP_LIMIT`, `AI_DRAFT_LIFETIME_LIMIT`). The defaults are in `.env.example` and the [AI keys guide](../../../docs/ops/ai-keys.md). Never set `LOCAL_SETUPS_PER_ADDRESS` on a server; it's for local browser tests, and deployed servers ignore it.
+The bootstrap installs Node 24, PM2, Nginx, certbot and its renewal timer, the nightly backup timer and MariaDB 11.4, listening only on `127.0.0.1:3306`. It creates:
 
-Production rejects demo AI, local email/payments, missing required provider configuration and HTTP app origins. `.env` stays on the server and never goes into CI artifacts or Git. The web uses same-origin `/api/v1`, so no browser API keys or separate API public hostname are required.
+- `quotient`, the user deploys log in as. It has no sudo.
+- The `quotient_production` database, with a rows-only `quotefolk_app` user for the API and worker and a `quotefolk_migrate` user that only deploys use.
+- `/srv/quotient-api/shared/.env`, holding the app user's settings, and `shared/migrate.env`, holding the migration user's. Both are owned by `quotient` with mode 600.
 
-## 3. Domain, HTTPS and logs
+The MariaDB root password is in `/root/pricecharm/mariadb.env`.
 
-Point DNS A records for `pricecharm.com` and `www.pricecharm.com` at the EIP. Then, as an administrator on the host:
+## 3. Settings
+
+Open the settings file: `sudo -u quotient nano /srv/quotient-api/shared/.env`. The database lines are already at the top. Paste everything from [`env.production.example`](env.production.example) below them, then fill it in. Start with `APP_ENV=staging` and Stripe test-mode values; section 6 switches to production.
+
+The API refuses to start a deployed configuration that's only safe on a laptop. That covers demo AI, local email or payments, missing providers or `TRUST_PROXY`, `EXPOSE_DEV_TOKENS`, and a test Stripe key in production or a live one in staging. Set:
+
+- `APP_ORIGIN=https://pricecharm.com`. Keep `HOST=127.0.0.1` and port 4100.
+- `AI_PROVIDER=openai` or `anthropic`, its chat model and PriceCharm's own production API key from the [AI keys guide](../../../docs/ops/ai-keys.md). Practice photos also need `OPENAI_API_KEY` on an image-capable account, with `OPENAI_IMAGE_MODEL=gpt-image-2.5-flare` by default. Set provider spending limits and the daily call budgets.
+- `MAIL_PROVIDER=ses`, the SES region as `AWS_REGION`, `SES_EMAIL_FROM` on the verified domain, and a `MAIL_ENCRYPTION_KEY` from `openssl rand -base64 32`. Save that key in your password manager: queued emails can't be decrypted without it. The same key makes the daily fingerprints that stand in for visitors' addresses in the setup and chat limits, and signs the links in customer emails, so changing it retires links already sent.
+- `BILLING_PROVIDER=stripe` and the six Stripe values, using the exact setup in [COMMERCE.md](COMMERCE.md): the secret key, the webhook signing secret, the meter event name, the usage price and the monthly and yearly plan prices.
+- `OPERATOR_NAME` (the legal entity), `OPERATOR_ADDRESS` (its postal address), `GOVERNING_LAW` (the US state whose laws govern the terms, such as `Texas`) and `SUPPORT_EMAIL`. All four appear in the privacy policy and terms of service, and production refuses to start without them. Replies to PriceCharm's emails go to `SUPPORT_EMAIL`, except that a customer replying to a business's email reaches that business's owner once the owner has confirmed their address.
+- `TURNSTILE_SECRET_KEY` from a Cloudflare Turnstile widget. It's free, and the domain doesn't need to be on Cloudflare. Add `pricecharm.com` and `www.pricecharm.com` to the widget's hostnames and choose Managed mode. Starting setup, signup, demo chats and new customer chats need a passing check. The widget's site key goes in a GitHub variable (section 5). Staging can use Cloudflare's published test keys; production refuses them. Use the real keys from the start, because the site key is built into the web app.
+- `SENTRY_DSN` from a Sentry project for the API and worker. Production refuses to start without it. Reports carry the error, its stack and the request ID, never request bodies, headers, emails or AI prompts. Add an alert rule in Sentry so a new error emails you.
+- Optional: `METRICS_EMAIL`, who gets the weekly numbers on Monday mornings (section 8), and `BACKUP_BUCKET` (section 7).
+- The customer chat budgets (`AI_DAILY_CUSTOMER_APP_LIMIT`, `AI_DAILY_BUSINESS_CUSTOMER_LIMIT`, `AI_DAILY_CUSTOMER_IP_LIMIT`) and the budgets for setups that haven't signed up (`AI_DAILY_DRAFT_APP_LIMIT`, `AI_DRAFT_LIFETIME_LIMIT`). The defaults are in the template and the [AI keys guide](../../../docs/ops/ai-keys.md). Never set `LOCAL_SETUPS_PER_ADDRESS` on a server. It's for local browser tests, and deployed servers ignore it.
+
+`.env` stays on the server. It never goes into GitHub or a release. The web app calls the API at `/api/v1` on the same domain, so the browser needs no keys and the API needs no hostname of its own.
+
+## 4. Domain and HTTPS
+
+In the domain's DNS, turn off any forwarding or parking page. Point an A record for `pricecharm.com` at the Elastic IP, and point `www` at it too (a CNAME to `pricecharm.com` works). Wait until `dig +short pricecharm.com` returns only the Elastic IP. Then, on the server:
 
 1. Copy only the port 80 server (and the `log_format` line) from `nginx-site.conf.example` to `/etc/nginx/conf.d/quotient.conf`, then `sudo nginx -t && sudo systemctl reload nginx`.
 2. Issue one certificate for both names: `sudo certbot certonly --webroot -w /var/www/acme -d pricecharm.com -d www.pricecharm.com --email hello@pricecharm.com --agree-tos --no-eff-email`.
 3. Replace the file with the whole of `nginx-site.conf.example`, run `sudo nginx -t`, and reload Nginx. `http://` and `www.` now redirect to `https://pricecharm.com`.
 
-`certbot-renew.timer` renews the certificate, and a hook reloads Nginx when it changes; `sudo certbot renew --dry-run` checks that renewal works. The application proxy locations are also available in `nginx.conf.example` if you use an existing TLS server configuration.
+`certbot-renew.timer` renews the certificate, and a hook reloads Nginx when it changes. `sudo certbot renew --dry-run` checks that renewal works.
 
-The complete example logs `$uri`, excluding query strings containing password-reset or inquiry link tokens. Keep debug/body logging off. The API logs request IDs and error codes without customer transcripts or provider payloads. Rotate PM2/Nginx logs and keep them no longer than 30 days, which is what the privacy policy promises; Nginx logs include IP addresses. Forward operational errors to your normal monitoring destination.
+The example config logs `$uri`, leaving out query strings that carry password-reset or inquiry link tokens. Keep debug and body logging off. The API logs request IDs and error codes, never customer transcripts or provider payloads. PM2 logs rotate daily and are kept 14 days. Keep Nginx logs no longer than 30 days, which is what the privacy policy promises; they include IP addresses.
 
-## 4. Configure the GitHub repository
+## 5. GitHub
 
-The repository is `Mitchell-Marchand/pricecharm-hackathon`. Create a `production` environment in its settings and limit its deployment branches to `main`.
+The repository is `Mitchell-Marchand/pricecharm-hackathon`. In its settings, create a `production` environment and limit its deployment branches to `main`. Add yourself as a required reviewer if you want to approve each deploy.
 
-Make a key just for deploys, on your own machine: `ssh-keygen -t ed25519 -N '' -C pricecharm-deploy -f pricecharm-deploy`. Open a Session Manager session on the host and append the contents of `pricecharm-deploy.pub` to `/home/quotient/.ssh/authorized_keys` (as `quotient`, mode 600). In the same session, `cat /etc/ssh/ssh_host_ed25519_key.pub` gives the host key; `EC2_KNOWN_HOSTS` is the EIP, a space, then that line, for example `203.0.113.10 ssh-ed25519 AAAA…`. Reading it through Session Manager is what makes it trustworthy, so don't use `ssh-keyscan`.
+Make a key just for deploys, on your own machine: `ssh-keygen -t ed25519 -N '' -C pricecharm-deploy -f pricecharm-deploy`. On the server, add the public half for the `quotient` user: `sudo -u quotient tee -a /home/quotient/.ssh/authorized_keys`, paste the contents of `pricecharm-deploy.pub`, then press Ctrl-D. In the same session, `cat /etc/ssh/ssh_host_ed25519_key.pub` prints the server's host key. Read it there rather than with `ssh-keyscan`, so a spoofed answer can't be pinned.
 
-Production environment **secrets**: `EC2_HOST` (the EIP), `EC2_USER=quotient`, `EC2_SSH_KEY` (the whole private `pricecharm-deploy` file; delete your local copy afterwards) and `EC2_KNOWN_HOSTS`.
+Production environment **secrets**:
 
-Production environment **variables**: `AWS_DEPLOY_ROLE_ARN` (stack output `DeployRoleArn`), `AWS_REGION` (the stack's region) and `EC2_DEPLOY_SECURITY_GROUP_ID` (stack output `DeploySecurityGroupId`). Each deploy signs in to AWS as that role, which can do nothing except add and remove rules on that one group. It opens port 22 to the runner's own address, deploys, and removes the rule even when the deploy fails. If a runner dies mid-deploy, a rule described `GitHub deploy run …` can be left behind; delete it from the group in the EC2 console.
+| Name | Value |
+| --- | --- |
+| `EC2_HOST` | The Elastic IP |
+| `EC2_USER` | `quotient` |
+| `EC2_SSH_KEY` | The whole private `pricecharm-deploy` file. Delete your local copy afterwards. |
+| `EC2_KNOWN_HOSTS` | The Elastic IP, a space, then the host key line, for example `203.0.113.10 ssh-ed25519 AAAA…` |
 
-**Repository** variables: `ENABLE_DEPLOY=true` once the server, secrets and TLS are ready (it has to be a repository variable, not an environment one), `TURNSTILE_SITE_KEY` (the web deploy fails without it), `SENTRY_WEB_DSN`, the web app's Sentry DSN (a separate Sentry project from the API's works best), optionally `PUBLIC_APP_URL` (default `https://pricecharm.com`, used in link previews and the sitemap), and `POSTHOG_KEY` for session recordings (section 7). Optionally set `EC2_API_DEPLOY_ROOT` (default `/srv/quotient-api`) and `EC2_WEB_DEPLOY_ROOT` (default `/srv/quotient-web`). `CI` runs on every pull request; `Deploy API` and `Deploy web` run on pushes to `main` that change their app. The first deploy of each is manual: run `Deploy API`, then `Deploy web`, from the Actions tab.
+**Repository** variables:
 
-Deploy **API first**, then web. CI runs typechecks/tests/build, packages immutable releases, installs API production dependencies on EC2, runs additive migrations, switches `current`, starts PM2 and checks readiness plus exact release identity. On failed readiness it restores the prior application release. Database DDL is not rolled back automatically. See [README.md](README.md) for details and workflow inputs.
+| Name | Value |
+| --- | --- |
+| `TURNSTILE_SITE_KEY` | The Turnstile widget's site key. The web deploy fails without it. |
+| `SENTRY_WEB_DSN` | The web app's Sentry DSN. A separate Sentry project from the API's works best. |
+| `POSTHOG_KEY` | Optional, for session recordings (section 8) |
+| `PUBLIC_APP_URL` | Optional. Defaults to `https://pricecharm.com`; used in link previews and the sitemap. |
+| `ENABLE_DEPLOY` | `true`, once the server, settings and HTTPS are ready. It has to be a repository variable, not an environment one. |
 
-## 5. Verify the deployed application
+`CI` runs on every pull request. `Deploy API` and `Deploy web` run on pushes to `main` that change their app. Run the first deploy of each by hand from the Actions tab: **Deploy API** first, then **Deploy web**.
+
+Each API deploy checks, tests and builds the code, copies an immutable release to the server, installs its production dependencies, runs migrations as the migration user, switches `current`, restarts PM2 and checks that `/health` reports the new release. If that check fails, it restores the previous release. Migrations aren't rolled back, so they have to stay additive. [README.md](README.md) has the details.
+
+## 6. Check it, then go live
 
 ```sh
 cd /srv/quotient-api/current/apps/api
@@ -77,7 +118,7 @@ node dist/ops.js --http
 sudo -u quotient pm2 status
 ```
 
-Walk through it yourself before inviting anyone:
+Walk through it yourself in staging mode before inviting anyone. Use email addresses you've verified in SES until production access comes through.
 
 1. In a fresh browser, start setup from the home page. Pick a trade, add two or three past jobs with photos, upload an old invoice, and finish the three practice customers. Their photos are generated by the AI and labelled as practice.
 2. Create the account. Confirm the verification email arrives and its link works, then add a payment method from the "You're live" page. Sign out, reset the password from the sign-in page and sign back in.
@@ -87,19 +128,43 @@ Walk through it yourself before inviting anyone:
 6. Turn automatic quotes on in Settings and request one more quote that matches your past jobs. It should go out on its own, and the owner should get the "sent" email.
 7. In Settings, check this month's fees match the quotes customers received, and that your own test chats didn't count.
 
-Use Stripe test mode first with a separate test-mode meter/price/webhook. Exercise checkout, customer portal, a billable quote, signed webhook processing and duplicate delivery retry. Confirm the displayed tariff, fee cap and invoice amount. Switch all Stripe settings together to live mode only after that check. Enable SES production sending and confirm actual delivery to an unverified controlled address; SES sandbox cannot serve arbitrary customer emails. These are deployment acceptance checks; automated QA uses isolated local providers/mocks and never sends real emails or charges cards.
+Then check billing with Stripe's test card `4242 4242 4242 4242`. Check out on every plan. Watch the yearly plan most closely: it puts a yearly price and the monthly usage price on one subscription. Confirm a billable quote shows up on the Stripe meter, and that resending a webhook from the Stripe dashboard doesn't count anything twice. Confirm the fees shown match the invoice.
 
-## 6. Backups and daily operations
+To go live:
 
-RDS keeps automated backups. On top of that, the `quotient-backup.timer` installed by the bootstrap runs `deploy/ops/nightly-backup.sh` as `quotient` every night: `backup.py` writes a compressed, mode600 dump of the dedicated DB using a temporary private client option file, the script copies it to `BACKUP_BUCKET`, and it keeps a week of local copies. The bucket deletes dumps after 28 days (the privacy policy says deleted data leaves backups within 30 days, so keep `DbBackupRetentionDays` at 30 or less too). Check it with `systemctl list-timers quotient-backup.timer` and `journalctl -u quotient-backup`; run it now with `sudo systemctl start quotient-backup`. Nothing alerts on a failed backup yet, so look at the bucket now and then. Back up the stable mail encryption key securely. S3 holds photos separately; local storage deployments also need a backup of `shared/uploads`.
+1. Wait for SES production access.
+2. While Stripe is still in test mode, delete your test business from Settings. Otherwise its test-mode Stripe IDs stay in the live database.
+3. Set up Stripe again in live mode: the meter, the three prices, the customer portal and the webhook, which has its own signing secret.
+4. In `.env`, set `APP_ENV=production`, switch all six Stripe values to the live ones together, and check `OPERATOR_*`, `SUPPORT_EMAIL` and `SENTRY_DSN` are filled in. Restart with `sudo -u quotient pm2 restart quotient-api quotient-worker`, then run `node dist/ops.js --http` again. If the API refuses a setting, `sudo -u quotient pm2 logs quotient-api` says which.
+5. Send one real quote to an address of yours that isn't verified in SES. Confirm the email arrives and the fee shows up in live Stripe.
+6. Add an external HTTPS uptime monitor for `https://pricecharm.com`.
 
-Test restoration into a **different, isolated** `quotient_restore_…` database, or restore an RDS snapshot to a new instance. Never restore over the live database. Verify migrations, table counts and private file access before using a restored database. Backups may temporarily retain deleted data; do not silently reintroduce deleted accounts when restoring.
+Automated tests use local providers and mocks. They never send real email or charge cards.
 
-Run `node dist/ops.js --http` periodically. It reports schema status, failed/late jobs, uncertain mail and delayed usage dispatch without customer content. Investigate failures before retrying. Unknown email delivery outcomes are held for provider reconciliation so retries cannot blindly send duplicate private links. Meter events have stable identifiers and immutable fee snapshots. See COMMERCE.md for provider reconciliation, refunds and cancellation.
+## 7. Backups and daily operations
 
-The single-host deployment can have a short PM2 restart interruption and remains a single point of failure. The database, encrypted mail queue and private object storage persist across releases. Keep dependencies patched, test backups, monitor disk/DB connections/provider spend and watch for failed jobs. Before a release, keep a tested database snapshot and preserve the preceding compatible release for rollback.
+There are two layers of backup:
 
-## 7. Metrics and session recordings
+- **Disk snapshots** (section 2, step 5) capture the whole server once a day: the database, photos and settings.
+- **A nightly database dump.** The `quotient-backup.timer` runs `deploy/ops/nightly-backup.sh` as `quotient`. `backup.py` writes a compressed, mode 600 dump to `/srv/quotient-api/shared/backups`, and the server keeps a week of them. If `BACKUP_BUCKET` is set, each dump is also copied there. For that, create a private bucket, give it a lifecycle rule that deletes objects after 28 days, and add `s3:PutObject` on `arn:aws:s3:::BUCKET/database/*` to the `pricecharm-server` role.
+
+Check the timer with `systemctl list-timers quotient-backup.timer` and `journalctl -u quotient-backup`. Run it now with `sudo systemctl start quotient-backup`. Nothing alerts on a failed backup yet, so look now and then. Keep `MAIL_ENCRYPTION_KEY` and the MariaDB root password (`/root/pricecharm/mariadb.env`) in your password manager too.
+
+Practise a restore before launch, into a **separate** database, never over the live one:
+
+```sh
+sudo docker exec pricecharm-db sh -c 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot -e "CREATE DATABASE quotient_restore_test"'
+gunzip -c /srv/quotient-api/shared/backups/<dump>.sql.gz \
+  | sudo docker exec -i pricecharm-db sh -c 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot quotient_restore_test'
+```
+
+Check the table counts, then drop `quotient_restore_test`. A backup can still hold data that was deleted since it was taken. Don't bring deleted accounts back when restoring.
+
+Run `node dist/ops.js --http` regularly. It reports schema status, failed or late jobs, uncertain mail and delayed usage dispatch, without customer content. Investigate failures before retrying. Email whose delivery outcome is unknown is held for checking against SES, so a retry can't send a private link twice. Meter events have stable identifiers and fees fixed when they're recorded. COMMERCE.md covers reconciliation, refunds and cancellation.
+
+One server is a single point of failure, and a PM2 restart can interrupt requests briefly. Keep dependencies patched and watch disk space, provider spend and failed jobs.
+
+## 8. Metrics and session recordings
 
 PriceCharm records how it's used in its own database, in `product_events`:
 

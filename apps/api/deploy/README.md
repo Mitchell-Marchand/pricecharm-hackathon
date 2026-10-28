@@ -1,28 +1,27 @@
 # EC2 deployment
 
-GitHub Actions builds a release, uploads it with SSH/rsync, switches a `current` symlink, and restarts separate PM2 processes. The web app deploys independently to the same EC2 instance from the same repository (`Deploy web`). PriceCharm has its own RDS database; see [the database guide](../../../docs/ops/database.md).
+GitHub Actions builds a release, uploads it with SSH/rsync, switches a `current` symlink, and restarts separate PM2 processes. The web app deploys independently to the same EC2 instance from the same repository (`Deploy web`). The database is MariaDB 11.4 in Docker on the same instance; see [the database guide](../../../docs/ops/database.md).
 
 ## Provision the server
 
-Use an Amazon Linux 2023 or Ubuntu LTS EC2 instance with Node 24 LTS, npm, PM2, rsync, curl and Nginx. Install the latest patched Node 24 release; pin production versions deliberately. Create application directories owned by the deployment user:
+[LAUNCH.md](LAUNCH.md) section 2 has the steps. [`bootstrap-ec2.sh`](bootstrap-ec2.sh) sets up an Amazon Linux 2023 instance with Node 24, PM2, rsync, Nginx, certbot and the database, and creates the application directories, owned by the deployment user `quotient`:
 
 ```text
 /srv/quotient-api/
   releases/
-  shared/.env
+  shared/.env          # starts with the database settings the bootstrap wrote
   shared/migrate.env   # migration user, read only by deploy-remote.sh
-  shared/uploads/      # local fallback when S3_BUCKET is unset
+  shared/uploads/      # customer and practice photos
+  shared/backups/      # nightly database dumps, a week of them
   current -> releases/<commit>-<workflow-run>-<attempt>
 /srv/quotient-web/
   releases/
   current -> releases/<commit>-<workflow-run>-<attempt>
 ```
 
-Place API settings and secrets in `/srv/quotient-api/shared/.env` with mode `600`. Copy the names from `.env.example`; do not put this file in GitHub or a release archive. Set `NODE_ENV=production`, the HTTPS `APP_ORIGIN`, and the dedicated database connection. Keep MySQL private and allow connections only from approved application hosts. Limit the app user to the PriceCharm database. Configure an EC2 role for S3 rather than storing AWS credentials in the repository.
+API settings and secrets live in `/srv/quotient-api/shared/.env` with mode `600`, starting from `env.production.example`. Never put this file in GitHub or a release archive. The server's IAM role lets it send email through SES, so no AWS credentials are stored anywhere. PM2 sets the absolute `UPLOAD_DIR` to `shared/uploads`, so photos never sit beneath a release directory. The daily disk snapshots cover them.
 
-Set `S3_BUCKET` (with `AWS_REGION` and optional `S3_PREFIX`) to use private S3 for production photos. If `S3_BUCKET` is unset, PM2 explicitly sets the absolute `UPLOAD_DIR` to the application's `shared/uploads` directory. Include it in the backup/retention plan; photos do not belong beneath a release directory.
-
-Restrict network ingress to HTTPS and HTTP for certificate issuance/redirect. SSH stays closed except to the GitHub runner deploying at that moment; administrators use Session Manager. Application ports 3100 and 4100 bind only to localhost. Install TLS and adapt `nginx.conf.example` into the product domain's server block. The API trusts exactly its local reverse proxy; Nginx overwrites forwarding headers with the actual remote client address. Keep proxy timeouts compatible with the AI timeout.
+The security group allows HTTP, HTTPS and SSH. SSH accepts keys only: the deployment user's key from GitHub and the administrator's key on `ec2-user`. Application ports 3100 and 4100 and the database's 3306 bind only to localhost. Install TLS and adapt `nginx.conf.example` into the product domain's server block. The API trusts exactly its local reverse proxy; Nginx overwrites forwarding headers with the actual remote client address. Keep proxy timeouts compatible with the AI timeout.
 
 Configure PM2 startup under the application user and save the process list after the first successful deployment. The process names are `quotient-api`, `quotient-worker`, and `quotient-web`.
 
@@ -36,14 +35,6 @@ Configure these **production environment secrets** in the repository:
 | `EC2_USER` | Deployment username |
 | `EC2_SSH_KEY` | Dedicated private SSH deployment key |
 | `EC2_KNOWN_HOSTS` | Pinned SSH host-key entry obtained through a trusted channel |
-
-And these **production environment variables**, from the CloudFormation stack's outputs:
-
-| Name | Value |
-| --- | --- |
-| `AWS_DEPLOY_ROLE_ARN` | `DeployRoleArn`: the role a deploy signs in to, which can only add and remove rules on the deploy SSH group |
-| `AWS_REGION` | The stack's region |
-| `EC2_DEPLOY_SECURITY_GROUP_ID` | `DeploySecurityGroupId`: the group each deploy opens port 22 on, to its own runner's address, and closes again |
 
 Configure the repository variable `ENABLE_DEPLOY` and optionally the deploy roots. The job's deployment condition is evaluated before production environment variables are loaded, so `ENABLE_DEPLOY` must be a repository variable:
 

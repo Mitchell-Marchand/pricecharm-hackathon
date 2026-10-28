@@ -20,19 +20,36 @@ Owner email links expire after 24 hours; password reset links expire after 30 mi
 
 ## Stripe product and meter
 
-Set `BILLING_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, and `STRIPE_METER_EVENT_NAME=quotient_fee_cents`. Production validates that these settings exist. Keep sandbox/test and live Stripe settings completely separate.
+Set `BILLING_PROVIDER=stripe`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_METER_EVENT_NAME=quotient_fee_cents`, `STRIPE_PRICE_ID`, `STRIPE_PRICE_MONTHLY` and `STRIPE_PRICE_YEARLY`. Production refuses to start without all six. Keep sandbox/test and live Stripe settings completely separate.
 
-Create a Stripe Billing meter with event name `quotient_fee_cents`, aggregation **sum**, customer mapping `stripe_customer_id`, and numeric value mapping `value`. Create an active recurring metered **USD** price charging **$0.01 per unit** against this meter. The unit represents one platform-fee cent, not one quote or one dollar of project value. A $1.25 platform fee sends `value=125`. Configure monthly invoicing and the customer portal in Stripe. The API validates the configured price and meter before starting Checkout, including the one-cent unit price and matching event name, so an incorrectly priced meter fails closed.
+Create a Stripe Billing meter with event name `quotient_fee_cents`, aggregation **sum**, customer mapping `stripe_customer_id`, and numeric value mapping `value`. Then create three USD prices:
 
-Checkout uses the server's fixed price ID. Return URLs come only from the configured application origin. Only a verified account owner can activate billing. Existing open Checkout sessions are reused, customer/session creation has stable idempotency keys, and the portal is scoped to the authenticated business's Stripe customer. Customers pay this SaaS for quote delivery; this integration does not process their customers' project payments or use Stripe Connect.
+| Setting | Price |
+| --- | --- |
+| `STRIPE_PRICE_ID` | Recurring, metered against the meter, monthly, **$0.01 per unit**. Every plan's quote fees go through it. The unit is one cent of fees, not one quote or one dollar of project value: a $1.25 fee sends `value=125`. |
+| `STRIPE_PRICE_MONTHLY` | Recurring, licensed (flat), monthly, **$49.00**: the monthly plan (`BILLING_MONTHLY_CENTS`). |
+| `STRIPE_PRICE_YEARLY` | Recurring, licensed (flat), yearly, **$499.00**: the yearly plan (`BILLING_YEARLY_CENTS`). |
+
+A subscription carries the usage price and, on the monthly or yearly plan, that plan's price as well. Configure monthly invoicing and the customer portal in Stripe. The portal uses the account's default configuration, which is one more reason PriceCharm should have a Stripe account of its own. Before starting Checkout, the API checks each price. The usage price must be one cent per unit on a sum meter with the matching event name. A plan price must be active, USD, licensed, on the right interval and exactly the amount the pricing page shows. A mistyped price fails closed.
+
+Checkout uses the server's fixed price IDs. Return URLs come only from the configured application origin. Only a verified account owner can activate billing. Existing open Checkout sessions are reused, customer/session creation has stable idempotency keys, and the portal is scoped to the authenticated business's Stripe customer. Customers pay this SaaS for quote delivery; this integration does not process their customers' project payments or use Stripe Connect.
 
 Configure the HTTPS webhook at `/api/v1/billing/webhook` with snapshot events for `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`, and `invoice.payment_failed`. Also register the meter error events supported by your Stripe account (`v1.billing.meter.error_report_triggered`, `v1.billing.meter.no_meter_found`). Use the signing secret for that exact endpoint. The route must remain mounted with its raw body before JSON parsing. Signed event IDs are stored once, work is queued, and the worker reads current subscription state from Stripe rather than trusting delivery order. Meter-error events become visible failed reconciliation work; they must be investigated before invoice finalization.
 
 ## Trial, tariff, spending caps and reconciliation
 
-There are no free quotes by default: owners add a payment method before their first customer quote goes out, and until then quotes wait for them. `BILLING_TRIAL_QUOTES` (0–100) gives new accounts that many free quotes first, if you ever want to. Trial dates/limits and the tariff are snapshotted when an account first initializes; changing environment settings does not silently reprice existing accounts.
+There are no free quotes by default: owners choose a plan and add a payment method before their first customer quote goes out, and until then quotes wait for them. `BILLING_TRIAL_QUOTES` (0–100) gives new accounts that many free quotes first, if you ever want to. A plan's fee terms are saved on the account when the plan is chosen and on every fee, so changing environment settings never reprices an earlier charge.
 
-Default quote fees are 100 basis points (1%), with a $1 minimum and $25 maximum per qualified quote. Server settings are `BILLING_FEE_BASIS_POINTS`, `BILLING_MINIMUM_FEE_CENTS`, `BILLING_MAXIMUM_FEE_CENTS`, and `BILLING_TARIFF_VERSION`. Public `/api/v1/pricing` exposes the actual current signup tariff. Prices use integer cents and exact rounding. A quote qualifies when a customer with a verified email receives it, whether it went out automatically or the owner approved it. Each account's `trial_quote_limit` qualifying quotes are free first (none by default). Practice, owner test chats, abandoned requests and repeat sends of the same quote never incur fees.
+The plans, with their server settings and defaults:
+
+| Plan | What it costs |
+| --- | --- |
+| Per quote | $2 for each quote a customer receives (`BILLING_PER_QUOTE_CENTS`). |
+| Per accepted quote | 1% of the quote when the customer accepts it, at least $1 and at most $25 (`BILLING_ACCEPTED_BASIS_POINTS`, `BILLING_ACCEPTED_MINIMUM_CENTS`, `BILLING_ACCEPTED_MAXIMUM_CENTS`). Nothing if they don't. |
+| Monthly | $49 a month, covering 100 quotes a month (`BILLING_INCLUDED_QUOTES`), then $1 a quote (`BILLING_OVERAGE_CENTS`). |
+| Yearly | $499 a year, with the same monthly allowance and overage. |
+
+The first monthly or yearly subscription starts with a 7-day free trial (`BILLING_TRIAL_DAYS`). Public `/api/v1/pricing` shows the current prices. Prices use integer cents and exact rounding. A quote qualifies when a customer with a verified email receives it, whether it went out automatically or the owner approved it. Each account's `trial_quote_limit` qualifying quotes are free first (none by default). Practice, owner test chats, abandoned requests and repeat sends of the same quote never incur fees.
 
 `quote_usage` is the durable delivery/fee ledger. Each quote has one immutable fee/tariff snapshot; associated dispatch timestamps do not change its financial fields. Trial allowance and the monthly spending cap are enforced while holding the business row lock, including the next quote's fee. The default cap is $100 in platform fees per UTC calendar month; an owner can change it through `PATCH /api/v1/billing`. The UTC cap window is distinct from Stripe's subscription invoice dates. If billing is unavailable, past due, stale or capped, new quotes wait for the owner, and the owner can't send them until billing is fixed or the cap is raised.
 

@@ -53,11 +53,11 @@ The API refuses to start a staging or production server with settings that are o
 - no Turnstile secret, or Cloudflare's test secret in production
 - no `SENTRY_DSN` in production
 
-Production uses its own RDS database, with a rows-only app user and a separate migration user ([database guide](docs/ops/database.md)).
+Production runs on one EC2 instance, with MariaDB 11.4 in Docker beside the app. It has a rows-only app user and a separate migration user ([database guide](docs/ops/database.md)).
 
 ## CI and deployment
 
 - **CI** (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It covers the API's formatting, types, database tests and build; the web app's formatting, types, build and end-to-end suite; and the prototype's build.
-- **Deploy API** and **Deploy web** run on pushes to `main` that change their app. They deploy to EC2 only when the repository variable `ENABLE_DEPLOY` is `true`.
+- **Deploy API** and **Deploy web** run on pushes to `main` that change their app. When the repository variable `ENABLE_DEPLOY` is `true`, they copy the release to the server over SSH and restart it with PM2.
 
 The full runbook is [apps/api/deploy/LAUNCH.md](apps/api/deploy/LAUNCH.md).
