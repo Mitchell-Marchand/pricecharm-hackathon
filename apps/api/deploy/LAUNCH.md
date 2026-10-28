@@ -65,7 +65,7 @@ Production environment **secrets**: `EC2_HOST` (the EIP), `EC2_USER=quotient`, `
 
 Production environment **variables**: `AWS_DEPLOY_ROLE_ARN` (stack output `DeployRoleArn`), `AWS_REGION` (the stack's region) and `EC2_DEPLOY_SECURITY_GROUP_ID` (stack output `DeploySecurityGroupId`). Each deploy signs in to AWS as that role, which can do nothing except add and remove rules on that one group. It opens port 22 to the runner's own address, deploys, and removes the rule even when the deploy fails. If a runner dies mid-deploy, a rule described `GitHub deploy run …` can be left behind; delete it from the group in the EC2 console.
 
-**Repository** variables: `ENABLE_DEPLOY=true` once the server, secrets and TLS are ready (it has to be a repository variable, not an environment one), `TURNSTILE_SITE_KEY` (the web deploy fails without it), `SENTRY_WEB_DSN`, the web app's Sentry DSN (a separate Sentry project from the API's works best), and optionally `PUBLIC_APP_URL` (default `https://pricecharm.com`, used in link previews and the sitemap). Optionally set `EC2_API_DEPLOY_ROOT` (default `/srv/quotient-api`) and `EC2_WEB_DEPLOY_ROOT` (default `/srv/quotient-web`). `CI` runs on every pull request; `Deploy API` and `Deploy web` run on pushes to `main` that change their app. The first deploy of each is manual: run `Deploy API`, then `Deploy web`, from the Actions tab.
+**Repository** variables: `ENABLE_DEPLOY=true` once the server, secrets and TLS are ready (it has to be a repository variable, not an environment one), `TURNSTILE_SITE_KEY` (the web deploy fails without it), `SENTRY_WEB_DSN`, the web app's Sentry DSN (a separate Sentry project from the API's works best), optionally `PUBLIC_APP_URL` (default `https://pricecharm.com`, used in link previews and the sitemap), and `POSTHOG_KEY` for session recordings (section 7). Optionally set `EC2_API_DEPLOY_ROOT` (default `/srv/quotient-api`) and `EC2_WEB_DEPLOY_ROOT` (default `/srv/quotient-web`). `CI` runs on every pull request; `Deploy API` and `Deploy web` run on pushes to `main` that change their app. The first deploy of each is manual: run `Deploy API`, then `Deploy web`, from the Actions tab.
 
 Deploy **API first**, then web. CI runs typechecks/tests/build, packages immutable releases, installs API production dependencies on EC2, runs additive migrations, switches `current`, starts PM2 and checks readiness plus exact release identity. On failed readiness it restores the prior application release. Database DDL is not rolled back automatically. See [README.md](README.md) for details and workflow inputs.
 
@@ -99,9 +99,14 @@ Run `node dist/ops.js --http` periodically. It reports schema status, failed/lat
 
 The single-host deployment can have a short PM2 restart interruption and remains a single point of failure. The database, encrypted mail queue and private object storage persist across releases. Keep dependencies patched, test backups, monitor disk/DB connections/provider spend and watch for failed jobs. Before a release, keep a tested database snapshot and preserve the preceding compatible release for rollback.
 
-## 7. Metrics
+## 7. Metrics and session recordings
 
-PriceCharm records its own usage in its database: steps in setup and signup, customer requests, quotes drafted and sent, and how customers answered. The records say what happened and when, never names, contact details or messages. Visits to the public pages are counted without cookies, using a daily keyed hash of the visitor's address and browser, and not at all when the browser sends Do Not Track or Global Privacy Control. The privacy policy describes both.
+PriceCharm records how it's used in its own database, in `product_events`:
+
+- **From the server**, with the facts at that moment: setup started, every business-details save (trade, services, area, radius), every step, each past job added, edited or deleted (service, price, which fields were filled, how many photos), invoice uploads and whether the AI could read them, every practice answer and practice quote (the owner's price, the Charm's own guess and the gap between them), settings changes, sign-ins, checkout, going live, share settings, owners approving quotes (from the app or the email link, whether they changed the price and by how much, how long the customer waited), customer requests and their steps, and every AI call (operation, model, seconds, tokens) or failure.
+- **From the browser**, outside quote links and the website widget: each visit's start (referrer, campaign, device, screen size), every screen with the time someone actually worked on it and how far they scrolled, every click (the button's words and where it was), every field (how long it took and whether it was filled, never what's in it), error messages shown, failed and slow requests, rage clicks, clicks on things that do nothing, page crashes and the tab going to the background.
+
+A random id per browser tab joins what someone did before they had a setup to what they did after, and server events carry the same id. Records hold no names, contact details or messages; email addresses and phone numbers are scrubbed from any text. Each business's records are filed under a random tag that's deleted with the business. Browser events are deleted after 400 days. Visits to the public pages are also counted without cookies, using a daily keyed hash of the visitor's address and browser.
 
 ```sh
 cd /srv/quotient-api/current/apps/api
@@ -109,5 +114,12 @@ node dist/metrics-report.js            # the last 7 days, compared with the 7 be
 node dist/metrics-report.js --days 30  # or --json
 ```
 
-The report gives visitors and where they came from, setups started and how far they got, customer requests, quotes sent on their own or by the owner, how often owners changed the drafted price, and what customers did with their quotes. Set `METRICS_EMAIL` to get the same report by email every Monday.
+The report covers setups by trade and how far each got, past jobs given, real time spent working in setup, the last screen, click and error for everyone who left before making an account, practice guesses within 10% of the owner's price, time per screen, error messages, failed and slow requests, rage and dead clicks, owner approvals and edits, the customer funnel and AI speed and tokens. Set `METRICS_EMAIL` to get it every Monday.
 
+**Session recordings (PostHog).** Create a PostHog account in its US cloud and a project called PriceCharm. In the project settings:
+
+- Turn on session replay, autocapture, heatmaps and dead-click capture.
+- Set recording retention to 30 days. The privacy policy says recordings are kept 30 days.
+- Turn on discarding client IP addresses.
+
+Put the project API key in the `POSTHOG_KEY` repository variable; the web build reads it. Recordings run only on the owner side and the marketing pages, never on quote links, the website widget or pages opened from a one-time link. Typing is masked everywhere, and so are customers' names, messages and photos in the owner app. Browsers that send Do Not Track or Global Privacy Control aren't recorded. Visitors whose clock is set to Europe or the UK are asked first, and nothing in the browser is tracked until they agree. Requests go through `pricecharm.com/ingest`, so ad blockers don't drop them. Each recording is filed under the same random tag as the setup, so a setup in the report can be found in PostHog.

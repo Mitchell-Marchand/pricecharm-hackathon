@@ -353,7 +353,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
 
       {/* No overscroll containment: past the end of the chat, the page keeps scrolling. */}
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-live="polite">
-        <div className="flex flex-col gap-3">
+        {/* What visitors type in the demo isn't kept, so recordings mask it too. */}
+        <div className="flex flex-col gap-3" data-private>
           {lines.map((line) => {
             if (line.quote && quote)
               return (

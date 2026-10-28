@@ -67,7 +67,11 @@ export function Field({
       </label>
       {children}
       {hint && !error && <p className="text-sm text-muted">{hint}</p>}
-      {error && <p className="text-sm text-stop">{error}</p>}
+      {error && (
+        <p className="text-sm text-stop" data-field-error={label}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }

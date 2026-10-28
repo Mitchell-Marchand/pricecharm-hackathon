@@ -95,12 +95,12 @@ export default function QuotePage() {
   return (
     <>
       <BackLink />
-      <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2" data-private>
         <h1 className="t-h1">{quote.customer}</h1>
         <QuoteStatusTag status={quote.status} />
         {quote.test && <Tag>Test</Tag>}
       </div>
-      <p className="mt-2 text-ink-2">
+      <p className="mt-2 text-ink-2" data-private>
         {[quote.serviceName, `No. ${quote.number}`, shortDate(quote.createdAt), quote.customerEmail]
           .filter(Boolean)
           .join(' · ')}
@@ -112,7 +112,7 @@ export default function QuotePage() {
       )}
 
       <div className="mt-8 grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)]">
-        <div className="order-2 min-w-0 lg:order-1">
+        <div className="order-2 min-w-0 lg:order-1" data-private>
           <h2 className="t-h3">The conversation</h2>
           {quote.summary && <p className="mt-2 text-ink-2">{quote.summary}</p>}
           {quote.details && (
@@ -274,7 +274,8 @@ function Thread({ messages, customer }: { messages: ThreadMessage[]; customer: s
     .map((word) => word[0]?.toUpperCase() ?? '')
     .join('');
   return (
-    <div className="mt-5 flex flex-col gap-3">
+    // A customer's own words and photos: never in a session recording.
+    <div className="ph-no-capture mt-5 flex flex-col gap-3" data-private>
       {messages.map((message) => {
         if (message.kind === 'status')
           return (

@@ -87,16 +87,16 @@ test('Responses uses strict structured output, actual vision parts, and records 
   assert.equal(requestBody.input[0].content[1].type, 'input_image');
   assert.equal(requestBody.input[0].content[1].image_url, `data:image/jpeg;base64,${photo}`);
   assert.ok(!requestBody.input[0].content[0].text.includes(photo));
-  assert.deepEqual(events, [
-    {
-      provider: 'openai',
-      model: 'mock-model',
-      inputTokens: 42,
-      outputTokens: 12,
-      operation: 'intake_turn',
-      requestId: 'mock-request-id',
-    },
-  ]);
+  const [{ durationMs, ...usage }] = events;
+  assert.ok(typeof durationMs === 'number' && durationMs >= 0, 'How long the call took');
+  assert.deepEqual(usage, {
+    provider: 'openai',
+    model: 'mock-model',
+    inputTokens: 42,
+    outputTokens: 12,
+    operation: 'intake_turn',
+    requestId: 'mock-request-id',
+  });
 });
 
 test('incomplete and schema-invalid responses fail closed after usage is recorded', async () => {

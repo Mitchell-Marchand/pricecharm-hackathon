@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { track } from '@/lib/track';
 
 const ToastContext = createContext<(message: string) => void>(() => {});
 
@@ -8,6 +9,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [message, setMessage] = useState('');
   const timer = useRef<number | undefined>(undefined);
   const notify = useCallback((text: string) => {
+    track('toast_shown', { text });
     window.clearTimeout(timer.current);
     setMessage(text);
     timer.current = window.setTimeout(() => setMessage(''), 3600);

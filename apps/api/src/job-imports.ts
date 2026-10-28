@@ -14,6 +14,7 @@ import { deletePhoto, getPhoto, putPhoto } from './storage.js';
 import { uploadSlot } from './uploads.js';
 import { withAiUsage } from './usage.js';
 import { requireWorkspace, workspace } from './workspace.js';
+import { jobFacts, recordEvent, recordRequestEvent } from './metrics.js';
 
 /**
  * Old quotes and invoices, several at a time. Each file is stored as it arrives and read in the
@@ -100,11 +101,31 @@ export async function readJobImport(id: string): Promise<void> {
     );
     // Once it's read, the file itself isn't kept: it can have customers' names and addresses.
     if (done.affectedRows) await deletePhoto(String(item.storage_key)).catch(() => {});
+    if (done.affectedRows)
+      await recordEvent(
+        undefined,
+        businessId,
+        'import_read',
+        {
+          kind: String(item.kind),
+          found: Boolean(result.found),
+          attempt: Number(item.read_attempts),
+        },
+        { ref: id },
+      );
   } catch (error) {
     // Dropped while it was being read: nothing to report.
     if (!(await rows('SELECT id FROM job_imports WHERE id=?', [id])).length) return;
     // An allowance running out won't fix itself on a retry, and its message says what to do.
     if (!(error instanceof ApiError)) reportError(error, { event: 'job_import_read' });
+    if (error instanceof ApiError || Number(item.read_attempts) >= READ_ATTEMPTS)
+      await recordEvent(
+        undefined,
+        businessId,
+        'import_failed',
+        { kind: String(item.kind), reason: error instanceof ApiError ? error.code : 'unreadable' },
+        { ref: id },
+      );
     if (error instanceof ApiError || Number(item.read_attempts) >= READ_ATTEMPTS)
       await mutate(
         "UPDATE job_imports SET status='failed',failure=?,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?",
@@ -226,6 +247,13 @@ jobImportsRouter.post(
       throw error;
     }
     await kickJobImports(businessId);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'import_uploaded',
+      { kind: readable.kind, kb: Math.round(file.size / 1024) },
+      { ref: id },
+    );
     const [item] = await rows('SELECT * FROM job_imports WHERE id=?', [id]);
     res.status(201).json(ok(importView(item)));
   },
@@ -270,6 +298,14 @@ jobImportsRouter.post('/onboarding/imports/save', requireWorkspace, async (req, 
       connection,
     );
   });
+  for (const { importId, job } of jobs)
+    await recordRequestEvent(
+      req,
+      current.businessId,
+      'import_saved',
+      jobFacts({ ...job, source: 'invoice' }),
+      { ref: importId },
+    );
   res.json(
     ok({
       jobs: await listPastJobs(current.businessId),
@@ -289,6 +325,7 @@ jobImportsRouter.delete('/onboarding/imports/:id', requireWorkspace, async (req,
   if (!item) throw new ApiError(404, 'IMPORT_NOT_FOUND', 'That file is no longer on your list.');
   await mutate('DELETE FROM job_imports WHERE id=? AND business_id=?', [id, businessId]);
   if (item.storage_key) await deletePhoto(String(item.storage_key)).catch(() => {});
+  await recordRequestEvent(req, businessId, 'import_removed', {}, { ref: id });
   res.json(ok({ ok: true }));
 });
 

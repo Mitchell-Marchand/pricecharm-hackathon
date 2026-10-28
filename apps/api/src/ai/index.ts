@@ -10,10 +10,20 @@ export type AiUsage = {
   outputTokens: number;
   operation: string;
   requestId?: string;
+  durationMs?: number;
+};
+export type AiFailure = {
+  provider: string;
+  model: string;
+  operation: string;
+  durationMs: number;
+  reason: 'timeout' | 'rejected' | 'invalid' | 'transport';
 };
 type UsageContext = {
   conversationId?: string;
   record: (usage: AiUsage) => Promise<void>;
+  /** A call that didn't produce an answer. */
+  failed?: (failure: AiFailure) => Promise<void>;
   businessId: string;
 };
 export type AiRequestOptions = {
@@ -127,6 +137,8 @@ export async function requestJson<T>(
   const timeout = boundedEnv('AI_TIMEOUT_MS', 25000, 1000, 60000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+  const started = Date.now();
+  let failure: AiFailure['reason'] = 'transport';
   try {
     // No endpoint override: API credentials are sent only to the selected provider's official endpoint.
     const url =
@@ -231,6 +243,7 @@ export async function requestJson<T>(
       });
     }
     if (!response?.ok) {
+      failure = 'rejected';
       // Provider error bodies can include submitted material; do not log or expose them.
       await response?.body?.cancel();
       throw new AiError(
@@ -255,8 +268,10 @@ export async function requestJson<T>(
         outputTokens: Number(tokenUsage.output_tokens ?? 0),
         requestId:
           response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? undefined,
+        durationMs: Date.now() - started,
       });
     }
+    failure = 'invalid';
     let result: unknown;
     if (aiProvider === 'openai') {
       const parsed = z
@@ -374,6 +389,16 @@ export async function requestJson<T>(
     }
     return validated.data;
   } catch (error) {
+    await usageContexts
+      .getStore()
+      ?.failed?.({
+        provider: aiProvider,
+        model,
+        operation,
+        durationMs: Date.now() - started,
+        reason: controller.signal.aborted ? 'timeout' : failure,
+      })
+      .catch(() => {});
     if (error instanceof AiError) throw error;
     throw new AiError();
   } finally {

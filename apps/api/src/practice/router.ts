@@ -17,6 +17,8 @@ import {
   sendOwnerMessage,
   sendPracticeQuote,
 } from './engine.js';
+import { recordRequestEvent, setupFacts } from '../metrics.js';
+import { gapPercent, quoteTotal } from './types.js';
 
 /**
  * Practice customers, the owner's quotes and what the AI picked up: three during setup, and as
@@ -30,6 +32,7 @@ practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req
   const { businessId } = workspace(req);
   await ensurePracticeRuns(businessId);
   await kickPreparation(businessId);
+  await recordRequestEvent(req, businessId, 'practice_prepared', await setupFacts(businessId));
   res.json(ok(await practiceState(businessId)));
 });
 
@@ -58,6 +61,13 @@ practiceRouter.post(
       throw new ApiError(422, 'PRACTICE_SERVICE', 'That isn’t one of your services.');
     const id = await addPracticeRun(businessId, { focus, draft });
     await kickPreparation(businessId);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_more',
+      { service: focus ?? '', during_setup: draft },
+      { ref: id },
+    );
     res.status(201).json(ok({ runId: id, state: await practiceState(businessId) }));
   },
 );
@@ -78,9 +88,22 @@ practiceRouter.post(
       .object({ text: z.string().trim().min(1).max(1000) })
       .strict()
       .parse(req.body);
-    res.json(
-      ok(await sendOwnerMessage(workspace(req).businessId, runId.parse(req.params.id), text)),
+    const { businessId } = workspace(req);
+    const sent = await sendOwnerMessage(businessId, runId.parse(req.params.id), text);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_answer',
+      {
+        position: sent.run.position,
+        service: sent.run.serviceName ?? '',
+        turn: sent.run.messages.filter((message) => message.from === 'owner').length,
+        chars: text.length,
+        asked_price: Boolean(sent.nudge),
+      },
+      { ref: sent.run.id },
     );
+    res.json(ok(sent));
   },
 );
 
@@ -102,6 +125,26 @@ practiceRouter.post(
   async (req, res) => {
     const { businessId } = workspace(req);
     const run = await sendPracticeQuote(businessId, runId.parse(req.params.id), req.body);
+    const ownerCents = run.quote ? quoteTotal(run.quote) : 0;
+    const guess = run.shadow && !run.shadow.siteVisit ? run.shadow.cents : null;
+    // How close the Charm's own guess came to the owner's price: the moment it clicks, or doesn't.
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_quoted',
+      {
+        position: run.position,
+        service: run.serviceName ?? '',
+        owner_cents: ownerCents,
+        guess_cents: guess,
+        gap_pct: guess === null ? null : gapPercent(guess, ownerCents),
+        ai_wanted_visit: Boolean(run.shadow?.siteVisit),
+        confidence: run.shadow?.confidence ?? null,
+        lines: run.quote?.lines?.length ?? 0,
+        turns: run.messages.filter((message) => message.from === 'owner').length,
+      },
+      { ref: run.id, value: ownerCents },
+    );
     res.json(ok(run));
   },
 );
@@ -115,9 +158,21 @@ practiceRouter.post(
       .object({ reason: z.string().trim().min(4, 'Say what you need to check.').max(600) })
       .strict()
       .parse(req.body);
-    res.json(
-      ok(await askForSiteVisit(workspace(req).businessId, runId.parse(req.params.id), reason)),
+    const { businessId } = workspace(req);
+    const run = await askForSiteVisit(businessId, runId.parse(req.params.id), reason);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_site_visit',
+      {
+        position: run.position,
+        service: run.serviceName ?? '',
+        ai_wanted_visit: Boolean(run.shadow?.siteVisit),
+        guess_cents: run.shadow?.siteVisit ? null : (run.shadow?.cents ?? null),
+      },
+      { ref: run.id },
     );
+    res.json(ok(run));
   },
 );
 
@@ -130,6 +185,9 @@ practiceRouter.patch(
       .strict()
       .parse(req.body);
     const insightId = z.string().max(40).parse(req.params.insightId);
+    await recordRequestEvent(req, workspace(req).businessId, 'practice_insight_edited', {
+      chars: text.length,
+    });
     res.json(
       ok(await editInsight(workspace(req).businessId, runId.parse(req.params.id), insightId, text)),
     );
@@ -139,6 +197,7 @@ practiceRouter.patch(
 practiceRouter.post('/onboarding/practice/:id/retry', requireWorkspace, async (req, res) => {
   const { businessId } = workspace(req);
   await retryPracticeRun(businessId, runId.parse(req.params.id));
+  await recordRequestEvent(req, businessId, 'practice_retry', {}, { ref: String(req.params.id) });
   res.json(ok(await practiceState(businessId)));
 });
 
@@ -146,6 +205,10 @@ practiceRouter.post('/onboarding/practice/:id/retry', requireWorkspace, async (r
 practiceRouter.post('/onboarding/practice/done', requireWorkspace, async (req, res) => {
   const { businessId } = workspace(req);
   const state = await practiceState(businessId);
+  await recordRequestEvent(req, businessId, 'practice_done', {
+    finished: state.finished,
+    count: state.count,
+  });
   if (state.finished >= state.count)
     await mutate(
       "UPDATE businesses SET onboarding_step='ready' WHERE id=? AND onboarding_step IN ('business','jobs','practice')",

@@ -7,6 +7,7 @@ import { json, type Row } from '../models.js';
 import type { Quote } from '../practice/types.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { sendWaitingQuote } from './owner.js';
+import { recordRequestEvent, requestSession } from '../metrics.js';
 
 /**
  * The one-tap link in a "needs your OK" email. Whoever has it can see that one quote and send it
@@ -73,7 +74,15 @@ function linkView(quote: Row) {
 approveLinkRouter.post('/approve/:id/view', rateLimit(30, 15 * 60_000), async (req, res) => {
   const quoteId = z.uuid().parse(req.params.id);
   const { token } = linkInput.parse(req.body);
-  res.json(ok(linkView(await linkedQuote(quoteId, token))));
+  const quote = await linkedQuote(quoteId, token);
+  await recordRequestEvent(
+    req,
+    String(quote.business_id),
+    'approve_link_opened',
+    { status: String(quote.status) },
+    { ref: quoteId },
+  );
+  res.json(ok(linkView(quote)));
 });
 
 /** Sends the quote as it is. The only thing this link can change. */
@@ -81,7 +90,10 @@ approveLinkRouter.post('/approve/:id', rateLimit(30, 15 * 60_000), async (req, r
   const quoteId = z.uuid().parse(req.params.id);
   const { token } = linkInput.parse(req.body);
   await transaction(async (connection) =>
-    sendWaitingQuote(connection, await linkedQuote(quoteId, token, connection), null),
+    sendWaitingQuote(connection, await linkedQuote(quoteId, token, connection), null, undefined, {
+      channel: 'email',
+      session: requestSession(req),
+    }),
   );
   res.json(ok(linkView(await linkedQuote(quoteId, token))));
 });

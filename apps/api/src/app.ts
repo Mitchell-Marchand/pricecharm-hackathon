@@ -35,6 +35,7 @@ import { chatRouter } from './live/router.js';
 import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
 import { visitsRouter } from './metrics.js';
+import { activityRouter } from './activity.js';
 
 /**
  * Requests one address may make to the API in a minute. The browser tests make a lot from one
@@ -91,7 +92,7 @@ export function createApp() {
       origin: (origin, callback) => callback(null, !origin || origins.includes(origin)),
       credentials: true,
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Turnstile-Token', 'X-PC-Session'],
     }),
   );
   app.get('/health', (_req, res) =>
@@ -142,6 +143,7 @@ export function createApp() {
     chatRouter,
     demoRouter,
     visitsRouter,
+    activityRouter,
   );
   app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);

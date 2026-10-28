@@ -29,7 +29,10 @@ function Shell({ children }: { children: ReactNode }) {
       <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
         <Logo href="/app" />
       </header>
-      <main className="gutter mx-auto max-w-[560px] pt-6 pb-20">{children}</main>
+      {/* A customer's request: masked in session recordings. */}
+      <main className="gutter mx-auto max-w-[560px] pt-6 pb-20" data-private>
+        {children}
+      </main>
     </div>
   );
 }

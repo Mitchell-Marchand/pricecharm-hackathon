@@ -17,7 +17,7 @@ import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './
 import { devTokensAllowed, hashingSecret } from './config.js';
 import { mailProvider } from './integrations/email.js';
 import { clearDraftCookie, draftFromRequest } from './workspace.js';
-import { recordMilestone } from './metrics.js';
+import { recordMilestone, recordRequestEvent } from './metrics.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -330,6 +330,7 @@ export const login: RequestHandler = async (req, res) => {
   const prior = cookies(req)[COOKIE_NAME];
   if (prior) await mutate('DELETE FROM owner_sessions WHERE token_hash = ?', [hashToken(prior)]);
   await createSession(user.id, res);
+  await recordRequestEvent(req, String(user.business_id), 'signed_in');
   res.json(
     ok({
       user: {
@@ -345,6 +346,8 @@ export const login: RequestHandler = async (req, res) => {
   );
 };
 export const logout: RequestHandler = async (req, res) => {
+  const signedIn = await ownerFromRequest(req);
+  if (signedIn) await recordRequestEvent(req, signedIn.businessId, 'signed_out');
   const token = cookies(req)[COOKIE_NAME];
   if (token) await mutate('DELETE FROM owner_sessions WHERE token_hash = ?', [hashToken(token)]);
   res.clearCookie(COOKIE_NAME, {

@@ -14,6 +14,7 @@ export async function generatePracticePhoto(businessId: string, scene: PracticeP
     Number.isInteger(configuredTimeout) && configuredTimeout >= 1000 && configuredTimeout <= 180000
       ? configuredTimeout
       : 120000;
+  const started = Date.now();
   const response = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -52,6 +53,7 @@ export async function generatePracticePhoto(businessId: string, scene: PracticeP
     inputTokens: usage?.input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
     requestId: response.headers.get('x-request-id') ?? undefined,
+    durationMs: Date.now() - started,
   });
   const result = z
     .object({

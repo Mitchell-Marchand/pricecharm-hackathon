@@ -11,6 +11,8 @@ const config: NextConfig = {
   // Dependencies are installed once at the monorepo root, so trace from there.
   outputFileTracingRoot: path.join(__dirname, '../..'),
   poweredByHeader: false,
+  // Session recordings go through this site to PostHog, whose addresses end in a slash.
+  skipTrailingSlashRedirect: true,
   async headers() {
     return [
       {
@@ -46,6 +48,14 @@ const config: NextConfig = {
       {
         source: '/api/v1/:path*',
         destination: `${apiBase}/api/v1/:path*`,
+      },
+      {
+        source: '/ingest/static/:path*',
+        destination: 'https://us-assets.i.posthog.com/static/:path*',
+      },
+      {
+        source: '/ingest/:path*',
+        destination: 'https://us.i.posthog.com/:path*',
       },
     ];
   },

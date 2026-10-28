@@ -17,7 +17,13 @@ import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
-import { recordActivity, recordMilestone } from '../metrics.js';
+import {
+  recordActivity,
+  recordEvent,
+  recordMilestone,
+  recordRequestEvent,
+  requestSession,
+} from '../metrics.js';
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
@@ -154,7 +160,16 @@ async function quoteDetail(businessId: string, quoteId: string) {
 }
 
 ownerQuotesRouter.get('/app/quotes/:id', async (req, res) => {
-  res.json(ok(await quoteDetail(owner(req).businessId, z.uuid().parse(req.params.id))));
+  const quoteId = z.uuid().parse(req.params.id);
+  const detail = await quoteDetail(owner(req).businessId, quoteId);
+  await recordRequestEvent(
+    req,
+    owner(req).businessId,
+    'owner_quote_opened',
+    { status: String(detail.status), test: Boolean(detail.test) },
+    { ref: quoteId },
+  );
+  res.json(ok(detail));
 });
 
 /** Approve and send, with the owner's edits if they made any. The server redoes the math. */
@@ -167,9 +182,11 @@ export async function sendWaitingQuote(
   quote: Row,
   edits: Partial<Quote> | null,
   style?: LearningStyle,
+  via: { channel: 'app' | 'email'; session?: string | null } = { channel: 'app' },
 ): Promise<void> {
   if (quote.status !== 'review')
     throw new ApiError(409, 'QUOTE_NOT_WAITING', 'This quote has already gone out.');
+  const drafted = Number(quote.total_cents);
   if (edits || style) {
     // A range follows the owner's new price; they can also send it firm, or as an estimate.
     const card = restyle({ ...json<Quote>(quote.quote_json, {} as Quote), ...edits }, style);
@@ -188,6 +205,30 @@ export async function sendWaitingQuote(
     sentBy: 'owner',
     test: quote.source === 'test',
   });
+  const [sent] = await rows(
+    'SELECT total_cents FROM live_quotes WHERE id=?',
+    [quote.id],
+    connection,
+  );
+  const total = Number(sent.total_cents);
+  await recordEvent(
+    connection,
+    String(quote.business_id),
+    'quote_approved',
+    {
+      via: via.channel,
+      test: quote.source === 'test',
+      edited: Boolean(edits),
+      style: style ?? '',
+      drafted_cents: drafted,
+      sent_cents: total,
+      change_pct: drafted > 0 ? Math.round(((total - drafted) / drafted) * 100) : null,
+      // How long the customer waited on the owner.
+      waited_minutes: Math.round((Date.now() - new Date(quote.created_at).getTime()) / 60_000),
+      review_reason: String(quote.review_reason ?? '').slice(0, 120),
+    },
+    { session: via.session, ref: String(quote.id), value: total },
+  );
 }
 
 ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (req, res) => {
@@ -203,7 +244,10 @@ ownerQuotesRouter.post('/app/quotes/:id/approve', rateLimit(30, 60_000), async (
       connection,
     );
     if (!quote) throw new ApiError(404, 'QUOTE_NOT_FOUND', 'That quote isn’t here.');
-    await sendWaitingQuote(connection, quote, edits, style);
+    await sendWaitingQuote(connection, quote, edits, style, {
+      channel: 'app',
+      session: requestSession(req),
+    });
   });
   res.json(ok(await quoteDetail(businessId, quoteId)));
 });
@@ -241,6 +285,13 @@ ownerQuotesRouter.post('/app/quotes/:id/messages', rateLimit(30, 60_000), async 
     [randomUUID(), businessId, quote.chat_id, 'owner', 'text', text],
   );
   await mutate('UPDATE lead_chats SET human_handoff=TRUE WHERE id=?', [quote.chat_id]);
+  await recordRequestEvent(
+    req,
+    businessId,
+    'owner_message_sent',
+    { chars: text.length },
+    { ref: quoteId },
+  );
   await emailCustomer(
     businessId,
     String(quote.chat_id),
@@ -358,6 +409,13 @@ ownerQuotesRouter.patch('/app/link', async (req, res) => {
       connection,
     );
     if (on) await recordMilestone(connection, businessId, 'went_live');
+    await recordEvent(
+      connection,
+      businessId,
+      'link_switched',
+      { on },
+      { session: requestSession(req) },
+    );
   });
   res.json(ok(await liveBillingSummary(businessId)));
 });

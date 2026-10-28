@@ -2,9 +2,10 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { hashingSecret } from './config.js';
 import { mutate, rows, transaction } from './db.js';
-import { runWithAiUsage, aiMode, type AiUsage } from './ai/index.js';
+import { runWithAiUsage, aiMode, type AiFailure, type AiUsage } from './ai/index.js';
 import { ApiError } from './http.js';
 import { consumeAuthRateLimit } from './verification.js';
+import { recordEvent } from './metrics.js';
 
 function dailyLimit(key: string, fallback: number) {
   const value = Number(process.env[key]);
@@ -58,6 +59,23 @@ function recordBusinessAiUsage<T>(
           'INSERT INTO usage_events (id, business_id, kind, metadata_json) VALUES (?, ?, ?, ?)',
           [randomUUID(), businessId, 'ai_call', JSON.stringify({ ...usage, conversationId })],
         );
+        await recordEvent(undefined, businessId, 'ai_call', {
+          operation: usage.operation,
+          provider: usage.provider,
+          model: usage.model,
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
+          ms: usage.durationMs ?? null,
+        });
+      },
+      failed: async (failure: AiFailure) => {
+        await recordEvent(undefined, businessId, 'ai_failed', {
+          operation: failure.operation,
+          provider: failure.provider,
+          model: failure.model,
+          reason: failure.reason,
+          ms: failure.durationMs,
+        });
       },
     },
     task,

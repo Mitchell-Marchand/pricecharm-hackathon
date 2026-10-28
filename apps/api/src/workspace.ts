@@ -81,7 +81,11 @@ export function workspace(req: Request): Workspace {
 }
 
 /** Creates a draft business for this browser and sets its cookie. */
-export async function createDraft(res: Response, connection: Sql): Promise<string> {
+export async function createDraft(
+  res: Response,
+  connection: Sql,
+  session: string | null = null,
+): Promise<string> {
   const id = randomUUID(),
     token = newToken();
   await mutate(
@@ -89,7 +93,7 @@ export async function createDraft(res: Response, connection: Sql): Promise<strin
     [id, '', `draft-${id}`, '', hashToken(token), new Date(Date.now() + DRAFT_MS)],
     connection,
   );
-  await recordMilestone(connection, id, 'setup_started');
+  await recordMilestone(connection, id, 'setup_started', '', { session });
   setDraftCookie(res, token);
   return id;
 }

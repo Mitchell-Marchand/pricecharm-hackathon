@@ -19,6 +19,7 @@ import {
   startChat,
   verifyContact,
 } from './chat.js';
+import { recordEvent, recordRequestEvent, type EventProps } from '../metrics.js';
 
 /** The customer side: the quote link and the website widget. */
 export const chatRouter = Router();
@@ -53,6 +54,18 @@ chatRouter.get('/chat/:slug/viewer', async (req, res) => {
   res.json(ok({ owner: Boolean(viewer && !viewer.draft && viewer.businessId === business.id) }));
 });
 
+/** What a business's customer did, counted against the business. Never what they wrote. */
+async function customerEvent(req: Request, name: string, props: EventProps = {}) {
+  const { business, chat } = await chatAccess(req);
+  await recordEvent(
+    undefined,
+    String(business.id),
+    name,
+    { ...props, source: String(chat.source), status: String(chat.status) },
+    { ref: String(chat.id) },
+  );
+}
+
 /**
  * Starts a chat. When the business's own owner is signed in, it's a test: no bot check, and the
  * quote is never billed or emailed.
@@ -73,6 +86,9 @@ chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => 
     );
   if (!test) await verifyHuman(req, 'quote_chat');
   const { token, chatId } = await startChat(business, test ? 'test' : source);
+  // The owner trying their own link shows up in their setup's trail.
+  if (test)
+    await recordRequestEvent(req, String(business.id), 'owner_test_chat', {}, { ref: chatId });
   req.headers.authorization = `Bearer ${token}`;
   req.params.chatId = chatId;
   const { chat } = await chatAccess(req);
@@ -89,7 +105,9 @@ chatRouter.post('/chat/:slug/:chatId/messages', rateLimit(20, 60_000), async (re
     .object({ text: z.string().trim().min(1).max(2000) })
     .strict()
     .parse(req.body);
-  res.json(ok(await customerMessage(req, text)));
+  const reply = await customerMessage(req, text);
+  await customerEvent(req, 'customer_message', { chars: text.length });
+  res.json(ok(reply));
 });
 
 chatRouter.post(
@@ -102,7 +120,9 @@ chatRouter.post(
     if (!['chatting', 'contact'].includes(String(chat.status)))
       throw new ApiError(409, 'CHAT_DONE', 'Photos can’t be added to this request anymore.');
     const saved = await saveImage(req, String(business.id), { conversationId: String(chat.id) });
-    res.status(201).json(ok(await afterPhoto(req, saved.id)));
+    const reply = await afterPhoto(req, saved.id);
+    await customerEvent(req, 'customer_photo', { kb: Math.round((req.file?.size ?? 0) / 1024) });
+    res.status(201).json(ok(reply));
   },
 );
 
@@ -117,7 +137,9 @@ chatRouter.post('/chat/:slug/:chatId/contact', rateLimit(10, 15 * 60_000), async
     .object({ name: z.string().trim().min(1).max(160), email: z.string().max(254) })
     .strict()
     .parse(req.body);
-  res.json(ok(await requestContact(req, input, devTokensAllowed(req))));
+  const result = await requestContact(req, input, devTokensAllowed(req));
+  await customerEvent(req, 'customer_contact_given', { already_verified: Boolean(result.chat) });
+  res.json(ok(result));
 });
 
 chatRouter.post('/chat/:slug/:chatId/verify', rateLimit(20, 15 * 60_000), async (req, res) => {
@@ -125,7 +147,16 @@ chatRouter.post('/chat/:slug/:chatId/verify', rateLimit(20, 15 * 60_000), async 
     .object({ verificationId: z.uuid(), code: z.string().trim().max(10) })
     .strict()
     .parse(req.body);
-  res.json(ok(await verifyContact(req, input)));
+  try {
+    const result = await verifyContact(req, input);
+    await customerEvent(req, 'customer_verified');
+    res.json(ok(result));
+  } catch (error) {
+    await customerEvent(req, 'customer_code_failed', {
+      code: error instanceof ApiError ? error.code : 'error',
+    }).catch(() => {});
+    throw error;
+  }
 });
 
 chatRouter.post('/chat/:slug/:chatId/accept', async (req, res) => {

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Archivo, IBM_Plex_Mono, Public_Sans } from 'next/font/google';
+import { Tracking } from '@/components/site/Tracking';
 import { VisitCounter } from '@/components/site/VisitCounter';
 import { SITE_URL } from '@/lib/site';
 import './globals.css';
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         {children}
         <VisitCounter />
+        <Tracking />
       </body>
     </html>
   );

@@ -8,7 +8,7 @@ import { ApiError, ok } from './http.js';
 import { iso } from './models.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { consumeAuthRateLimit } from './verification.js';
-import { recordMilestone } from './metrics.js';
+import { recordMilestone, recordRequestEvent } from './metrics.js';
 type BillingAccount = RowDataPacket & {
   fee_basis_points: number;
   minimum_fee_cents: number;
@@ -376,6 +376,9 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     .strict()
     .parse(req.body ?? {});
   const back = from === 'setup' ? '/start/live' : '/app/settings';
+  await recordRequestEvent(req, context.businessId, 'checkout_started', {
+    from: from ?? 'settings',
+  });
   // Confirming the email isn't needed first: it's asked for, never in the way of going live.
   await consumeAuthRateLimit(`billing-checkout:${context.businessId}`, 5, 3600000);
   if (billingProvider() === 'local') {
@@ -637,6 +640,7 @@ export async function applyDuePlanChanges(): Promise<void> {
 
 billingRouter.post('/billing/portal', async (req, res) => {
   await consumeAuthRateLimit(`billing-portal:${owner(req).businessId}`, 20, 3600000);
+  await recordRequestEvent(req, owner(req).businessId, 'billing_portal_opened');
   z.object({})
     .strict()
     .parse(req.body ?? {});

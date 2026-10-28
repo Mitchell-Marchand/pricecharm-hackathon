@@ -1,11 +1,12 @@
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { hashingSecret } from './config.js';
 import { mutate, rows, type Sql } from './db.js';
 import { rateLimit } from './http.js';
 import { queueEmail } from './integrations/email.js';
+import { formatInsights, insightsReport } from './insights.js';
 
 /**
  * Product metrics, kept in our own database. Events say what happened and when, never names,
@@ -25,7 +26,7 @@ export type Milestone =
 /** Things that keep happening: one row each, keyed by the chat or quote. */
 export type Activity = 'customer_chat' | 'quote_drafted' | 'quote_sent' | 'quote_outcome';
 
-async function subjectOf(businessId: string, connection?: Sql): Promise<string | undefined> {
+export async function subjectOf(businessId: string, connection?: Sql): Promise<string | undefined> {
   const [business] = await rows(
     'SELECT metrics_subject FROM businesses WHERE id=?',
     [businessId],
@@ -39,12 +40,21 @@ export async function recordMilestone(
   businessId: string,
   name: Milestone,
   detail = '',
+  extra: { props?: EventProps; session?: string | null } = {},
 ): Promise<void> {
   const subject = await subjectOf(businessId, connection);
   if (!subject) return;
   await mutate(
-    'INSERT IGNORE INTO product_events (id,subject,name,detail,dedupe_key) VALUES (?,?,?,?,?)',
-    [randomUUID(), subject, name, detail, `${subject}:${name}:${detail}`],
+    'INSERT IGNORE INTO product_events (id,subject,name,detail,dedupe_key,session,props) VALUES (?,?,?,?,?,?,?)',
+    [
+      randomUUID(),
+      subject,
+      name,
+      detail,
+      `${subject}:${name}:${detail}`,
+      extra.session ?? null,
+      extra.props ? JSON.stringify(cleanProps(extra.props)) : null,
+    ],
     connection,
   );
 }
@@ -80,6 +90,136 @@ export async function recordActivity(
     ],
     connection,
   );
+}
+
+/**
+ * What an event says about itself: counts, flags, amounts, steps and the owner's own labels, such
+ * as a service name. Never names, contact details or what anyone wrote.
+ */
+export type EventProps = Record<string, string | number | boolean | null | undefined>;
+export const PROP_KEY = /^[a-z][a-z_0-9]{0,39}$/;
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
+const PHONE = /\+?\d[\d\s().-]{7,}\d/g;
+
+/** Drops anything malformed, and scrubs email addresses and phone numbers from text. */
+export function cleanProps(props: EventProps): Record<string, string | number | boolean | null> {
+  const clean: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(props).slice(0, 30)) {
+    if (!PROP_KEY.test(key) || value === undefined) continue;
+    if (typeof value === 'string')
+      clean[key] = value.replace(EMAIL, '[email]').replace(PHONE, '[number]').slice(0, 300);
+    else if (typeof value === 'number') clean[key] = Number.isFinite(value) ? value : null;
+    else clean[key] = value;
+  }
+  return clean;
+}
+
+/** The browser tab an API call came from. The web app sends it with every request. */
+export function requestSession(req: Request): string | null {
+  const value = req.get('x-pc-session') ?? '';
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)
+    ? value
+    : null;
+}
+
+/** Something that happened on the server, with the facts at that moment. */
+export async function recordEvent(
+  connection: Sql | undefined,
+  businessId: string | null,
+  name: string,
+  props: EventProps = {},
+  options: { session?: string | null; ref?: string; value?: number } = {},
+): Promise<void> {
+  const subject = businessId ? ((await subjectOf(businessId, connection)) ?? null) : null;
+  if (!subject && !options.session) return;
+  await mutate(
+    'INSERT INTO product_events (id,subject,name,ref,value,session,props) VALUES (?,?,?,?,?,?,?)',
+    [
+      randomUUID(),
+      subject,
+      name,
+      options.ref ?? null,
+      options.value ?? null,
+      options.session ?? null,
+      JSON.stringify(cleanProps(props)),
+    ],
+    connection,
+  );
+}
+
+/** The same, from a route: the business and browser tab come from the request. */
+export function recordRequestEvent(
+  req: Request,
+  businessId: string | null,
+  name: string,
+  props: EventProps = {},
+  options: { ref?: string; value?: number } = {},
+): Promise<void> {
+  return recordEvent(undefined, businessId, name, props, {
+    ...options,
+    session: requestSession(req),
+  });
+}
+
+/**
+ * Where a setup stands. Saved with each step, so the numbers outlive a setup that's deleted
+ * unfinished, which takes its own rows with it.
+ */
+export async function setupFacts(businessId: string, connection?: Sql): Promise<EventProps> {
+  const [row] = await rows(
+    `SELECT b.trade_id,b.custom_trade,b.travel_radius_miles,b.service_area,
+       (SELECT COUNT(*) FROM offerings o WHERE o.business_id=b.id) AS services,
+       (SELECT COUNT(*) FROM offerings o WHERE o.business_id=b.id AND o.custom) AS custom_services,
+       (SELECT COUNT(*) FROM past_jobs j WHERE j.business_id=b.id) AS jobs,
+       (SELECT COUNT(*) FROM past_jobs j WHERE j.business_id=b.id AND j.source='invoice') AS invoice_jobs,
+       (SELECT COUNT(*) FROM practice_runs p WHERE p.business_id=b.id AND p.status='finished') AS practice_done
+     FROM businesses b WHERE b.id=?`,
+    [businessId],
+    connection,
+  );
+  if (!row) return {};
+  return {
+    trade: row.trade_id ? String(row.trade_id) : row.custom_trade ? 'custom' : '',
+    custom_trade: row.custom_trade ? String(row.custom_trade) : '',
+    radius: row.travel_radius_miles === null ? null : Number(row.travel_radius_miles),
+    has_area: Boolean(row.service_area),
+    services: Number(row.services),
+    custom_services: Number(row.custom_services),
+    jobs: Number(row.jobs),
+    invoice_jobs: Number(row.invoice_jobs),
+    practice_done: Number(row.practice_done),
+  };
+}
+
+/** What an owner filled in for one past job, without the words. */
+export function jobFacts(job: {
+  serviceName: string;
+  description: string;
+  priceCents: number;
+  size: string;
+  duration: string;
+  when: string;
+  materialsCents: number | null;
+  discount: { kind: string; value: number } | null;
+  notes: string;
+  source: string;
+  slot: string | null;
+  photoIds?: string[];
+}): EventProps {
+  return {
+    service: job.serviceName,
+    price_cents: job.priceCents,
+    has_size: Boolean(job.size),
+    has_duration: Boolean(job.duration),
+    has_when: Boolean(job.when),
+    has_materials: job.materialsCents !== null,
+    discount: job.discount?.kind ?? '',
+    description_chars: job.description.length,
+    notes_chars: job.notes.length,
+    photos: job.photoIds?.length ?? 0,
+    source: job.source,
+    slot: job.slot ?? '',
+  };
 }
 
 /** The public pages whose visits are counted. */
@@ -129,10 +269,15 @@ visitsRouter.post('/visits', rateLimit(30, 60_000), async (req, res) => {
   res.status(204).end();
 });
 
-/** Visit counts older than this go in the daily maintenance. */
+/** Visit counts and browser events go after 400 days. Milestones and server events stay. */
 export async function pruneVisits(connection?: Sql): Promise<void> {
   await mutate(
     'DELETE FROM page_visits WHERE day<DATE_SUB(UTC_DATE(),INTERVAL 400 DAY)',
+    [],
+    connection,
+  );
+  await mutate(
+    "DELETE FROM product_events WHERE source='browser' AND created_at<DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 400 DAY) LIMIT 20000",
     [],
     connection,
   );
@@ -310,6 +455,9 @@ export async function queueWeeklyReport(now = new Date()): Promise<void> {
     to: to.data,
     dedupeKey,
     subject: `PriceCharm this week: ${total('Setups started')} setups, ${sent} quotes sent`,
-    text: formatReport(report),
+    text: `${formatReport(report)}\n\n${formatInsights(await insightsReport(7, now))}`.slice(
+      0,
+      29_000,
+    ),
   });
 }

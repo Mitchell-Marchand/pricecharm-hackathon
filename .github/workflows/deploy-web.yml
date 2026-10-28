@@ -47,6 +47,8 @@ jobs:
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ vars.SENTRY_WEB_DSN }}
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+          # PostHog project key for session recordings. Public by design; empty turns them off.
+          NEXT_PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
       - name: Package an immutable release
         # Standalone output mirrors the monorepo, so the server lives at apps/web/server.js inside it.
         run: |

@@ -7,6 +7,7 @@ import { parseQuantity } from './pricing/units.js';
 import { deletePhoto, getPhoto } from './storage.js';
 import { imageUpload, saveImage, uploadSlot } from './uploads.js';
 import { requireWorkspace, workspace } from './workspace.js';
+import { jobFacts, recordRequestEvent } from './metrics.js';
 
 /** The jobs an owner has done. They teach the AI what this business charges. */
 export const pastJobsRouter = Router();
@@ -203,8 +204,15 @@ pastJobsRouter.post('/onboarding/jobs', requireWorkspace, async (req, res) => {
   const current = workspace(req);
   const id = randomUUID();
   await transaction((connection) => insertPastJobs(connection, current, [{ id, input }]));
-  const job = (await listPastJobs(current.businessId)).find((item) => item.id === id);
-  res.status(201).json(ok(job));
+  const jobs = await listPastJobs(current.businessId);
+  await recordRequestEvent(
+    req,
+    current.businessId,
+    'job_added',
+    { ...jobFacts(input), jobs: jobs.length },
+    { ref: id },
+  );
+  res.status(201).json(ok(jobs.find((item) => item.id === id)));
 });
 
 pastJobsRouter.put('/onboarding/jobs/:id', requireWorkspace, async (req, res) => {
@@ -223,6 +231,7 @@ pastJobsRouter.put('/onboarding/jobs/:id', requireWorkspace, async (req, res) =>
   });
   for (const key of dropped) await deletePhoto(key).catch(() => {});
   const job = (await listPastJobs(current.businessId)).find((item) => item.id === id);
+  await recordRequestEvent(req, current.businessId, 'job_edited', jobFacts(input), { ref: id });
   res.json(ok(job));
 });
 
@@ -241,6 +250,13 @@ pastJobsRouter.delete('/onboarding/jobs/:id', requireWorkspace, async (req, res)
     return keys;
   });
   for (const key of dropped) await deletePhoto(key).catch(() => {});
+  await recordRequestEvent(
+    req,
+    current.businessId,
+    'job_deleted',
+    { jobs: (await listPastJobs(current.businessId)).length },
+    { ref: id },
+  );
   res.json(ok({ ok: true }));
 });
 
@@ -253,6 +269,9 @@ pastJobsRouter.post(
   imageUpload,
   async (req, res) => {
     const saved = await saveImage(req, workspace(req).businessId, { purpose: 'past_job' });
+    await recordRequestEvent(req, workspace(req).businessId, 'job_photo_uploaded', {
+      kb: Math.round((req.file?.size ?? 0) / 1024),
+    });
     res.status(201).json(ok({ id: saved.id, url: photoUrl(saved.id) }));
   },
 );

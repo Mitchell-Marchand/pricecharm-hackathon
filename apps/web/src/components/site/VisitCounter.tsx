@@ -7,15 +7,12 @@ const COUNTED = new Set(['/', '/pricing', '/demo', '/start', '/privacy', '/terms
 
 /**
  * Counts a visit to a public page on PriceCharm's own server, with the site that sent the visitor.
- * No cookies and nothing kept in the browser, and nothing at all when the browser asks not to be
- * tracked.
+ * No cookies and nothing kept in the browser.
  */
 export function VisitCounter() {
   const path = usePathname();
   useEffect(() => {
     if (!COUNTED.has(path)) return;
-    const browser = navigator as Navigator & { globalPrivacyControl?: boolean };
-    if (browser.globalPrivacyControl || browser.doNotTrack === '1') return;
     let referrer = '';
     try {
       const from = new URL(document.referrer);

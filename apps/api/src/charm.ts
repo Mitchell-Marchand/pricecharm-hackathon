@@ -6,6 +6,7 @@ import type { Row } from './models.js';
 import { agentReadiness, businessReadiness, serviceWorkload } from './pricing/readiness.js';
 import { LEARNING_STYLES, TRAINED_PERCENT, type LearningStyle } from './pricing/style.js';
 import { requireWorkspace, workspace } from './workspace.js';
+import { recordRequestEvent } from './metrics.js';
 
 /**
  * How the owner's Charm quotes: whether quotes go out on their own, a price over which they always
@@ -94,6 +95,15 @@ charmRouter.get('/onboarding/charm', requireWorkspace, async (req, res) => {
 
 charmRouter.patch('/onboarding/charm', requireWorkspace, async (req, res) => {
   const { businessId } = workspace(req);
-  await saveCharmSettings(businessId, charmSettingsInput.parse(req.body));
+  const input = charmSettingsInput.parse(req.body);
+  await saveCharmSettings(businessId, input);
+  const limit = input.limitCents !== undefined ? input.limitCents : input.autoSendLimitCents;
+  await recordRequestEvent(req, businessId, 'charm_settings_changed', {
+    fields: Object.keys(input).join(','),
+    auto_send: input.autoSend,
+    limit_cents: limit,
+    trained_percent: input.trainedPercent,
+    learning_style: input.learningStyle,
+  });
   res.json(ok(await charmView(businessId)));
 });

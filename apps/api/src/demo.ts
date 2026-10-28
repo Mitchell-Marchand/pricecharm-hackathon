@@ -11,6 +11,7 @@ import { ApiError, ok, rateLimit } from './http.js';
 import { verifyHuman } from './human-check.js';
 import { quoteTotal, type Quote } from './practice/types.js';
 import { withDemoAiUsage } from './usage.js';
+import { recordRequestEvent } from './metrics.js';
 
 /**
  * The live demo on the marketing site: a visitor chats with a sample business's assistant and
@@ -206,6 +207,7 @@ demoRouter.post('/demo/start', rateLimit(10, 10 * 60_000), async (req, res) => {
     .strict()
     .parse(req.body ?? {});
   await verifyHuman(req, 'demo');
+  await recordRequestEvent(req, null, 'demo_started');
   res.status(201).json(ok({ pass: issuePass() }));
 });
 
@@ -256,6 +258,12 @@ demoRouter.post('/demo/turn', async (req, res) => {
     turn.reply,
     'Thanks! Tell me a little more about the job and I’ll put your quote together.',
   );
+  await recordRequestEvent(req, null, 'demo_turn', {
+    trade: String(req.body.tradeId),
+    service: chat.serviceName,
+    messages: (req.body.messages as unknown[]).length,
+    photos: chat.photosSent,
+  });
   res.json(
     ok({
       // Once it has enough, the last word shouldn't be another question.
@@ -317,6 +325,12 @@ demoRouter.post('/demo/quote', async (req, res) => {
       label: clean(line.label, serviceName).slice(0, 120),
       amountCents: line.amountCents,
     }));
+  await recordRequestEvent(req, null, 'demo_quote', {
+    trade: String(req.body.tradeId),
+    service: serviceName,
+    site_visit: drafted.decision === 'site_visit' || !lines.length,
+    total_cents: lines.reduce((sum, line) => sum + line.amountCents, 0),
+  });
   if (drafted.decision === 'site_visit' || !lines.length) {
     res.json(
       ok({

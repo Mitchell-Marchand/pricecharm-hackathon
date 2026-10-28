@@ -170,7 +170,7 @@ export default function QuotesHome() {
             </p>
           </div>
         ) : (
-          <ul className="overflow-hidden rounded-md border border-line bg-surface">
+          <ul className="overflow-hidden rounded-md border border-line bg-surface" data-private>
             {quotes.map((quote) => (
               <li key={quote.id} className="border-b border-line last:border-0">
                 <Link

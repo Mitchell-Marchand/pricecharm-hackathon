@@ -15,9 +15,11 @@ after(() => closeDatabase());
 
 const eventsFor = async (subject: string) =>
   (
-    await rows('SELECT name,detail FROM product_events WHERE subject=? ORDER BY created_at,name', [
-      subject,
-    ])
+    await rows(
+      // Milestones only: the ones recorded once each.
+      'SELECT name,detail FROM product_events WHERE subject=? AND dedupe_key IS NOT NULL ORDER BY created_at,name',
+      [subject],
+    )
   ).map((item) => `${item.name}${item.detail ? `:${item.detail}` : ''}`);
 
 test(

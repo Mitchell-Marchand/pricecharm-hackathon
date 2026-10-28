@@ -1,3 +1,5 @@
+import { screenPath, sessionId, track, trackingAllowed } from './track';
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -23,6 +25,7 @@ export class NetworkError extends Error {
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `/api/v1${path}`;
+  const tracked = trackingAllowed();
   const request: RequestInit = {
     ...options,
     credentials: 'include',
@@ -30,18 +33,33 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       ...(options.body && !(options.body instanceof FormData)
         ? { 'Content-Type': 'application/json' }
         : {}),
+      // Lets the server file what this request did under the same browser tab.
+      ...(tracked ? { 'X-PC-Session': sessionId() } : {}),
       ...options.headers,
     },
   };
+  const method = (request.method || 'GET').toUpperCase();
+  const endpoint = screenPath(path.split('?')[0]);
+  const started = Date.now();
   let response: Response;
   try {
     response = await fetch(url, request);
   } catch (cause) {
     if (request.signal?.aborted || (cause instanceof Error && cause.name === 'AbortError'))
       throw cause;
+    track('network_error', { endpoint, method });
     throw new NetworkError(request.method || 'GET', cause);
   }
   const body = await response.json().catch(() => null);
+  const ms = Date.now() - started;
+  if (ms > 4000) track('api_slow', { endpoint, method, ms, status: response.status });
+  if (!response.ok)
+    track('api_error', {
+      endpoint,
+      method,
+      status: response.status,
+      code: body?.error?.code || 'REQUEST_FAILED',
+    });
   if (!response.ok)
     throw new ApiError(
       response.status,

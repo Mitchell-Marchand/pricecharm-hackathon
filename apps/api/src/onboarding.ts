@@ -10,7 +10,13 @@ import { ApiError, ok, rateLimit } from './http.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
 import { draftIpBudgetKey } from './usage.js';
-import { recordMilestone } from './metrics.js';
+import {
+  recordEvent,
+  recordMilestone,
+  recordRequestEvent,
+  requestSession,
+  setupFacts,
+} from './metrics.js';
 import { consumeAuthRateLimit } from './verification.js';
 import {
   DRAFT_DAYS,
@@ -105,7 +111,7 @@ onboardingRouter.post(
           );
         throw error;
       }
-      return createDraft(res, connection);
+      return createDraft(res, connection, requestSession(req));
     });
     res.status(201).json(ok(await onboardingState(businessId, true)));
   },
@@ -186,6 +192,10 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
         );
     }
   });
+  await recordRequestEvent(req, current.businessId, 'business_updated', {
+    fields: Object.keys(input).join(','),
+    ...(await setupFacts(current.businessId)),
+  });
   res.json(ok(await onboardingState(current.businessId, current.draft)));
 });
 
@@ -196,7 +206,12 @@ onboardingRouter.patch('/onboarding/step', requireWorkspace, async (req, res) =>
     .parse(req.body);
   const current = workspace(req);
   await mutate('UPDATE businesses SET onboarding_step=? WHERE id=?', [step, current.businessId]);
-  await recordMilestone(undefined, current.businessId, 'setup_step', step);
+  const facts = await setupFacts(current.businessId);
+  await recordMilestone(undefined, current.businessId, 'setup_step', step, {
+    props: facts,
+    session: requestSession(req),
+  });
+  await recordRequestEvent(req, current.businessId, 'step_changed', { to: step, ...facts });
   res.json(ok(await onboardingState(current.businessId, current.draft)));
 });
 
@@ -246,6 +261,7 @@ onboardingRouter.post(
         connection,
       );
     });
+    await recordRequestEvent(req, current.businessId, 'resume_link_sent');
     res.json(
       ok({
         ok: true,
@@ -274,6 +290,15 @@ onboardingRouter.post('/onboarding/resume', rateLimit(20, 15 * 60_000), async (r
       );
     await mutate('UPDATE businesses SET draft_resume_hash=NULL WHERE id=?', [draft.id], connection);
     await rotateDraftCookie(res, String(draft.id), connection);
+    await recordEvent(
+      connection,
+      String(draft.id),
+      'resume_link_used',
+      {},
+      {
+        session: requestSession(req),
+      },
+    );
     return String(draft.id);
   });
   res.json(ok(await onboardingState(businessId, true)));

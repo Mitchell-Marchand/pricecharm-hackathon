@@ -7,6 +7,7 @@ import { isDisposableEmail } from './email-domains.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { ownerReplyTo, queueEmail } from './integrations/email.js';
 import { consumeAuthRateLimit } from './verification.js';
+import { recordRequestEvent } from './metrics.js';
 
 /** The quote link, the website widget, and the one website allowed to show it. */
 export const shareRouter = Router();
@@ -75,6 +76,11 @@ shareRouter.patch('/share', async (req, res) => {
       input.widgetStyle,
       businessId,
     ]);
+  await recordRequestEvent(req, businessId, 'share_updated', {
+    fields: Object.keys(input).join(','),
+    has_website: input.website === undefined ? undefined : Boolean(input.website),
+    widget_style: input.widgetStyle,
+  });
   res.json(ok(await shareState(businessId)));
 });
 
@@ -119,5 +125,6 @@ ${GUIDE}
 
 The button only works on ${share.websiteDomain || 'the website the owner lists in their settings'}. Questions about it can go to ${context.email}.`,
   });
+  await recordRequestEvent(req, context.businessId, 'share_instructions_emailed');
   res.json(ok({ ok: true }));
 });

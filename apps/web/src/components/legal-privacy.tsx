@@ -108,10 +108,26 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 you request and when.
               </li>
               <li>
-                Which of our public pages you visit and the website that sent you there. We count
-                these visits on our own servers without cookies, using a scrambled form of your IP
-                address and browser type that changes every day. If your browser sends a Do Not
-                Track or Global Privacy Control signal, we don’t count them at all.
+                How you use our website and your account: the pages and screens you open and how
+                long you spend on them, what you click, which fields you fill in and how long they
+                take (not what you type in them), error messages you see, and requests that fail or
+                run slowly. A random id for your browser tab ties one visit together.
+              </li>
+              <li>
+                Screen recordings of our website and of business owners’ setup and accounts, made
+                with PostHog. What you type is hidden, and so are customers’ names, messages and
+                photos. We never record quote links or the quote button on a business’s website, and
+                we don’t record at all if your browser sends a Do Not Track or Global Privacy
+                Control signal.
+              </li>
+              <li>
+                Visits to our public pages and the website that sent you there, counted on our own
+                servers using a scrambled form of your IP address and browser type that changes
+                every day.
+              </li>
+              <li>
+                If you’re in Europe or the UK, we ask before recording how you use the website or
+                your account.
               </li>
               <li>
                 Cookies and browser storage that keep you signed in or let you come back to a
@@ -157,8 +173,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 addresses or contact details. We use them to improve PriceCharm and may share them.
               </li>
               <li>
-                <strong>To see how PriceCharm is used,</strong> we record steps like finishing
-                setup, sending a quote or a customer accepting one. These records hold no names,
+                <strong>To see how PriceCharm is used and fix what gets in the way,</strong> we
+                record steps like finishing setup, sending a quote or a customer accepting one, and
+                how people move through the website and the app. These records hold no names,
                 contact details or messages.
               </li>
               <li>
@@ -250,6 +267,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'IP address and browser signals',
                 ],
                 [
+                  'PostHog',
+                  'Screen recordings and usage analytics, in the United States',
+                  'Pages, clicks and screen recordings, with typing and customers’ details hidden',
+                ],
+                [
                   'Sentry',
                   'Error reports',
                   'The error, the page and browser type. We remove request contents, email addresses and sign-in details before sending.',
@@ -283,8 +305,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              We only use the cookies and browser storage PriceCharm needs to work. We don’t use
-              advertising or analytics cookies.
+              We don’t use advertising cookies or analytics cookies. Besides what PriceCharm needs
+              to work, browser storage holds the id that ties one visit together and, in Europe and
+              the UK, your answer about recordings.
             </p>
             <LegalTable
               head={['Name', 'What it’s for', 'How long it lasts']}
@@ -308,6 +331,16 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Browser storage',
                   'Lets you return to a quote request you started, and keeps unsent drafts',
                   'Until you clear it. Drafts last until you close the tab.',
+                ],
+                [
+                  'pc_session (browser storage)',
+                  'Ties together what you do in one visit, for our usage records and recordings',
+                  'Until you close the tab',
+                ],
+                [
+                  'pc_consent (browser storage)',
+                  'Remembers whether you agreed to recordings, in Europe and the UK',
+                  'Until you clear it',
                 ],
               ]}
             />
@@ -347,6 +380,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ['Copies of emails we’ve sent', '30 days'],
                 ['Server logs, which include IP addresses', '30 days'],
                 ['Visit counts for our public pages', '13 months'],
+                ['Records of what people did on the website and in the app', '13 months'],
+                ['Screen recordings', '30 days'],
                 [
                   'Records of steps taken in PriceCharm',
                   'Kept, but no longer linked to a business once it closes its account',
