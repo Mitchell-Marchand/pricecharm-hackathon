@@ -121,6 +121,41 @@ test('incomplete and schema-invalid responses fail closed after usage is recorde
   await assert.rejects(ask(), ai.AiError);
 });
 
+test('a quote draft that runs long is clipped, not thrown away', async () => {
+  const { draftQuote } = await import('../src/ai/quote-engine.js');
+  const lines = Array.from({ length: 25 }, (_, index) => ({
+    label: `Window ${index + 1}`,
+    amountCents: 1500,
+  }));
+  globalThis.fetch = async () =>
+    response({
+      decision: 'quote',
+      reason: 'No past interior window jobs to go on, so this is based on '.repeat(6),
+      lines,
+      discountKind: 'none',
+      discountValue: null,
+      discountReason: '',
+      start: 'Next week',
+      duration: '',
+      confidence: 'low',
+      reasoning: 'x '.repeat(400),
+    });
+  const drafted = await draftQuote({
+    history: {} as never,
+    request: { serviceName: 'Interior windows', conversation: [] },
+    images: [],
+  });
+  assert.ok(drafted.reason.length <= 200 && drafted.reason.endsWith('…'), drafted.reason);
+  assert.ok(drafted.reasoning.length <= 600);
+  assert.equal(drafted.lines.length, 20, 'As many lines as an owner can send');
+  assert.equal(drafted.lines.at(-1)?.label, 'Everything else');
+  assert.equal(
+    drafted.lines.reduce((sum, line) => sum + line.amountCents, 0),
+    25 * 1500,
+    'No money is lost',
+  );
+});
+
 test('explicit transient failure is retried once, with no demo fallback', async () => {
   let attempts = 0;
   globalThis.fetch = async () => {

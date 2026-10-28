@@ -107,24 +107,48 @@ const quoteJson = {
   ],
   additionalProperties: false,
 };
+/**
+ * Text the model wrote, kept to its limit: a long answer is cut at a word instead of failing the
+ * whole draft. Models don't keep to lengths, and a draft that fails stops a customer's quote.
+ */
+const clipped = (max: number) =>
+  z.string().transform((value) => {
+    const text = value.replace(/\s+/g, ' ').trim();
+    return text.length <= max ? text : `${text.slice(0, max - 1).replace(/\s+\S*$/, '')}…`;
+  });
+/** As many lines as an owner can send. Any past that are added up on the last one. */
+const MAX_LINES = 20;
 const quoteSchema = z.object({
   decision: z.enum(['quote', 'site_visit']),
-  reason: z.string().trim().max(200),
+  reason: clipped(200),
   lines: z
     .array(
       z.object({
-        label: z.string().trim().min(1).max(120),
+        label: clipped(120).pipe(z.string().min(1)),
         amountCents: z.number().int().min(0).max(100_000_000),
       }),
     )
-    .max(12),
+    .max(200)
+    .transform((lines) =>
+      lines.length <= MAX_LINES
+        ? lines
+        : [
+            ...lines.slice(0, MAX_LINES - 1),
+            {
+              label: 'Everything else',
+              amountCents: lines
+                .slice(MAX_LINES - 1)
+                .reduce((sum, line) => sum + line.amountCents, 0),
+            },
+          ],
+    ),
   discountKind: z.enum(['none', 'amount', 'percent']),
   discountValue: z.number().int().min(0).max(100_000_000).nullable(),
-  discountReason: z.string().trim().max(160),
-  start: z.string().trim().max(40),
-  duration: z.string().trim().max(60),
+  discountReason: clipped(160),
+  start: clipped(40),
+  duration: clipped(60),
   confidence: z.enum(['high', 'medium', 'low']),
-  reasoning: z.string().trim().max(600),
+  reasoning: clipped(600),
 });
 
 /**

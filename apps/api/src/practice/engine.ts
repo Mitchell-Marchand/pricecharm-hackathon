@@ -672,7 +672,12 @@ async function finishRun(
   runId: string,
   outcome: { quote: QuoteDraft } | { siteVisit: string },
 ) {
-  await computeShadow(businessId, runId);
+  // The AI's private guess only measures how close it gets. If it can't be made, the owner's
+  // answer still goes through, and this run just has no guess.
+  await computeShadow(businessId, runId).catch((error) => {
+    if (error instanceof ApiError && error.code === 'PRACTICE_CLOSED') throw error;
+    reportError(error, { event: 'practice_guess' });
+  });
   const context = await businessContext(businessId);
   const scenario = await transaction(async (connection) => {
     const run = await loadRun(businessId, runId, connection, true);

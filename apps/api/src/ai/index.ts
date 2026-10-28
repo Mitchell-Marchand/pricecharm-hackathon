@@ -370,6 +370,19 @@ export async function requestJson<T>(
         'extras',
         'timing',
         'situation',
+        // A drafted quote's keys.
+        'decision',
+        'reason',
+        'lines',
+        'label',
+        'amountCents',
+        'discountKind',
+        'discountValue',
+        'discountReason',
+        'start',
+        'duration',
+        'confidence',
+        'reasoning',
       ]);
       console.error(
         JSON.stringify({
