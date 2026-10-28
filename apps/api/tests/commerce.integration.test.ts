@@ -519,7 +519,14 @@ test(
             status: 'active',
             created: 100,
             cancel_at_period_end: false,
-            items: { data: [{ current_period_end: Math.floor(Date.now() / 1000) + 86400 }] },
+            items: {
+              data: [
+                {
+                  price: { id: 'price_mock' },
+                  current_period_end: Math.floor(Date.now() / 1000) + 86400,
+                },
+              ],
+            },
           },
         ],
       })) as any;
@@ -686,12 +693,19 @@ test(
               unit_amount: 4900,
               recurring: { usage_type: 'licensed', interval: 'month' },
             }
-          : {
-              active: true,
-              currency: 'usd',
-              unit_amount: 1,
-              recurring: { usage_type: 'metered', meter: 'meter_checkout' },
-            }) as any;
+          : id === 'price_yearly_mock'
+            ? {
+                active: true,
+                currency: 'usd',
+                unit_amount: 49900,
+                recurring: { usage_type: 'licensed', interval: 'year' },
+              }
+            : {
+                active: true,
+                currency: 'usd',
+                unit_amount: 1,
+                recurring: { usage_type: 'metered', meter: 'meter_checkout' },
+              }) as any;
       stripe.billing.meters.retrieve = (async () => ({
         event_name: 'quotient_fee_cents',
         default_aggregation: { formula: 'sum' },
@@ -703,17 +717,17 @@ test(
         return { id: `cus_${suffix}` };
       }) as any;
       stripe.subscriptions.list = (async () => ({ data: [] })) as any;
+      const checkoutItems: Record<string, unknown> = {};
       stripe.checkout.sessions.create = (async (params: any) => {
         checkouts++;
-        assert.deepEqual(params.line_items, [
-          { price: 'price_monthly_mock', quantity: 1 },
-          { price: 'price_checkout_mock' },
-        ]);
+        checkoutItems[params.metadata.plan] = params.line_items;
         assert.equal(params.mode, 'subscription');
         assert.equal(params.subscription_data.trial_period_days, 7, 'The free week');
-        assert.equal(params.metadata.plan, 'monthly');
         assert.match(params.success_url, /^http:\/\/localhost:3100\/app\/settings/);
-        return { id: `cs_${suffix}`, url: 'https://checkout.stripe.com/mock-only' };
+        return {
+          id: `cs_${suffix}_${params.metadata.plan}`,
+          url: 'https://checkout.stripe.com/mock-only',
+        };
       }) as any;
       stripe.checkout.sessions.retrieve = (async () => ({
         status: 'open',
@@ -739,6 +753,17 @@ test(
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
       assert.equal(customers, 1);
       assert.equal(checkouts, 1);
+      assert.deepEqual(checkoutItems.monthly, [
+        { price: 'price_monthly_mock', quantity: 1 },
+        { price: 'price_checkout_mock' },
+      ]);
+      // Checkout can't mix a yearly price with the monthly usage price, so yearly starts alone.
+      const pick = (plan: string) =>
+        agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan }).expect(200);
+      await pick('yearly');
+      await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+      assert.deepEqual(checkoutItems.yearly, [{ price: 'price_yearly_mock', quantity: 1 }]);
+      await pick('monthly');
       assert.equal(
         (await agent.post('/api/v1/billing/portal').set('Origin', origin).send({}).expect(200)).body
           .data.url,
@@ -794,13 +819,68 @@ test(
         released = id;
         return {};
       }) as any;
+      // On yearly the usage price still bills monthly. The switch waits for the year, not its month.
+      const now = Math.floor(Date.now() / 1000),
+        monthEnd = now + 20 * 86400,
+        yearEnd = now + 300 * 86400;
+      const usageItem = {
+          id: 'si_usage',
+          price: { id: 'price_checkout_mock' },
+          current_period_end: monthEnd,
+        },
+        yearlyItem = {
+          id: 'si_fixed',
+          price: { id: 'price_yearly_mock' },
+          current_period_end: yearEnd,
+        };
+      stripe.subscriptions.retrieve = (async () => ({
+        id: `sub_${suffix}`,
+        items: { data: [usageItem, yearlyItem] },
+      })) as any;
       const booked = (await choose('per_accepted')).body.data;
       assert.deepEqual([booked.plan, booked.nextPlan], ['yearly', 'per_accepted']);
+      assert.equal(scheduled[0].phases[0].end_date, yearEnd);
       assert.deepEqual(scheduled[0].phases[1].items, [{ price: 'price_checkout_mock' }]);
       assert.equal(scheduled[0].phases[1].proration_behavior, 'none');
       assert.equal(updates.length, 1, 'Nothing changes on the subscription until then');
       const kept = (await choose('yearly')).body.data;
       assert.deepEqual([kept.plan, kept.nextPlan, released], ['yearly', null, 'sub_sched_mock']);
+
+      // A yearly checkout leaves the subscription with its own price alone. Reconciling adds the
+      // usage price once, and the paid period it saves is the year.
+      const added: any[] = [];
+      stripe.subscriptions.update = (async (id: string, params: any, options: any) => {
+        added.push({ id, params, key: options?.idempotencyKey });
+        return {};
+      }) as any;
+      const subscriptionWith = (items: unknown[]) =>
+        (async () => ({
+          data: [
+            {
+              id: `sub_${suffix}`,
+              status: 'trialing',
+              created: 100,
+              cancel_at_period_end: false,
+              items: { data: items },
+            },
+          ],
+        })) as any;
+      stripe.subscriptions.list = subscriptionWith([yearlyItem]);
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual(added, [
+        {
+          id: `sub_${suffix}`,
+          params: { items: [{ price: 'price_checkout_mock' }], proration_behavior: 'none' },
+          key: `quotient-usage-price:sub_${suffix}`,
+        },
+      ]);
+      stripe.subscriptions.list = subscriptionWith([usageItem, yearlyItem]);
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.equal(added.length, 1, 'Once it has the usage price, nothing more is added');
+      const [paid] = await rows('SELECT period_end FROM billing_accounts WHERE business_id=?', [
+        businessId,
+      ]);
+      assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), yearEnd);
 
       const eventId = `evt_${suffix}`,
         event = {

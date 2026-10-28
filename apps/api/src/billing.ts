@@ -348,6 +348,18 @@ function planPrices(plan: Plan): { usage: string; fixed: string | null } {
           : null,
   };
 }
+/** The subscription's item for the monthly or yearly plan's own price, if it has one. */
+function planItem(subscription: Stripe.Subscription) {
+  const fixedPrices = [process.env.STRIPE_PRICE_MONTHLY, process.env.STRIPE_PRICE_YEARLY];
+  return subscription.items.data.find((item) => fixedPrices.includes(item.price.id));
+}
+/**
+ * When the period they paid for ends. The usage price bills monthly even on the yearly plan, so
+ * it's the plan's own price that counts, not whichever item Stripe lists first.
+ */
+function paidPeriodEnd(subscription: Stripe.Subscription): number | undefined {
+  return (planItem(subscription) ?? subscription.items.data[0])?.current_period_end;
+}
 
 /** The subscription prices must match what the pricing page says. */
 async function validatePlanPrice(plan: 'monthly' | 'yearly'): Promise<void> {
@@ -449,9 +461,11 @@ billingRouter.post('/billing/checkout', async (req, res) => {
       {
         mode: 'subscription',
         customer: customerId,
+        // Checkout can't mix billing intervals, so the yearly plan starts on its own price and
+        // reconciliation adds the monthly usage price before any quote goes out.
         line_items: [
           ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-          { price: prices.usage },
+          ...(plan === 'yearly' ? [] : [{ price: prices.usage }]),
         ],
         client_reference_id: context.businessId,
         metadata: { plan },
@@ -492,8 +506,7 @@ function chosenPlan(account: RowDataPacket): Plan {
 async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: boolean) {
   const stripe = stripeClient();
   const subscription = await stripe.subscriptions.retrieve(String(account.stripe_subscription_id));
-  const fixedPrices = [process.env.STRIPE_PRICE_MONTHLY, process.env.STRIPE_PRICE_YEARLY];
-  const current = subscription.items.data.find((item) => fixedPrices.includes(item.price.id));
+  const current = planItem(subscription);
   const target = planPrices(plan).fixed;
   const items: Stripe.SubscriptionUpdateParams.Item[] = [];
   if (current && !target) items.push({ id: current.id, deleted: true });
@@ -523,8 +536,9 @@ async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: bo
  */
 async function scheduleSubscription(account: RowDataPacket, plan: Plan): Promise<string> {
   const stripe = stripeClient();
+  const subscription = await stripe.subscriptions.retrieve(String(account.stripe_subscription_id));
   const schedule = await stripe.subscriptionSchedules.create({
-    from_subscription: String(account.stripe_subscription_id),
+    from_subscription: subscription.id,
   });
   const [phase] = schedule.phases;
   const prices = planPrices(plan);
@@ -537,7 +551,8 @@ async function scheduleSubscription(account: RowDataPacket, plan: Plan): Promise
           ...(item.quantity ? { quantity: item.quantity } : {}),
         })),
         start_date: phase.start_date,
-        end_date: phase.end_date,
+        // Stripe ends the first phase with the usage price's month; a yearly plan runs to its year.
+        end_date: paidPeriodEnd(subscription) ?? phase.end_date,
       },
       {
         items: [
@@ -723,13 +738,27 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
       status === 'active' ? 3 : status === 'trialing' ? 2 : status === 'past_due' ? 1 : 0;
     return score(b.status) - score(a.status) || b.created - a.created;
   })[0];
+  // Every paying subscription carries the usage price. A yearly checkout starts without it, so it's
+  // added here, before the account is marked paying and quotes can go out.
+  const usagePrice = process.env.STRIPE_PRICE_ID;
+  if (
+    current &&
+    usagePrice &&
+    isPaying(current.status) &&
+    !current.items.data.some((item) => item.price.id === usagePrice)
+  )
+    await stripeClient().subscriptions.update(
+      current.id,
+      { items: [{ price: usagePrice }], proration_behavior: 'none' },
+      { idempotencyKey: `quotient-usage-price:${current.id}` },
+    );
   await transaction(async (connection) => {
     await rows(
       'SELECT business_id FROM billing_accounts WHERE business_id=? FOR UPDATE',
       [account.business_id],
       connection,
     );
-    const periodEnd = current?.items.data[0]?.current_period_end;
+    const periodEnd = current ? paidPeriodEnd(current) : undefined;
     await mutate(
       `UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status=?,cancel_at_period_end=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${current?.status === 'trialing' ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''} WHERE business_id=?`,
       [
