@@ -11,7 +11,8 @@ alternatives --set node /usr/bin/node-24
 npm install --global pm2@6
 id quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient
 install -d -m 700 -o quotient -g quotient /home/quotient/.ssh
-install -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases
+# The app roots too, not just their releases: each deploy switches the current link inside them.
+install -d -m 755 -o quotient -g quotient /srv/quotient-api /srv/quotient-web /srv/quotient-api/releases /srv/quotient-web/releases
 install -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups
 # The deployment user gets its own key, added after launch (LAUNCH.md). The instance admin key
 # stays with ec2-user, which can sudo, so it never needs to be stored in GitHub.
