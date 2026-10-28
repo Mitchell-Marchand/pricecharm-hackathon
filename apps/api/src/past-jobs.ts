@@ -189,10 +189,11 @@ export async function insertPastJobs(
   const limit = business.draft ? MAX_JOBS.draft : MAX_JOBS.active;
   if (Number(count.count) + jobs.length > limit)
     throw new ApiError(422, 'JOB_LIMIT', `You can add up to ${limit} jobs here.`);
-  for (const { id, input } of jobs) {
+  for (const [index, { id, input }] of jobs.entries()) {
+    // A millisecond apart, so jobs saved together keep their order instead of sorting by id.
     await mutate(
-      'INSERT INTO past_jobs (service_name,description,price_cents,size,duration,performed,materials_cents,discount_kind,discount_value,discount_reason,notes,source,size_slot,id,business_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      [...jobValues(input), id, business.businessId],
+      'INSERT INTO past_jobs (service_name,description,price_cents,size,duration,performed,materials_cents,discount_kind,discount_value,discount_reason,notes,source,size_slot,id,business_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ? MICROSECOND))',
+      [...jobValues(input), id, business.businessId, index * 1000],
       connection,
     );
     await attachPhotos(connection, business.businessId, id, input.photoIds);
