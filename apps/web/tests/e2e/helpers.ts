@@ -8,11 +8,17 @@ export const OWNER_PASSWORD = 'test password strong123';
  * A signed-up business with three past driveway jobs, set up through the API. It's live unless
  * asked otherwise, done the way an owner does it: a plan, a card, then going live. New accounts
  * quote on their own; this owner has their Charm check with them first unless asked otherwise.
+ * Its accept button says "Accept quote", rather than one of the wordings PriceCharm tries, unless
+ * acceptLabel is empty.
  */
 export async function createBusiness(
   browser: Browser,
   baseURL: string,
-  { billing = true, autoSend = false }: { billing?: boolean; autoSend?: boolean } = {},
+  {
+    billing = true,
+    autoSend = false,
+    acceptLabel = 'Accept quote',
+  }: { billing?: boolean; autoSend?: boolean; acceptLabel?: string } = {},
 ) {
   const context = await browser.newContext({ baseURL });
   const owner = context.request;
@@ -43,6 +49,7 @@ export async function createBusiness(
     password: OWNER_PASSWORD,
   });
   if (!autoSend) await send('patch', '/api/v1/app/settings', { autoSend });
+  if (acceptLabel) await send('patch', '/api/v1/app/quote-page', { acceptLabel });
   if (billing) {
     await send('post', '/api/v1/app/billing/plan', { plan: 'per_quote' });
     await send('post', '/api/v1/billing/checkout', {});

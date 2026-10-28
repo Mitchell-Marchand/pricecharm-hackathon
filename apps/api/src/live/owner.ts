@@ -142,6 +142,8 @@ async function quoteDetail(businessId: string, quoteId: string) {
             note: String(quote.outcome_note || ''),
           }
         : null,
+    /** The words on the customer's accept button, once it went out. */
+    acceptLabel: quote.accept_label ? String(quote.accept_label) : null,
     card: json<Quote>(quote.quote_json, {} as Quote),
     reasoning: draft.reasoning ?? '',
     confidence: draft.confidence ?? '',

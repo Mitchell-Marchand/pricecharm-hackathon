@@ -31,6 +31,8 @@ This is off unless `MARKET_PRICES=on`. Turn it on only once the Terms and Privac
 
 Customers can accept, ask for a site visit, or say they're not going ahead and why. Three days after a quote goes out, a customer who hasn't answered gets one reminder. Once a quote passes its valid days with no answer, it's marked "no answer". A late yes still counts. The worker does both during maintenance (`src/live/followup.ts`).
 
+The accept button says what the owner chose in Settings. Otherwise each quote gets one of four wordings PriceCharm tries ("Accept quote", "Book it", "Works for me", "Let's do it"), kept with the quote (`src/live/accept-wording.ts`). A quote counts for its wording from when the customer first opens it, and it's a yes if they accept within two weeks. Most quotes get the wording most likely to be best so far (Thompson sampling across all businesses), and 40% get any of the four, so each keeps being tried. Owners' tests and owners' own wordings don't count. Every wording has to mean yes, because the tap bills the quote on the accepted-quote plan and tells the Charm the price won. `npm run metrics` shows how each one is doing.
+
 ## Knowing when it's ready
 
 Each service earns sending on its own separately (`src/pricing/readiness.ts`). A service is ready once:

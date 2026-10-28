@@ -28,21 +28,44 @@ async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
   await page.getByRole('button', { name: 'See my quote' }).click();
 }
 
-test('a customer gets a quote on the link, comes back to it, and accepts it', async ({
+test('a customer gets a quote on the owner’s page, comes back to it, and accepts it', async ({
   page,
   browser,
   baseURL,
 }) => {
-  const shop = await createBusiness(browser, baseURL!);
+  const shop = await createBusiness(browser, baseURL!, { acceptLabel: '' });
   await shop.learnDriveways();
   await shop.autoSend(true);
+
+  // The owner adds their logo, says who customers hear from and what they read after a yes, and
+  // picks the button's words rather than letting PriceCharm try some.
+  const owner = await shop.context.newPage();
+  await owner.goto('/app/settings');
+  await owner.getByLabel('Logo').setInputFiles(photo);
+  await expect(owner.getByText('Your logo is on your chat and your quotes.')).toBeVisible();
+  await expect(owner.locator('img[src*="/logo/"]')).toBeVisible();
+  await owner.getByLabel('Name customers see').fill('Jenny');
+  await owner.getByLabel('Name customers see').blur();
+  await expect(owner.getByText('Saved. Customers hear from Jenny.')).toBeVisible();
+  const afterYes = owner.getByLabel('After a customer accepts');
+  await expect(afterYes).toHaveValue('You’re all set. Jenny will be in touch to schedule.');
+  await afterYes.fill('Thanks! Jenny will text you today to pick a day.');
+  await afterYes.blur();
+  await expect(owner.getByText('Saved. Customers see this after they accept.')).toBeVisible();
+  await expect(owner.getByText(/PriceCharm tries “Accept quote”, “Book it”/)).toBeVisible();
+  await owner.getByRole('radio', { name: 'Choose my own' }).click();
+  await owner.getByRole('button', { name: 'Book it' }).click();
+  await expect(owner.getByText('Saved. The button says “Book it”.')).toBeVisible();
+
   await page.goto(`/q/${shop.slug}`);
   await expect(page).toHaveTitle(/Get a quote from Moss & Stone Exterior Care/);
+  await expect(page.locator('header img[src*="/logo/"]')).toBeVisible();
   await askForQuote(page, { withPhoto: true });
 
   const quote = page.getByRole('article', { name: /from Moss & Stone Exterior Care/ });
   await expect(quote).toBeVisible();
   await expect(quote).toContainText('$275');
+  await expect(quote.locator('img[src*="/logo/"]')).toBeVisible();
   await expect(page.getByText(/Here.s your quote, Sam/)).toBeVisible();
   await expectQuoteFromTop(quote);
 
@@ -60,10 +83,17 @@ test('a customer gets a quote on the link, comes back to it, and accepts it', as
     scroller!.scrollTop = scroller!.scrollHeight;
   });
   await expectQuoteFromTop(quote);
-  await page.getByRole('button', { name: 'Accept quote' }).click();
-  await expect(page.getByText(/You.re all set\. Maya will be in touch/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Accept quote' })).toHaveCount(0);
+  await quote.getByRole('button', { name: 'Book it' }).click();
+  await expect(page.getByText('Thanks! Jenny will text you today to pick a day.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Book it' })).toHaveCount(0);
   await expect(quote).toContainText('Accepted');
+
+  // The owner sees which words the customer tapped.
+  const accepted = (
+    await (await shop.context.request.get('/api/v1/app/quotes?filter=accepted')).json()
+  ).data;
+  await owner.goto(`/app/quotes/${accepted[0].id}`);
+  await expect(owner.getByText('Sam tapped “Book it”.')).toBeVisible();
   await shop.context.close();
 });
 

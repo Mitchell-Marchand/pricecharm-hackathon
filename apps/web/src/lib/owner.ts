@@ -8,6 +8,7 @@ import type {
 } from './account';
 import { money } from './util';
 import { DEFAULT_PRICING, type Plan, type PlanChoice, type Pricing } from './plans';
+import type { Logo } from './chat';
 import type { Quote } from './quote';
 
 export type QuoteStatus =
@@ -65,6 +66,8 @@ export interface QuoteDetail extends QuoteListItem {
   basis: string;
   /** Why the customer didn't go ahead, when they said. */
   outcome: { reason: string; note: string } | null;
+  /** The words on the customer's accept button. Missing from older APIs. */
+  acceptLabel?: string | null;
   card: Quote;
   reasoning: string;
   confidence: string;
@@ -87,6 +90,34 @@ export const messageCustomer = (id: string, text: string) =>
   api<QuoteDetail>(`/app/quotes/${id}/messages`, { method: 'POST', ...json({ text }) });
 export const declineQuote = (id: string, message: string) =>
   api<QuoteDetail>(`/app/quotes/${id}/decline`, { method: 'POST', ...json({ message }) });
+
+/** What customers see that the owner can change. Empty text means the default. */
+export interface QuotePage {
+  logo: Logo | null;
+  contactName: string;
+  /** The name the chat uses while contactName is empty. */
+  ownerFirstName: string;
+  acceptedMessage: string;
+  visitMessage: string;
+  /** What customers read while a message is empty. */
+  defaults: { acceptedMessage: string; visitMessage: string };
+  /** Empty lets PriceCharm try wordings. */
+  acceptLabel: string;
+  wordings: string[];
+}
+export type QuotePageText = Pick<
+  QuotePage,
+  'contactName' | 'acceptedMessage' | 'visitMessage' | 'acceptLabel'
+>;
+export const loadQuotePage = () => api<QuotePage>('/app/quote-page');
+export const saveQuotePage = (patch: Partial<QuotePageText>) =>
+  api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
+export function uploadLogo(file: File) {
+  const body = new FormData();
+  body.append('file', file);
+  return api<QuotePage>('/app/quote-page/logo', { method: 'POST', body });
+}
+export const removeLogo = () => api<QuotePage>('/app/quote-page/logo', { method: 'DELETE' });
 
 export interface Settings extends CharmSettings {
   /** "$1,500", or empty with no limit. */

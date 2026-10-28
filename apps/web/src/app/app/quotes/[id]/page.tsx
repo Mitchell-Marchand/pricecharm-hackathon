@@ -180,6 +180,11 @@ export default function QuotePage() {
               {quote.outcome.note && <> They added: &ldquo;{quote.outcome.note}&rdquo;</>}
             </p>
           )}
+          {quote.status === 'accepted' && quote.acceptLabel && (
+            <p className="text-sm text-ink-2" data-private>
+              {first} tapped &ldquo;{quote.acceptLabel}&rdquo;.
+            </p>
+          )}
           {quote.status === 'expired' && (
             <p className="text-sm text-muted">
               {first} didn&apos;t answer before the quote ran out. They can still accept it.

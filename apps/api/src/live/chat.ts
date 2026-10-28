@@ -40,6 +40,8 @@ import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, recordAcceptance, recordLiveDelivery } from './billing.js';
 import { lossReasonPhrase, type LossReason } from './outcomes.js';
 import { recordActivity } from '../metrics.js';
+import { chooseAcceptLabel, DEFAULT_ACCEPT_LABEL } from './accept-wording.js';
+import { acceptedMessage, businessLogo, contactName, visitMessage } from './quote-page.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -117,14 +119,6 @@ async function services(businessId: string, connection?: Sql) {
   ).map((row) => String(row.name));
 }
 
-async function ownerFirstName(businessId: string) {
-  const [user] = await rows(
-    'SELECT first_name,name FROM users WHERE business_id=? ORDER BY created_at LIMIT 1',
-    [businessId],
-  );
-  return String(user?.first_name || String(user?.name ?? '').split(' ')[0] || '');
-}
-
 export async function publicProfile(business: Row) {
   const name = String(business.name);
   return {
@@ -137,7 +131,9 @@ export async function publicProfile(business: Row) {
       .join(''),
     trade: tradeName(business.trade_id, business.custom_trade),
     services: await services(String(business.id)),
-    ownerFirstName: await ownerFirstName(String(business.id)),
+    /** Who the chat says will follow up: the owner's first name unless they chose another. */
+    ownerFirstName: await contactName(business),
+    logo: await businessLogo(business),
     /** The one website allowed to show the widget. */
     websiteDomain: String(business.website_domain ?? ''),
     /** Taking quote requests: the owner has deployed the agent and hasn't paused it. */
@@ -155,10 +151,12 @@ async function addMessage(
     kind?: 'text' | 'status';
     photoIds?: string[];
     chips?: string[];
+    /** A reply to a line added a moment before, stamped a millisecond later so it sorts after. */
+    reply?: boolean;
   },
 ) {
   await mutate(
-    'INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,UTC_TIMESTAMP(3))',
+    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,${input.reply ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
     [
       randomUUID(),
       input.businessId,
@@ -251,6 +249,20 @@ export async function chatView(business: Row, chat: Row) {
           .filter((check) => !check.passed)
           .map((check) => ({ id: check.id, detail: check.detail }))
       : [];
+  // Only the customer's own chat reaches here, so this is when they first saw the open quote,
+  // which is when its accept button's wording starts to count. Owners' tests never do.
+  if (visible && !test && ['sent', 'expired'].includes(String(quote.status)) && !quote.seen_at) {
+    const seen = await mutate(
+      'UPDATE live_quotes SET seen_at=UTC_TIMESTAMP(3) WHERE id=? AND seen_at IS NULL',
+      [quote.id],
+    );
+    if (seen.affectedRows)
+      await recordActivity(undefined, String(business.id), 'quote_seen', {
+        ref: String(quote.id),
+        detail: String(quote.accept_variant ?? ''),
+        value: Number(quote.total_cents),
+      });
+  }
   return {
     id: String(chat.id),
     status: String(chat.status),
@@ -279,6 +291,8 @@ export async function chatView(business: Row, chat: Row) {
           status: String(quote.status),
           card: { ...json<Quote>(quote.quote_json, {} as Quote), note: '' },
           sentAt: quote.sent_at ? new Date(quote.sent_at).toISOString() : null,
+          /** The words on its accept button. */
+          acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
         }
       : null,
     waitingForOwner: quote?.status === 'review',
@@ -797,7 +811,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
       await markSent(connection, { businessId, quoteId, sentBy: 'auto', test });
     else {
       await mutate("UPDATE lead_chats SET status='review' WHERE id=?", [chatId], connection);
-      const owner = await ownerFirstName(businessId);
+      const owner = await contactName(business);
       await addMessage(connection, {
         businessId,
         chatId,
@@ -830,9 +844,18 @@ export async function markSent(
       totalCents: Number(quote.total_cents),
       sentBy: input.sentBy,
     });
+  const [business] = await rows(
+    'SELECT * FROM businesses WHERE id=?',
+    [input.businessId],
+    connection,
+  );
+  // The words on its accept button, kept with the quote so it always shows the same ones.
+  const button = quote.accept_label
+    ? { label: String(quote.accept_label), variant: String(quote.accept_variant ?? '') }
+    : await chooseAcceptLabel(business, connection);
   await mutate(
-    "UPDATE live_quotes SET status='sent',sent_by=?,sent_at=UTC_TIMESTAMP(3) WHERE id=?",
-    [input.sentBy, input.quoteId],
+    "UPDATE live_quotes SET status='sent',sent_by=?,sent_at=UTC_TIMESTAMP(3),accept_label=?,accept_variant=? WHERE id=?",
+    [input.sentBy, button.label, button.variant || null, input.quoteId],
     connection,
   );
   await mutate("UPDATE lead_chats SET status='sent' WHERE id=?", [quote.chat_id], connection);
@@ -841,11 +864,6 @@ export async function markSent(
     detail: input.test ? 'test' : input.sentBy,
     value: Number(quote.total_cents),
   });
-  const [business] = await rows(
-    'SELECT name FROM businesses WHERE id=?',
-    [input.businessId],
-    connection,
-  );
   const [chat] = await rows(
     'SELECT customer_name FROM lead_chats WHERE id=?',
     [quote.chat_id],
@@ -1015,7 +1033,7 @@ export async function customerDecision(
         quoteId: String(quote.id),
         totalCents: Number(quote.total_cents),
       });
-    const owner = await ownerFirstName(String(business.id));
+    const owner = (await contactName(business)) || String(business.name);
     await addMessage(connection, {
       businessId: String(business.id),
       chatId: String(chat.id),
@@ -1032,14 +1050,17 @@ export async function customerDecision(
       chatId: String(chat.id),
       sender: 'assistant',
       kind: 'status',
-      text: {
-        accept:
-          json<Quote | null>(quote.quote_json, null)?.style === 'range'
-            ? `You’re all set. ${owner || business.name} will confirm the final price and be in touch to schedule.`
-            : `You’re all set. ${owner || business.name} will be in touch to schedule.`,
-        visit: `Got it. ${owner || business.name} will get in touch to set up a visit.`,
-        decline: `Thanks for letting ${owner || business.name} know.`,
-      }[decision],
+      reply: true,
+      // The owner can write their own lines for after a yes and a visit request.
+      text:
+        decision === 'accept'
+          ? await acceptedMessage(
+              business,
+              json<Quote | null>(quote.quote_json, null)?.style === 'range',
+            )
+          : decision === 'visit'
+            ? await visitMessage(business)
+            : `Thanks for letting ${owner} know.`,
     });
     if (chat.source !== 'test')
       await notifyOwner(

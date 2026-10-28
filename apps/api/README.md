@@ -27,9 +27,10 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Setup     | `/onboarding` (start, business, step, resume link), `/onboarding/jobs`, `/onboarding/photos`, `/onboarding/practice/*`, `/onboarding/profile` | A draft or a signed-in owner |
 | Accounts  | `/auth/register`, `/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`, `/request-verification`, `/verify-email`                 | Anyone, or the owner         |
-| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit                                                   | Anyone with the chat token   |
+| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit; `/chat/:slug/logo/:id`                           | Anyone with the chat token   |
 | Demo      | `/demo/start` (bot check), `/demo/turn`, `/demo/quote`: the live demo with the sample businesses                                              | Anyone with a demo pass      |
 | Quotes    | `/app/home`, `/app/quotes`, `/app/quotes/:id` with approve, decline and messages; `/app/profile`, `/app/settings`, `/app/billing`             | The owner                    |
+| Quote page | `/app/quote-page` (logo, the name customers hear from, the lines after a yes or a visit request, the accept button's words), `/app/quote-page/logo` | The owner                    |
 | Sharing   | `/share`, `/share/instructions`                                                                                                               | The owner                    |
 | Billing   | `PATCH /billing`, `/billing/checkout`, `/billing/portal`, signed `/billing/webhook`; public `/pricing`, `/site`                               | The owner, Stripe, anyone    |
 | Account   | `/account/export`, `DELETE /account`, `/uploads/:id` (a customer's photo)                                                                     | The owner                    |

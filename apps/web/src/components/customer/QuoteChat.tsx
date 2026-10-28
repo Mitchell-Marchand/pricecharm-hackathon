@@ -10,9 +10,9 @@ import {
   type ReactNode,
 } from 'react';
 import { ArrowUp, Camera, Check, X } from 'lucide-react';
-import { CustomerMessage, Typing } from '@/components/Chat';
+import { BusinessMark, CustomerMessage, Typing } from '@/components/Chat';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
-import { Avatar, Button, TextInput } from '@/components/ui';
+import { Button, TextInput } from '@/components/ui';
 import { ApiError, errorMessage } from '@/lib/api';
 import {
   accessFromLink,
@@ -297,7 +297,7 @@ export function QuoteChat({
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <header className="flex items-center gap-3 border-b border-line px-4 py-3">
-        <Avatar initials={profile.initials || 'Q'} tone="ink" />
+        <BusinessMark initials={profile.initials} logo={profile.logo} />
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{profile.name}</p>
           <p className="text-xs text-muted">Usually quotes in about 2 minutes</p>
@@ -344,6 +344,7 @@ export function QuoteChat({
                   <QuoteForm
                     quote={chat.quote.card}
                     business={profile.name}
+                    logo={profile.logo}
                     stamp={
                       chat.quote.status === 'accepted'
                         ? 'accepted'
@@ -361,7 +362,7 @@ export function QuoteChat({
                             disabled={busy}
                             onClick={() => void choose('accept')}
                           >
-                            <Check aria-hidden /> Accept quote
+                            <Check aria-hidden /> {chat.quote.acceptLabel || 'Accept quote'}
                           </PaperButton>
                           <PaperButton onClick={() => composer.current?.focus()}>
                             Ask a question
@@ -428,7 +429,12 @@ export function QuoteChat({
           )}
           {busy &&
             (status === 'chatting' || verification || (chat?.test && status === 'contact')) && (
-              <Typing name={profile.name} initials={profile.initials} tone="blue" />
+              <Typing
+                name={profile.name}
+                initials={profile.initials}
+                tone="blue"
+                logo={profile.logo}
+              />
             )}
         </div>
       </div>

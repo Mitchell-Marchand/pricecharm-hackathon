@@ -7,6 +7,7 @@ import { mutate, rows, type Sql } from './db.js';
 import { rateLimit } from './http.js';
 import { queueEmail } from './integrations/email.js';
 import { formatInsights, insightsReport } from './insights.js';
+import { wordingReport } from './live/accept-wording.js';
 
 /**
  * Product metrics, kept in our own database. Events say what happened and when, never names,
@@ -24,7 +25,8 @@ export type Milestone =
   | 'went_live'
   | 'plan_chosen';
 /** Things that keep happening: one row each, keyed by the chat or quote. */
-export type Activity = 'customer_chat' | 'quote_drafted' | 'quote_sent' | 'quote_outcome';
+export type Activity =
+  'customer_chat' | 'quote_drafted' | 'quote_sent' | 'quote_seen' | 'quote_outcome';
 
 export async function subjectOf(businessId: string, connection?: Sql): Promise<string | undefined> {
   const [business] = await rows(
@@ -403,6 +405,7 @@ export async function metricsReport(days: number, now = new Date()) {
     previousSentValueCents: previous.sentValue,
     funnel,
     sources: sources.map((item) => ({ source: String(item.source), count: Number(item.count) })),
+    acceptButton: await wordingReport(since, now),
   };
 }
 
@@ -438,6 +441,22 @@ export function formatReport(report: MetricsReport): string {
     lines.push('', 'Where visitors came from');
     for (const item of report.sources)
       lines.push(`${item.source.padEnd(width)}${String(item.count).padStart(6)}`);
+  }
+  const button = report.acceptButton;
+  lines.push('', 'The accept button: quotes customers saw, and the yeses within two weeks');
+  for (const item of button.wordings)
+    lines.push(
+      `${item.label.padEnd(width)}${String(item.seen).padStart(6)} seen${String(item.accepted).padStart(5)} yes${item.seen ? `  ${Math.round((item.accepted / item.seen) * 100)}%` : ''}   ${Math.round(item.chanceBest * 100)}% likely best, on ${Math.round(item.share * 100)}% of new quotes`,
+    );
+  if (button.owners.length) {
+    lines.push(
+      '',
+      `Owners' own wordings, on ${Math.round(button.ownWordingShare * 100)}% of new quotes`,
+    );
+    for (const item of button.owners)
+      lines.push(
+        `${`“${item.label}”`.padEnd(width)}${String(item.businesses).padStart(6)} ${item.businesses === 1 ? 'business' : 'businesses'}, ${item.seen} seen, ${item.accepted} yes`,
+      );
   }
   return lines.join('\n');
 }

@@ -32,6 +32,7 @@ import { profileRouter } from './profile.js';
 import { charmRouter } from './charm.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
+import { logoRouter, quotePageRouter } from './live/quote-page.js';
 import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
 import { visitsRouter } from './metrics.js';
@@ -141,6 +142,7 @@ export function createApp() {
     profileRouter,
     charmRouter,
     chatRouter,
+    logoRouter,
     demoRouter,
     visitsRouter,
     activityRouter,
@@ -161,7 +163,15 @@ export function createApp() {
   );
   // The one-tap link in an owner's email works without signing in, for that one quote.
   app.use('/api/v1', approveLinkRouter);
-  app.use('/api/v1', requireOwner, billingRouter, accountRouter, shareRouter, ownerQuotesRouter);
+  app.use(
+    '/api/v1',
+    requireOwner,
+    billingRouter,
+    accountRouter,
+    shareRouter,
+    ownerQuotesRouter,
+    quotePageRouter,
+  );
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
   app.use(errorHandler);
   return app;

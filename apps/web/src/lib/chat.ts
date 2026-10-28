@@ -1,15 +1,25 @@
 import { api, json } from './api';
 import type { Quote } from './quote';
 
+/** A business's logo, trimmed and at most 512 px on its longer side. */
+export interface Logo {
+  url: string;
+  width: number;
+  height: number;
+}
+
 export interface BusinessProfile {
   name: string;
   initials: string;
   trade: string;
   services: string[];
+  /** Who the chat says will follow up: the owner's first name unless they chose another. */
   ownerFirstName: string;
   websiteDomain: string;
   /** Taking quote requests: the owner has deployed the agent and hasn't paused it. */
   taking: boolean;
+  /** Missing from an API older than this page. */
+  logo?: Logo | null;
 }
 
 export interface ChatMessage {
@@ -29,7 +39,14 @@ export interface ChatView {
   serviceName: string;
   messages: ChatMessage[];
   contact: { name: string; email: string | null; verified: boolean };
-  quote: { id: string; status: string; card: Quote; sentAt: string | null } | null;
+  quote: {
+    id: string;
+    status: string;
+    card: Quote;
+    sentAt: string | null;
+    /** The words on its accept button. Missing from older APIs. */
+    acceptLabel?: string;
+  } | null;
   waitingForOwner: boolean;
   /** In an owner's test, why this quote would wait for them. Missing from older APIs. */
   wouldWait?: { id: string; detail: string }[];

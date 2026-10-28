@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
+import type { Logo } from '@/lib/chat';
 import { discountCents, rangeOf, total, type Quote } from '@/lib/quote';
 import { addDays, cx, lowerFirst, money, prefersReducedMotion, shortDate } from '@/lib/util';
 
@@ -51,6 +52,7 @@ function FormField({ label, value }: { label: string; value: string }) {
 export function QuoteForm({
   quote,
   business,
+  logo,
   stamp,
   animate = false,
   compact = false,
@@ -59,6 +61,8 @@ export function QuoteForm({
 }: {
   quote: Quote;
   business: string;
+  /** Printed at the top of the sheet, like an estimate pad's letterhead. */
+  logo?: Logo | null;
   stamp?: Stamp;
   animate?: boolean;
   compact?: boolean;
@@ -86,6 +90,15 @@ export function QuoteForm({
           className={cx('flex items-start justify-between gap-4', compact ? 'pt-6' : 'pt-7', pad)}
         >
           <div className="min-w-0">
+            {logo && !compact && (
+              <img
+                src={logo.url}
+                alt=""
+                width={logo.width}
+                height={logo.height}
+                className="mb-3 h-10 w-auto max-w-[160px] object-contain object-left"
+              />
+            )}
             <p className="t-label truncate text-paper-muted">{business}</p>
             <p
               className={cx(

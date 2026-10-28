@@ -4,7 +4,42 @@ import type { ReactNode } from 'react';
 import { CalendarCheck } from 'lucide-react';
 import { Avatar } from './ui';
 import { PhotoGrid } from './Photos';
+import type { Logo } from '@/lib/chat';
 import { cx } from '@/lib/util';
+
+/**
+ * The business's logo on a tile of paper, which stays white in both themes as logos expect, or its
+ * initials. A wide logo gets a wider tile, unless it has to fit a square.
+ */
+export function BusinessMark({
+  initials,
+  logo,
+  square = false,
+}: {
+  initials: string;
+  logo?: Logo | null;
+  square?: boolean;
+}) {
+  if (!logo) return <Avatar initials={initials || 'Q'} tone="ink" />;
+  const wide = !square && logo.width / logo.height > 1.6;
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-sm border border-line bg-[var(--paper)]',
+        wide ? 'h-9 max-w-[124px] px-1.5 py-1' : 'size-9 p-1',
+      )}
+    >
+      <img
+        src={logo.url}
+        alt=""
+        width={logo.width}
+        height={logo.height}
+        className={wide ? 'h-full w-auto object-contain' : 'size-full object-contain'}
+      />
+    </span>
+  );
+}
 
 export function CustomerMessage({
   name,
@@ -77,15 +112,22 @@ export function Typing({
   name,
   initials,
   tone,
+  logo,
 }: {
   name: string;
   initials: string;
   tone: 'canary' | 'pink' | 'blue';
+  /** The business's own logo, in place of its initials. */
+  logo?: Logo | null;
 }) {
   return (
     <div className="fade-up flex items-end gap-2.5" role="status">
       <div className="w-9 shrink-0">
-        <Avatar initials={initials} tone={tone} />
+        {logo ? (
+          <BusinessMark initials={initials} logo={logo} square />
+        ) : (
+          <Avatar initials={initials} tone={tone} />
+        )}
       </div>
       <div className="typing flex h-11 items-center gap-1.5 rounded-[16px] rounded-bl-[4px] border border-line bg-surface px-4 text-muted shadow-1">
         <span />

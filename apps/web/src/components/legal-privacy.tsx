@@ -176,7 +176,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 <strong>To see how PriceCharm is used and fix what gets in the way,</strong> we
                 record steps like finishing setup, sending a quote or a customer accepting one, and
                 how people move through the website and the app. These records hold no names,
-                contact details or messages.
+                contact details or messages. Unless a business picks its own, we also try different
+                words on the button customers tap to accept a quote, and count which ones they say
+                yes to.
               </li>
               <li>
                 <strong>To send the emails the service needs:</strong> verification codes, sign-in

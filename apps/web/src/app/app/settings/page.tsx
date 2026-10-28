@@ -6,6 +6,7 @@ import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { PlanCards } from '@/components/owner/PlanCards';
+import { QuotePageSettings } from '@/components/owner/QuotePageSettings';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { LEARNING_TEXT } from '@/components/Charm';
@@ -235,6 +236,13 @@ export default function SettingsPage() {
               </Field>
             </div>
           )}
+        </Section>
+
+        <Section
+          title="What customers see"
+          intro="On your quote link and your website’s quote button."
+        >
+          <QuotePageSettings business={me.business.name} />
         </Section>
 
         <Section
