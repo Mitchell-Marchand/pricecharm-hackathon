@@ -231,14 +231,19 @@ export function Avatar({
 export function Tag({
   children,
   tone = 'neutral',
+  size = 'sm',
 }: {
   children: ReactNode;
   tone?: 'neutral' | 'accent' | 'go' | 'canary';
+  /** lg is for a line that leads a page, like the home page's. */
+  size?: 'sm' | 'lg';
 }) {
   return (
     <span
       className={cx(
-        't-label inline-flex h-6 shrink-0 items-center rounded-xs px-2 whitespace-nowrap text-[10.5px]!',
+        't-label inline-flex shrink-0 items-center rounded-xs whitespace-nowrap',
+        size === 'sm' && 'h-6 px-2 text-[10.5px]!',
+        size === 'lg' && 'h-8 px-3 text-[13px]! font-bold!',
         tone === 'neutral' && 'bg-surface-2 text-muted',
         tone === 'accent' && 'bg-accent-soft text-accent',
         tone === 'go' && 'bg-go-soft text-go',

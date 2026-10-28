@@ -18,7 +18,9 @@ export default async function LandingPage() {
       <main>
         <section className="gutter mx-auto grid max-w-6xl items-center gap-12 pt-6 pb-20 md:grid-cols-[1.15fr_1fr] md:gap-10 md:pt-14 md:pb-28">
           <div className="max-w-[600px]">
-            <Tag tone="canary">For service businesses</Tag>
+            <Tag tone="canary" size="lg">
+              Quote More, Book More
+            </Tag>
             <h1 className="t-hero mt-5">
               Train an AI to produce real quotes for you in 3 easy steps.
             </h1>
