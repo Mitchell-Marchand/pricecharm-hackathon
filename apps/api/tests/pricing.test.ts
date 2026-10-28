@@ -4,6 +4,7 @@ import { compareDraft } from '../src/pricing/accuracy.js';
 import { ownerChange, similarHistory } from '../src/pricing/history.js';
 import { combineRates, MARKET_MIN_BUSINESSES } from '../src/pricing/market.js';
 import {
+  chargesLine,
   describeRate,
   estimateFor,
   estimateGap,
@@ -77,7 +78,20 @@ test('a rate card comes from the owner’s own prices, with a floor for small jo
   assert.equal(driveways.floorCents, 15000);
   assert.equal(
     describeRate(driveways),
-    'Driveways: about $0.42 per sq ft, lowest $150 (3 jobs, 300 to 1,000 sq ft)',
+    'Driveways: about $0.42 per sq ft, lowest $150 (3 prices, 300 to 1,000 sq ft)',
+  );
+
+  // A practice quote's rate line is worked out from the size it was priced at, not guessed.
+  assert.equal(chargesLine(45000, 15, 'windows'), 'Charges about $30 per window');
+  assert.equal(chargesLine(28000, 550, 'sq ft'), 'Charges about $0.51 per sq ft');
+  assert.deepEqual(
+    specFromScenario({
+      facts: [
+        { key: 'quantity', answer: 'There are 15 windows on the outside that need cleaning.' },
+      ],
+    } as PracticeScenario),
+    { quantity: 15, unit: 'windows', condition: '', access: '', extras: [], timing: '' },
+    'A size answer under any key, like the window practice customers give',
   );
 
   const usual = estimateFor(rates, 'driveways', 800, 'sq ft')!;

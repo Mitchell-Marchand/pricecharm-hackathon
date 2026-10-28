@@ -36,6 +36,17 @@ const LEARNING_HINT: Record<LearningStyle, string> = {
   firm: 'The price it works out, as a firm quote, even while it’s learning.',
 };
 
+/** What holds a quote for the owner whatever the settings say, as the API's checks have it. */
+const CHECKS_WITH_YOU = [
+  'Services you don’t offer, and jobs outside your area',
+  'Jobs it can’t price from what you’ve taught it',
+  'Jobs it thinks you’d want to see first',
+  'Prices far from what you’ve charged for similar jobs',
+  'Jobs much bigger or smaller than ones you’ve priced, once it knows your rate',
+  'Jobs it isn’t sure about, when the price would be firm',
+  'Anyone who asks to talk to you',
+];
+
 function Section({
   title,
   intro,
@@ -234,6 +245,21 @@ export default function SettingsPage() {
                   onBlur={saveLimit}
                 />
               </Field>
+              <div>
+                <p className="text-sm font-semibold text-ink" id="settings-checks">
+                  {charm.autoSend
+                    ? 'It also checks with you first about'
+                    : 'When it quotes on its own, it still checks with you first about'}
+                </p>
+                <ul
+                  aria-labelledby="settings-checks"
+                  className="mt-1.5 flex list-disc flex-col gap-1 pl-5 text-sm text-ink-2"
+                >
+                  {CHECKS_WITH_YOU.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           )}
         </Section>

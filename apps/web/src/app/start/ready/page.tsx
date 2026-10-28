@@ -1,10 +1,12 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, CircleCheckBig, Hand, MessageSquareText, Receipt } from 'lucide-react';
+import { ArrowRight, CircleCheckBig } from 'lucide-react';
 import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
 import { JobSheet, newJob, type Editing } from '@/components/jobs/PastJobs';
+import { KnowsSummary } from '@/components/knows/CharmKnows';
 import { Logo } from '@/components/Logo';
 import { QuoteForm } from '@/components/QuoteForm';
 import { SetupLoading } from '@/components/SetupLoading';
@@ -13,6 +15,7 @@ import { useToast } from '@/components/Toast';
 import { Button } from '@/components/ui';
 import { loadProfile, type CharmSettings, type Profile } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
+import { loadKnows, type Knows } from '@/lib/knows';
 import { useOnboarding } from '@/lib/onboarding';
 import { morePractice } from '@/lib/practice';
 import { tradeName, TRADES_BY_ID } from '@/lib/trades';
@@ -27,6 +30,7 @@ export default function ReadyStep() {
   const pathname = usePathname();
   const notify = useToast();
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [knows, setKnows] = useState<Knows | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState<Editing | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -36,6 +40,9 @@ export default function ReadyStep() {
     loadProfile()
       .then(setProfile)
       .catch((loadError) => setError(errorMessage(loadError)));
+    loadKnows()
+      .then(setKnows)
+      .catch(() => setKnows(null));
     setChanges((current) => current + 1);
   }, []);
   useEffect(refresh, [refresh]);
@@ -154,38 +161,23 @@ export default function ReadyStep() {
               />
             )}
 
-            <div className="mt-16 grid gap-10 border-t border-line pt-12 md:grid-cols-3 md:gap-8">
-              <section>
-                <h2 className="t-h3 flex items-center gap-2">
-                  <MessageSquareText className="size-5 text-accent" aria-hidden /> It will ask
-                </h2>
-                <ul className="mt-4 flex flex-col gap-2.5 text-ink-2">
-                  {profile.asks.map((question) => (
-                    <li key={question}>{question}</li>
-                  ))}
-                </ul>
-              </section>
-              <section>
-                <h2 className="t-h3 flex items-center gap-2">
-                  <Receipt className="size-5 text-accent" aria-hidden /> How it prices
-                </h2>
-                <ul className="mt-4 flex flex-col gap-2.5 text-ink-2">
-                  {profile.prices.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </section>
-              <section>
-                <h2 className="t-h3 flex items-center gap-2">
-                  <Hand className="size-5 text-accent" aria-hidden /> When it checks with you first
-                </h2>
-                <ul className="mt-4 flex flex-col gap-2.5 text-ink-2">
-                  {profile.handoffs.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </section>
-            </div>
+            {knows && (
+              <div className="mt-16 border-t border-line pt-12">
+                <KnowsSummary knows={knows} />
+                {!state.draft && (
+                  <p className="mt-6 text-sm text-muted">
+                    You can change these any time under{' '}
+                    <Link
+                      href="/app/train/knows"
+                      className="text-accent underline underline-offset-2"
+                    >
+                      Train
+                    </Link>
+                    .
+                  </p>
+                )}
+              </div>
+            )}
 
             <section
               className="mt-14 rounded-md border border-line bg-surface p-5 sm:p-6"

@@ -167,6 +167,95 @@ test(
     );
     assert.equal(history.practice[0].lines[0].amountCents, 28000);
 
+    // What it knows, as the owner can change it: the chat's questions, its rates and their notes.
+    const { questionChecklist } = await import('../src/charm-notes.js');
+    const businessId = String(
+      (await rows('SELECT business_id FROM practice_runs WHERE id=?', [first.id]))[0].business_id,
+    );
+    const knows = (path: string, method: 'post' | 'put' | 'delete', text?: string) =>
+      owner[method](`/api/v1/onboarding/knows/${path}`)
+        .set('Origin', origin)
+        .send(text === undefined ? {} : { text });
+    let known = (await owner.get('/api/v1/onboarding/knows').expect(200)).body.data;
+    assert.deepEqual(
+      known.questions.map((item: { source: string }) => item.source),
+      ['photos', 'practice'],
+      'Photos first, then what the owner asked their practice customer',
+    );
+    const learnedQuestion = known.questions[1];
+    const patios = known.rates.find(
+      (item: { service: string }) => item.service === 'Patios & pavers',
+    );
+    assert.match(patios.price, /^About \$0\.\d\d per sq ft, lowest \$275$/);
+    assert.match(patios.basis, /^From 1 past job and 1 practice quote, \d+ to 600 sq ft$/);
+    assert.equal(
+      known.rates.find((item: { service: string }) => item.service === 'Driveways').price,
+      '',
+      'No sized prices, no rate',
+    );
+    const correction = known.notes[0];
+    assert.equal(correction.source, 'practice');
+    assert.equal(correction.text, 'Charges $0.50 per sq ft, $150 minimum');
+
+    const asked = await knows('questions', 'post', '  Any pets or a  locked gate? ');
+    assert.equal(asked.status, 201, JSON.stringify(asked.body));
+    assert.equal(asked.body.data.questions[1].text, 'Any pets or a locked gate?');
+    assert.deepEqual(
+      await questionChecklist(businessId),
+      ['Can you send a few photos?', 'Any pets or a locked gate?', learnedQuestion.text],
+      'The chat asks the owner’s question right after photos',
+    );
+    assert.equal((await knows('questions', 'post', 'any pets or a locked gate?')).status, 422);
+    assert.equal((await knows('questions', 'post', '   ')).status, 400);
+    assert.equal((await knows('questions/photos', 'delete')).status, 422, 'Photos stay');
+    const reworded = await knows(
+      `questions/${learnedQuestion.id}`,
+      'put',
+      'Roughly how many square feet?',
+    );
+    assert.equal(reworded.status, 200, JSON.stringify(reworded.body));
+    assert.deepEqual(
+      await questionChecklist(businessId),
+      ['Can you send a few photos?', 'Any pets or a locked gate?', 'Roughly how many square feet?'],
+      'The owner’s wording takes the place of the one it learned',
+    );
+    const own = reworded.body.data.questions[1];
+    assert.equal(
+      (await stranger.delete(`/api/v1/onboarding/knows/questions/${own.id}`).set('Origin', origin))
+        .status,
+      404,
+      'Another business can’t touch it',
+    );
+    known = (await knows(`questions/${own.id}`, 'delete')).body.data;
+    assert.equal(known.questions.length, 2);
+
+    const noted = await knows('notes', 'post', 'Second story is 20% more');
+    assert.equal(noted.status, 201, JSON.stringify(noted.body));
+    const ownNote = noted.body.data.notes[0];
+    assert.deepEqual(
+      (await pricingHistory(businessId)).notes,
+      ['Second story is 20% more', 'Charges $0.50 per sq ft, $150 minimum'],
+      'The owner’s notes go to the AI with their corrections',
+    );
+    await knows(`notes/${ownNote.id}`, 'put', 'Second story is 25% more').expect(200);
+    await knows(`notes/${correction.id}`, 'put', '$150 minimum').expect(200);
+    assert.deepEqual((await pricingHistory(businessId)).notes, [
+      'Second story is 25% more',
+      '$150 minimum',
+    ]);
+    known = (await knows(`notes/${correction.id}`, 'delete').expect(200)).body.data;
+    assert.deepEqual(
+      known.notes.map((item: { text: string }) => item.text),
+      ['Second story is 25% more'],
+    );
+    assert.deepEqual(
+      (await pricingHistory(businessId)).notes,
+      ['Second story is 25% more'],
+      'A correction taken back stops teaching',
+    );
+    await knows(`notes/${ownNote.id}`, 'delete').expect(200);
+    assert.equal((await knows(`notes/${ownNote.id}`, 'delete')).status, 404);
+
     state = await practice();
     assert.equal(state.current, 1);
     const second = state.runs[1];

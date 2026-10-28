@@ -52,6 +52,9 @@ export function specFromText(text: string): JobSpec {
   return { ...emptySpec(), quantity: size?.quantity ?? null, unit: size?.unit ?? '' };
 }
 
+/** A practice fact that holds the job's size, by its key: "size", "quantity", "area"... */
+export const SIZE_FACT = /size|area|quantity|count|length|square|how_many/;
+
 /** A practice customer's size: what the scenario says, or what their answer about size says. */
 export function specFromScenario(scenario: PracticeScenario): JobSpec {
   if (scenario.quantity && scenario.unit) {
@@ -59,10 +62,7 @@ export function specFromScenario(scenario: PracticeScenario): JobSpec {
     return { ...emptySpec(), quantity: scenario.quantity, unit };
   }
   const facts = scenario.facts ?? [];
-  const sizeFirst = [
-    ...facts.filter((fact) => /size|area|quantity|count|length|square|how_many/.test(fact.key)),
-    ...facts,
-  ];
+  const sizeFirst = [...facts.filter((fact) => SIZE_FACT.test(fact.key)), ...facts];
   for (const fact of sizeFirst) {
     const size = parseQuantity(fact.answer);
     if (size) return { ...emptySpec(), quantity: size.quantity, unit: size.unit };

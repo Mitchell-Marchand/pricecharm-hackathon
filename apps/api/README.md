@@ -25,7 +25,7 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 
 | Area      | Routes                                                                                                                                        | Who                          |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| Setup     | `/onboarding` (start, business, step, resume link), `/onboarding/jobs`, `/onboarding/photos`, `/onboarding/practice/*`, `/onboarding/profile` | A draft or a signed-in owner |
+| Setup     | `/onboarding` (start, business, step, resume link), `/onboarding/jobs`, `/onboarding/photos`, `/onboarding/practice/*`, `/onboarding/profile`, `/onboarding/knows` with questions and notes (what the chat asks, each service's rate, notes every draft follows) | A draft or a signed-in owner |
 | Accounts  | `/auth/register`, `/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`, `/request-verification`, `/verify-email`                 | Anyone, or the owner         |
 | Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit; `/chat/:slug/logo/:id`                           | Anyone with the chat token   |
 | Demo      | `/demo/start` (bot check), `/demo/turn`, `/demo/quote`: the live demo with the sample businesses                                              | Anyone with a demo pass      |

@@ -328,8 +328,10 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     page.getByText('It learned from 1 past job and 3 practice customers.', { exact: false }),
   ).toBeVisible();
   await expect(page.getByText('How big is the area?')).toBeVisible();
+  // How it prices is the rate its drafts are held to, not a line from each practice run.
+  await expect(page.getByText(/^About \$\d+\.\d\d per sq ft, lowest \$\d+$/).first()).toBeVisible();
+  await expect(page.getByText(/^Charges about/)).toHaveCount(0);
   await expect(page.getByText('Asks about size and stains')).toHaveCount(0);
-  await expect(page.getByText(/^Charges about \$0\.51 per sq ft for patios$/)).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Dana R.' })).toBeVisible();
   await expect(
     page.getByText(/^Anything over \$/),

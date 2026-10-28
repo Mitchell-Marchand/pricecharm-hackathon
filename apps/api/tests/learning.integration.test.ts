@@ -139,7 +139,7 @@ test(
     assert.equal(history.liveQuotes.length, 1);
     assert.equal(history.liveQuotes[0].ownerChange, "The owner changed the AI's $275 to $300.");
     assert.equal(history.liveQuotes[0].outcome, 'waiting for the customer');
-    assert.match(history.rates[0], /^Driveways: .*\(4 jobs, 600 sq ft\)$/);
+    assert.match(history.rates[0], /^Driveways: .*\(4 prices, 600 sq ft\)$/);
     const profile = (await owner.get('/api/v1/app/profile')).body.data;
     assert.equal(profile.live.reviewed, 1);
     assert.equal(profile.live.agreed, 1, '$275 is within 15% of $300');

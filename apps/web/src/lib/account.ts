@@ -88,11 +88,6 @@ export const saveCharm = (patch: Partial<CharmSettings>) =>
   api<CharmView>('/onboarding/charm', { method: 'PATCH', ...json(patch) });
 
 export interface Profile {
-  asks: string[];
-  prices: string[];
-  /** Rates worked out from every job and quote with a size. */
-  rates: string[];
-  handoffs: string[];
   results: PracticeResult[];
   /** How well it knows each service. */
   services: ServiceReadiness[];

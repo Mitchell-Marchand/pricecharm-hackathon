@@ -124,6 +124,9 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await limit.fill('');
   await limit.blur();
   await expect(page.getByText('Saved. No price limit.')).toBeVisible();
+  await expect(page.getByRole('list', { name: /checks with you first about/ })).toContainText(
+    'Anyone who asks to talk to you',
+  );
 
   await page.goto('/app');
   await expect(
@@ -139,6 +142,32 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await expect(
     page.getByRole('list', { name: 'Your services' }).getByRole('listitem').first(),
   ).toContainText('Customers get an estimate for now. Practice 2 Driveways jobs.');
+
+  // What it knows has its own page: questions and notes the owner changes, rates from their jobs.
+  await page.getByRole('link', { name: 'See and change it' }).click();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'What your Charm knows' }),
+  ).toBeVisible();
+  const questions = page.getByRole('list', { name: 'Questions it asks' });
+  await expect(questions.getByRole('listitem')).toHaveCount(1);
+  await expect(questions).toContainText('Always first. Customers can skip it.');
+  await page.getByRole('button', { name: 'Add a question' }).click();
+  await page.getByLabel('New question').fill('Any pets or a locked gate?');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(questions.getByRole('listitem')).toHaveCount(2);
+  await expect(questions.getByRole('listitem').nth(1)).toHaveText(/Any pets or a locked gate\?/);
+  const rates = page.getByRole('list', { name: 'Your rates' });
+  await expect(rates).toContainText('About $0.46 per sq ft, lowest $250');
+  await expect(rates).toContainText('From 3 past jobs, 600 sq ft.');
+  await expect(rates).toContainText('No rate yet.');
+  await page.getByRole('button', { name: 'Add a note' }).click();
+  await page.getByLabel('New note').fill('$150 minimum for any job');
+  await page.getByRole('button', { name: 'Save' }).click();
+  const notes = page.getByRole('list', { name: 'Notes on your prices' });
+  await expect(notes).toContainText('$150 minimum for any job');
+  await notes.getByRole('button', { name: 'Remove “$150 minimum for any job”' }).click();
+  await expect(page.getByText('Removed. Quotes won’t follow it anymore.')).toBeVisible();
+  await expect(notes).toHaveCount(0);
   await page.getByRole('link', { name: 'Share' }).click();
   await expect(page.getByText(new RegExp(`/q/${shop.slug}$`))).toBeVisible();
 

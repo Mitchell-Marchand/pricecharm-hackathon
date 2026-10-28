@@ -156,7 +156,13 @@ export async function loadPricingData(
     "SELECT run_id,sender,text FROM practice_messages WHERE business_id=? AND kind='text' ORDER BY created_at,id",
     [businessId],
   );
-  const notes: string[] = [];
+  // What the owner wrote about their prices first, then lines they corrected after practice.
+  const notes = (
+    await rows(
+      `SELECT text FROM charm_notes WHERE business_id=? AND kind='price'${before ? ' AND created_at<?' : ''} ORDER BY created_at,id`,
+      before ? [businessId, before] : [businessId],
+    )
+  ).map((row) => String(row.text));
   const practice: PricingHistory['practice'] = [];
   for (const run of runs) {
     if (run.id === options.excludeRunId) continue;

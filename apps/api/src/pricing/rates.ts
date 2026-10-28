@@ -98,15 +98,30 @@ const dollars = (cents: number) =>
     maximumFractionDigits: cents < 1000 ? 2 : 0,
   }).format(cents / 100);
 
-/** "Driveways: about $0.46 per sq ft, lowest $250 (3 jobs, 500 to 1,200 sq ft)" */
-export function describeRate(rate: Rate): string {
-  const per = rate.unit.replace(/s$/, '') || rate.unit;
+/** "per window", "per sq ft" */
+const perUnit = (unit: string) => `per ${unit.replace(/s$/, '') || unit}`;
+
+/** A rate in words: "about $0.46 per sq ft, lowest $250", for "500 to 1,200 sq ft". */
+export function rateWords(rate: Rate): { price: string; sizes: string } {
   const floor = rate.points > 1 ? `, lowest ${dollars(rate.floorCents)}` : '';
-  const sizes =
-    rate.smallest === rate.largest
-      ? formatQuantity(rate.smallest, rate.unit)
-      : `${formatNumber(rate.smallest)} to ${formatQuantity(rate.largest, rate.unit)}`;
-  return `${rate.service}: about ${dollars(rate.centsPerUnit)} per ${per}${floor} (${rate.points} ${rate.points === 1 ? 'job' : 'jobs'}, ${sizes})`;
+  return {
+    price: `about ${dollars(rate.centsPerUnit)} ${perUnit(rate.unit)}${floor}`,
+    sizes:
+      rate.smallest === rate.largest
+        ? formatQuantity(rate.smallest, rate.unit)
+        : `${formatNumber(rate.smallest)} to ${formatQuantity(rate.largest, rate.unit)}`,
+  };
+}
+
+/** "Driveways: about $0.46 per sq ft, lowest $250 (3 prices, 500 to 1,200 sq ft)" */
+export function describeRate(rate: Rate): string {
+  const { price, sizes } = rateWords(rate);
+  return `${rate.service}: ${price} (${rate.points} ${rate.points === 1 ? 'price' : 'prices'}, ${sizes})`;
+}
+
+/** One price as a rate, worked out here rather than by the AI: "Charges about $30 per window". */
+export function chargesLine(cents: number, quantity: number, unit: string): string {
+  return `Charges about ${dollars(cents / quantity)} ${perUnit(unit)}`;
 }
 
 /** Checks the AI's total against the estimate. Add-ons can take it up, not down. */

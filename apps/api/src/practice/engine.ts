@@ -10,7 +10,8 @@ import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
 import { draftForBusiness } from '../pricing/draft.js';
 import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
-import { specFromScenario } from '../pricing/spec.js';
+import { chargesLine } from '../pricing/rates.js';
+import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
 import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
@@ -640,17 +641,22 @@ async function insightsFor(
     const quote = outcome.quote;
     if (!labels.length) items.push('Quotes straight from the photos when a job looks clear');
     const main = quote.lines[0];
+    // With a size it's simple division, the same size the rate card reads. The AI only words it
+    // when there's no size to divide by.
+    const spec = specFromScenario(scenario);
     let rate = '';
     try {
       rate =
         aiMode === 'demo'
           ? demoRateLine(scenario, main.amountCents)
-          : await describeRate({
-              trade,
-              serviceName: scenario.serviceName,
-              mainLine: { label: main.label, amountCents: main.amountCents },
-              sizeAnswer: scenario.facts.find((fact) => fact.key === 'size')?.answer ?? '',
-            });
+          : spec.quantity && spec.unit
+            ? `${chargesLine(main.amountCents, spec.quantity, spec.unit)} for ${lowerFirst(scenario.serviceName)}`
+            : await describeRate({
+                trade,
+                serviceName: scenario.serviceName,
+                mainLine: { label: main.label, amountCents: main.amountCents },
+                sizeAnswer: scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
+              });
     } catch (error) {
       reportError(error, { event: 'practice_rate' });
     }
@@ -788,6 +794,22 @@ export async function editInsight(
     );
   });
   return viewOf(businessId, runId);
+}
+
+/** Takes back a correction: the line stays on the practice result but stops teaching the AI. */
+export async function forgetInsight(businessId: string, runId: string, insightId: string) {
+  await transaction(async (connection) => {
+    const run = await loadRun(businessId, runId, connection, true);
+    const insights = json<(Insight & { edited?: boolean })[]>(run.insights_json, []);
+    const insight = insights.find((item) => item.id === insightId && item.edited);
+    if (!insight) throw new ApiError(404, 'INSIGHT_NOT_FOUND', 'That line isn’t here anymore.');
+    insight.edited = false;
+    await mutate(
+      'UPDATE practice_runs SET insights_json=? WHERE id=?',
+      [JSON.stringify(insights), runId],
+      connection,
+    );
+  });
 }
 
 export async function retryPracticeRun(businessId: string, runId: string) {

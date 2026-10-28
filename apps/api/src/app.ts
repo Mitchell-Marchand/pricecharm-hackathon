@@ -30,6 +30,7 @@ import { pastJobsRouter } from './past-jobs.js';
 import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
 import { charmRouter } from './charm.js';
+import { charmNotesRouter } from './charm-notes.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { logoRouter, quotePageRouter } from './live/quote-page.js';
@@ -141,6 +142,7 @@ export function createApp() {
     practiceRouter,
     profileRouter,
     charmRouter,
+    charmNotesRouter,
     chatRouter,
     logoRouter,
     demoRouter,

@@ -3,11 +3,11 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Hand, MessageSquareText, Receipt } from 'lucide-react';
 import { buttonClass } from '@/components/button-class';
 import { PastJobsEditor } from '@/components/jobs/PastJobs';
 import { CharmCard, useCharm } from '@/components/Charm';
 import { api, errorMessage } from '@/lib/api';
+import { loadKnows, type Knows } from '@/lib/knows';
 import type { Profile } from '@/lib/account';
 import type { Onboarding } from '@/lib/onboarding';
 import { loadOwnerProfile } from '@/lib/owner';
@@ -17,6 +17,7 @@ import { TRADES_BY_ID } from '@/lib/trades';
 export default function TrainPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [knows, setKnows] = useState<Knows | null>(null);
   const [business, setBusiness] = useState<Onboarding['business'] | null>(null);
   const [error, setError] = useState('');
   const [addRequest, setAddRequest] = useState<{ service: string; at: number } | null>(null);
@@ -27,6 +28,10 @@ export default function TrainPage() {
     loadOwnerProfile()
       .then(setProfile)
       .catch((loadError) => setError(errorMessage(loadError)));
+    // Its rates come from the jobs, so they change with them.
+    loadKnows()
+      .then(setKnows)
+      .catch(() => setKnows(null));
     setChanges((current) => current + 1);
   }, []);
   useEffect(() => {
@@ -51,7 +56,7 @@ export default function TrainPage() {
 
   return (
     <>
-      <h1 className="t-h1">What your Charm knows</h1>
+      <h1 className="t-h1">Train your Charm</h1>
       <p className="mt-3 max-w-2xl text-lg text-ink-2">
         {profile
           ? `It learned from ${[
@@ -66,7 +71,7 @@ export default function TrainPage() {
               .filter(Boolean)
               .join(', ')
               .replace(/, ([^,]*)$/, ' and $1')}. Add jobs to sharpen its prices.`
-          : 'Everything it uses to quote for you.'}
+          : 'Practice and past jobs teach it how you price.'}
       </p>
       {error && (
         <p className="mt-4 text-stop" role="alert">
@@ -74,38 +79,9 @@ export default function TrainPage() {
         </p>
       )}
 
-      {profile ? (
-        <div className="mt-10 grid gap-10 md:grid-cols-3 md:gap-8">
-          {[
-            { icon: MessageSquareText, title: 'It will ask', items: profile.asks },
-            {
-              icon: Receipt,
-              title: 'How it prices',
-              items: [...profile.rates, ...profile.prices].length
-                ? [...profile.rates, ...profile.prices].slice(0, 8)
-                : ['From what you charged for the past jobs below.'],
-            },
-            { icon: Hand, title: 'When it checks with you', items: profile.handoffs },
-          ].map(({ icon: Icon, title, items }) => (
-            <section key={title}>
-              <h2 className="t-h3 flex items-center gap-2">
-                <Icon className="size-5 text-accent" aria-hidden /> {title}
-              </h2>
-              <ul className="mt-4 flex flex-col gap-2.5 text-ink-2">
-                {items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <div className="shimmer mt-10 h-40 rounded-md" aria-busy="true" />
-      )}
-
       {charm && (
         <CharmCard
-          className="mt-14 max-w-3xl"
+          className="mt-10 max-w-3xl"
           charm={charm}
           onChange={setCharm}
           onStep={(step) =>
@@ -150,8 +126,39 @@ export default function TrainPage() {
           )}
         </div>
       </section>
+
+      <section className="mt-14 border-t border-line pt-10" aria-labelledby="knows-title">
+        <h2 id="knows-title" className="t-h2">
+          What your Charm knows
+        </h2>
+        <p className="mt-2 max-w-xl text-ink-2">
+          {knows
+            ? knowsSummary(knows)
+            : 'The questions it asks customers, its rates and your notes on your prices.'}
+        </p>
+        <Link href="/app/train/knows" className={buttonClass('secondary', 'md', 'mt-6')}>
+          See and change it
+        </Link>
+      </section>
     </>
   );
+}
+
+/** "It asks customers 6 questions, has your rate for Windows and follows 2 notes from you." */
+function knowsSummary({ questions, rates, notes }: Knows) {
+  const rated = rates.filter((rate) => rate.price);
+  const parts = [
+    `asks customers ${questions.length} ${questions.length === 1 ? 'question' : 'questions'}`,
+    !rates.length
+      ? ''
+      : rated.length === rates.length
+        ? rates.length === 1
+          ? `has your rate for ${rates[0].service}`
+          : `has your rates for all ${rates.length} services`
+        : `has rates for ${rated.length} of your ${rates.length} services`,
+    notes.length ? `follows ${notes.length} ${notes.length === 1 ? 'note' : 'notes'} from you` : '',
+  ].filter(Boolean);
+  return `It ${parts.join(', ').replace(/, ([^,]*)$/, ' and $1')}.`;
 }
 
 /** How close its drafts came to what the owner sent real customers. */

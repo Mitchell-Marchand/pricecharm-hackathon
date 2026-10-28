@@ -33,7 +33,7 @@ import {
 } from '../pricing/rates.js';
 import type { JobSpec } from '../pricing/spec.js';
 import { formatQuantity } from '../pricing/units.js';
-import { questionChecklist } from '../profile.js';
+import { questionChecklist } from '../charm-notes.js';
 import { getPhoto } from '../storage.js';
 import { withAiUsage, withCustomerAiUsage } from '../usage.js';
 import { consumeAuthRateLimit } from '../verification.js';
