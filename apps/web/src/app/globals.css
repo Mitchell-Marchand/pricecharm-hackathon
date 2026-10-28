@@ -325,6 +325,20 @@
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+/* Paper stays light in both themes. Off the paper, on a dark card, the highlight fills the whole
+   line in paper ink, so the number it marks stays readable. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hl:not(.qf .hl) {
+    background: var(--paper-canary);
+    color: var(--paper-ink);
+    border-radius: 4px;
+  }
+}
+:root[data-theme='dark'] .hl:not(.qf .hl) {
+  background: var(--paper-canary);
+  color: var(--paper-ink);
+  border-radius: 4px;
+}
 .qf-stamp {
   display: inline-block;
   transform: rotate(-9deg);

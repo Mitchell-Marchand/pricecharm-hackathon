@@ -106,11 +106,12 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   }
   await page.goto('/pricing');
   const pricing = (await (await page.request.get('/api/v1/pricing')).json()).data;
+  await expect(page.getByText('up front', { exact: true })).toHaveCount(2);
   await expect(
     page.getByText(`$${pricing.perQuoteCents / 100} per quote`, { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText(`${pricing.accepted.basisPoints / 100}% when they say yes`),
+    page.getByText(`${pricing.accepted.basisPoints / 100}% of accepted quotes`, { exact: true }),
   ).toBeVisible();
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;

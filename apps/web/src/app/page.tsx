@@ -164,8 +164,8 @@ export default async function LandingPage() {
               },
               {
                 icon: Receipt,
-                title: 'Pay per quote, or by the month',
-                text: `${money(pricing.perQuoteCents)} for each quote a customer gets, ${pricing.accepted.basisPoints / 100}% of the ones they accept, or ${money(pricing.subscription.monthlyCents)} a month with the first week free. Setting up and practice are free.`,
+                title: '$0 up front',
+                text: `Pay ${money(pricing.perQuoteCents)} a quote, or ${pricing.accepted.basisPoints / 100}% of the quotes customers accept. Or ${money(pricing.subscription.monthlyCents)} a month with the first week free. Setting up and practice are free.`,
               },
             ].map(({ icon: Icon, title, text }) => (
               <div key={title}>
