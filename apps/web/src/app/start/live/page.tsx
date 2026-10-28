@@ -7,7 +7,7 @@ import { Logo } from '@/components/Logo';
 import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
 import { SetupLoading } from '@/components/SetupLoading';
 import { AccountMenu } from '@/components/owner/AccountMenu';
-import { EmailCode } from '@/components/owner/EmailCode';
+import { ConfirmEmail } from '@/components/owner/ConfirmEmail';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { ShareSections } from '@/components/share/ShareSections';
 import { Button, ButtonLink } from '@/components/ui';
@@ -329,18 +329,6 @@ function Live({
 }) {
   return (
     <>
-      {!me.user.emailVerified && (
-        <div className="mb-8 flex flex-col gap-3 rounded-md border border-line bg-canary-soft px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
-          <p className="flex gap-2.5 text-[15px]">
-            <Mail className="mt-0.5 size-5 shrink-0" aria-hidden />
-            <span>
-              Enter the code we sent to <span className="font-semibold">{me.user.email}</span>, so
-              we can send you every quote.
-            </span>
-          </p>
-          <EmailCode email={me.user.email} onConfirmed={onConfirmed} compact />
-        </div>
-      )}
       <p className="inline-flex items-center gap-2 font-semibold text-go">
         <span className="inline-flex size-6 items-center justify-center rounded-full bg-go text-surface">
           <Check className="size-4" aria-hidden />
@@ -352,6 +340,11 @@ function Live({
         Customers can ask {business} for a quote right now. Share your link, add it to your website,
         or both.
       </p>
+      {!me.user.emailVerified && (
+        <div className="mt-8">
+          <ConfirmEmail email={me.user.email} onConfirmed={onConfirmed} />
+        </div>
+      )}
 
       <div className="mt-12">
         <ShareSections business={business} share={share} onChange={onShare} />

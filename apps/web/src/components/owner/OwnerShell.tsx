@@ -3,10 +3,9 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { Mail } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { AccountMenu } from '@/components/owner/AccountMenu';
-import { EmailCode } from '@/components/owner/EmailCode';
+import { ConfirmEmail } from '@/components/owner/ConfirmEmail';
 import { ToastProvider } from '@/components/Toast';
 import { Button } from '@/components/ui';
 import { loadMe, type Me } from '@/lib/account';
@@ -103,7 +102,9 @@ function SignedIn({ children }: { children: ReactNode }) {
             ))}
           </nav>
         </header>
-        {!me.user.emailVerified && <VerifyBanner email={me.user.email} onConfirmed={reload} />}
+        {!me.user.emailVerified && (
+          <ConfirmEmail email={me.user.email} onConfirmed={reload} variant="band" />
+        )}
         <main className="gutter mx-auto max-w-6xl pt-8 pb-24 sm:pt-10">{children}</main>
       </div>
     </OwnerContext.Provider>
@@ -122,23 +123,5 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
     >
       {label}
     </Link>
-  );
-}
-
-/** Until the owner confirms their email, with the code we sent or the link beside it. */
-function VerifyBanner({ email, onConfirmed }: { email: string; onConfirmed: () => void }) {
-  return (
-    <div className="border-b border-line bg-canary-soft">
-      <div className="gutter mx-auto flex max-w-6xl flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between">
-        <p className="flex gap-2.5 text-[15px] sm:pt-1.5">
-          <Mail className="mt-0.5 size-5 shrink-0" aria-hidden />
-          <span>
-            Enter the code we sent to <span className="font-semibold">{email}</span>, so we can
-            email you when a quote needs you.
-          </span>
-        </p>
-        <EmailCode email={email} onConfirmed={onConfirmed} compact />
-      </div>
-    </div>
   );
 }
