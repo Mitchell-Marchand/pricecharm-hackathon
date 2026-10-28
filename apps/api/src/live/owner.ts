@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError, ok, rateLimit } from '../http.js';
-import { queueEmail } from '../integrations/email.js';
+import { ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
@@ -17,6 +17,7 @@ import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
+import { recordActivity, recordMilestone } from '../metrics.js';
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
@@ -216,6 +217,7 @@ async function emailCustomer(businessId: string, chatId: string, subject: string
     businessId,
     dedupeKey: `owner-reply:${chatId}:${randomUUID()}`,
     to: String(chat.customer_email),
+    replyTo: await ownerReplyTo(businessId),
     subject: subject.replace('{business}', String(business.name)),
     text: `${intro.replace('{business}', String(business.name))}\n${link}`,
   });
@@ -270,6 +272,11 @@ ownerQuotesRouter.post('/app/quotes/:id/decline', rateLimit(30, 60_000), async (
       [quoteId],
       connection,
     );
+    await recordActivity(connection, businessId, 'quote_outcome', {
+      ref: quoteId,
+      detail: 'owner_declined',
+      value: Number(quote.total_cents),
+    });
     await mutate("UPDATE lead_chats SET status='closed' WHERE id=?", [quote.chat_id], connection);
     const [business] = await rows(
       'SELECT name FROM businesses WHERE id=?',
@@ -312,6 +319,7 @@ ownerQuotesRouter.post('/app/billing/plan', async (req, res) => {
     .parse(req.body);
   await consumeAuthRateLimit(`billing-plan:${businessId}`, 20, 3600_000);
   await changePlan(businessId, plan);
+  await recordMilestone(undefined, businessId, 'plan_chosen', plan);
   res.json(ok(await liveBillingSummary(businessId)));
 });
 
@@ -330,6 +338,7 @@ ownerQuotesRouter.post('/app/deploy', async (req, res) => {
       [businessId],
       connection,
     );
+    await recordMilestone(connection, businessId, 'went_live');
   });
   res.json(ok(await liveBillingSummary(businessId)));
 });
@@ -348,6 +357,7 @@ ownerQuotesRouter.patch('/app/link', async (req, res) => {
       [on, businessId],
       connection,
     );
+    if (on) await recordMilestone(connection, businessId, 'went_live');
   });
   res.json(ok(await liveBillingSummary(businessId)));
 });

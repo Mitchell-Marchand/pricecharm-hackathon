@@ -22,6 +22,7 @@ import { scheduleExpiredDraftDeletion } from './workspace.js';
 import { cleanupStaleJobImports } from './job-imports.js';
 import { cleanupUnattachedJobPhotos } from './past-jobs.js';
 import { followUpQuotes } from './live/followup.js';
+import { pruneVisits, queueWeeklyReport } from './metrics.js';
 
 type Job = RowDataPacket & {
   id: string;
@@ -124,6 +125,8 @@ async function maintenance(): Promise<void> {
   await applyDuePlanChanges();
   await cleanupStaleJobImports();
   await followUpQuotes();
+  await pruneVisits();
+  await queueWeeklyReport();
 }
 async function processJob(job: Job): Promise<void> {
   const payload = z.record(z.string(), z.unknown()).parse(json(job.payload_json, {}));

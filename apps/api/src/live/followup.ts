@@ -1,5 +1,5 @@
 import { mutate, rows, transaction } from '../db.js';
-import { queueEmail } from '../integrations/email.js';
+import { ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json } from '../models.js';
 import type { Quote } from '../practice/types.js';
 import { chatEmailLink } from './chat.js';
@@ -56,6 +56,7 @@ export async function followUpQuotes(now = new Date()) {
           businessId: String(quote.business_id),
           dedupeKey: `live-quote:${quote.chat_id}:followup`,
           to: String(quote.customer_email),
+          replyTo: await ownerReplyTo(String(quote.business_id), connection),
           subject: `Your quote from ${quote.name}`,
           text: `Hi${first ? ` ${first}` : ''},\n\nYour ${money(Number(quote.total_cents))} quote from ${quote.name} is still here:\n${link}\n\nYou can accept it or ask a question there. If you’ve decided not to go ahead, you can tell them in one tap, which helps them either way.\n\nThe link works for ${days} days. Keep it to yourself, since anyone with it can see your quote.`,
         },

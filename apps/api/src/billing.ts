@@ -8,6 +8,7 @@ import { ApiError, ok } from './http.js';
 import { iso } from './models.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { consumeAuthRateLimit } from './verification.js';
+import { recordMilestone } from './metrics.js';
 type BillingAccount = RowDataPacket & {
   fee_basis_points: number;
   minimum_fee_cents: number;
@@ -394,6 +395,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         ],
         connection,
       );
+      await recordMilestone(connection, context.businessId, 'billing_active');
     });
     res.json(ok({ url: `${appOrigin()}${back}?billing=active` }));
     return;
@@ -735,6 +737,8 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
       ],
       connection,
     );
+    if (current?.status === 'active' || current?.status === 'trialing')
+      await recordMilestone(connection, String(account.business_id), 'billing_active');
   });
 }
 

@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "PriceCharm dedicated EC2 web/API host, its own private RDS MariaDB database, private photos, restricted SES role and alarms. Shares nothing with other applications.",
+  "Description": "PriceCharm dedicated EC2 web/API host, its own private RDS MariaDB database, private photos and database backups, restricted SES role, a GitHub deploy role and alarms. Shares nothing with other applications.",
   "Parameters": {
     "VpcId": {
       "Type": "AWS::EC2::VPC::Id"
@@ -16,7 +16,18 @@
       "Type": "String",
       "Default": "127.0.0.1/32",
       "AllowedPattern": "\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}",
-      "Description": "Trusted SSH administration/CI source CIDR. Set intentionally; default denies remote access. Use a runner with a stable address."
+      "Description": "Optional administrator SSH source CIDR. The default keeps SSH closed; use Session Manager instead. GitHub deploys open and close their own access."
+    },
+    "GitHubRepository": {
+      "Type": "String",
+      "Default": "Mitchell-Marchand/pricecharm-hackathon",
+      "AllowedPattern": "[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+      "Description": "owner/name of the GitHub repository whose production environment may deploy."
+    },
+    "GitHubOidcProviderArn": {
+      "Type": "String",
+      "Default": "",
+      "Description": "Leave empty to create the GitHub sign-in provider. If this AWS account already has one for token.actions.githubusercontent.com, paste its ARN here."
     },
     "InstanceType": {
       "Type": "String",
@@ -162,6 +173,14 @@
         },
         "true"
       ]
+    },
+    "CreateGitHubOidcProvider": {
+      "Fn::Equals": [
+        {
+          "Ref": "GitHubOidcProviderArn"
+        },
+        ""
+      ]
     }
   },
   "Resources": {
@@ -194,6 +213,21 @@
             }
           }
         ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
+          }
+        ]
+      }
+    },
+    "DeploySshSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "SSH for GitHub deploys only; each deploy adds its own address and removes it",
+        "VpcId": {
+          "Ref": "VpcId"
+        },
         "Tags": [
           {
             "Key": "Application",
@@ -281,6 +315,81 @@
         }
       }
     },
+    "BackupBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": {
+          "Rules": [
+            {
+              "ObjectOwnership": "BucketOwnerEnforced"
+            }
+          ]
+        },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "SSEAlgorithm": "AES256"
+              }
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": "expire-database-dumps",
+              "Status": "Enabled",
+              "ExpirationInDays": 28,
+              "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+              }
+            }
+          ]
+        }
+      }
+    },
+    "BackupBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "BackupBucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {
+                  "Fn::GetAtt": [
+                    "BackupBucket",
+                    "Arn"
+                  ]
+                },
+                {
+                  "Fn::Sub": "${BackupBucket.Arn}/*"
+                }
+              ],
+              "Condition": {
+                "Bool": {
+                  "aws:SecureTransport": "false"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
     "AppRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -330,6 +439,15 @@
                   "Resource": {
                     "Ref": "SesIdentityArn"
                   }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:PutObject"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "${BackupBucket.Arn}/database/*"
+                  }
                 }
               ]
             }
@@ -343,6 +461,88 @@
         "Roles": [
           {
             "Ref": "AppRole"
+          }
+        ]
+      }
+    },
+    "GitHubOidcProvider": {
+      "Type": "AWS::IAM::OIDCProvider",
+      "Condition": "CreateGitHubOidcProvider",
+      "Properties": {
+        "Url": "https://token.actions.githubusercontent.com",
+        "ClientIdList": [
+          "sts.amazonaws.com"
+        ],
+        "ThumbprintList": [
+          "6938fd4d98bab03faadb97b34396831e3780aea1",
+          "1c58a3a8518e8759bf075b76b750d4f2df264fcd"
+        ]
+      }
+    },
+    "DeployRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "Description": "GitHub production deploys: open and close SSH for the runner, nothing else",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": {
+                  "Fn::If": [
+                    "CreateGitHubOidcProvider",
+                    {
+                      "Ref": "GitHubOidcProvider"
+                    },
+                    {
+                      "Ref": "GitHubOidcProviderArn"
+                    }
+                  ]
+                }
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                  "token.actions.githubusercontent.com:sub": {
+                    "Fn::Sub": "repo:${GitHubRepository}:environment:production"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "quotient-deploy-ssh",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:RevokeSecurityGroupIngress"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${DeploySshSecurityGroup.GroupId}"
+                    },
+                    {
+                      "Fn::Sub": "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group-rule/*"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Application",
+            "Value": "quotient"
           }
         ]
       }
@@ -365,6 +565,9 @@
         "SecurityGroupIds": [
           {
             "Ref": "AppSecurityGroup"
+          },
+          {
+            "Ref": "DeploySshSecurityGroup"
           }
         ],
         "IamInstanceProfile": {
@@ -388,7 +591,7 @@
           }
         ],
         "UserData": {
-          "Fn::Base64": "#!/usr/bin/env bash\n# Amazon Linux 2023, dedicated new Quotient instance. Run as root.\nset -euo pipefail\n[[ $(id -u) == 0 ]] || { echo 'Run on a new EC2 instance as root.' >&2; exit 1; }\nsource /etc/os-release\n[[ \"$ID\" == amzn && \"$VERSION_ID\" == 2023 ]] || { echo 'This bootstrap requires Amazon Linux 2023.' >&2; exit 1; }\ndnf install -y nodejs24 nodejs24-npm nginx rsync jq mariadb105 gzip python3 amazon-cloudwatch-agent\nalternatives --set node /usr/bin/node-24\n[[ $(node -p 'process.versions.node.split(\".\")[0]') == 24 ]]\nnpm install --global pm2@6\nid quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient\ninstall -d -m 700 -o quotient -g quotient /home/quotient/.ssh\ninstall -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases\ninstall -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups\n# Copy only the provisioned instance admin public key to the unprivileged deployment user.\nif [[ -s /home/ec2-user/.ssh/authorized_keys && ! -e /home/quotient/.ssh/authorized_keys ]]; then\n  install -m 600 -o quotient -g quotient /home/ec2-user/.ssh/authorized_keys /home/quotient/.ssh/authorized_keys\nfi\npm2 startup systemd -u quotient --hp /home/quotient\ncat > /etc/logrotate.d/quotient <<'ROTATE'\n/home/quotient/.pm2/logs/*.log {\n    daily\n    rotate 14\n    compress\n    missingok\n    notifempty\n    copytruncate\n    su quotient quotient\n}\nROTATE\n# Certificate bundle for verified TLS to RDS (DB_SSL=1, DB_SSL_CA_FILE).\ninstall -d -m 755 /etc/pki/rds\ncurl --fail --silent --show-error --output /etc/pki/rds/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem\nsystemctl enable --now nginx amazon-ssm-agent\nprintf '%s\\n' 'Bootstrap complete. Configure shared/.env, shared/migrate.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'\n"
+          "Fn::Base64": "#!/usr/bin/env bash\n# Amazon Linux 2023, dedicated new Quotient instance. Run as root.\nset -euo pipefail\n[[ $(id -u) == 0 ]] || { echo 'Run on a new EC2 instance as root.' >&2; exit 1; }\nsource /etc/os-release\n[[ \"$ID\" == amzn && \"$VERSION_ID\" == 2023 ]] || { echo 'This bootstrap requires Amazon Linux 2023.' >&2; exit 1; }\ndnf install -y nodejs24 nodejs24-npm nginx rsync jq mariadb105 gzip python3 amazon-cloudwatch-agent certbot\nalternatives --set node /usr/bin/node-24\n[[ $(node -p 'process.versions.node.split(\".\")[0]') == 24 ]]\nnpm install --global pm2@6\nid quotient >/dev/null 2>&1 || useradd --create-home --shell /bin/bash quotient\ninstall -d -m 700 -o quotient -g quotient /home/quotient/.ssh\ninstall -d -m 755 -o quotient -g quotient /srv/quotient-api/releases /srv/quotient-web/releases\ninstall -d -m 700 -o quotient -g quotient /srv/quotient-api/shared /srv/quotient-api/shared/uploads /srv/quotient-api/shared/backups\n# The deployment user gets its own key, added after launch (LAUNCH.md). The instance admin key\n# stays with ec2-user, which can sudo, so it never needs to be stored in GitHub.\ntouch /home/quotient/.ssh/authorized_keys\nchown quotient:quotient /home/quotient/.ssh/authorized_keys\nchmod 600 /home/quotient/.ssh/authorized_keys\npm2 startup systemd -u quotient --hp /home/quotient\ncat > /etc/logrotate.d/quotient <<'ROTATE'\n/home/quotient/.pm2/logs/*.log {\n    daily\n    rotate 14\n    compress\n    missingok\n    notifempty\n    copytruncate\n    su quotient quotient\n}\nROTATE\n# Certificate bundle for verified TLS to RDS (DB_SSL=1, DB_SSL_CA_FILE).\ninstall -d -m 755 /etc/pki/rds\ncurl --fail --silent --show-error --output /etc/pki/rds/global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem\n# HTTPS certificates: Nginx serves the ACME challenge from /var/www/acme (nginx-site.conf.example),\n# certbot's timer renews twice a day, and Nginx reloads whenever a certificate changes.\ninstall -d -m 755 /var/www/acme /etc/letsencrypt/renewal-hooks/deploy\nprintf '%s\\n' '#!/bin/sh' 'systemctl reload nginx' > /etc/letsencrypt/renewal-hooks/deploy/reload-nginx\nchmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-nginx\n# Nightly database dump, copied to the backup bucket. It waits until the first API release exists.\ncat > /etc/systemd/system/quotient-backup.service <<'UNIT'\n[Unit]\nDescription=PriceCharm database backup\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nUser=quotient\nGroup=quotient\nExecCondition=/usr/bin/test -f /srv/quotient-api/current/apps/api/deploy/ops/nightly-backup.sh\nExecStart=/bin/bash /srv/quotient-api/current/apps/api/deploy/ops/nightly-backup.sh\nUNIT\ncat > /etc/systemd/system/quotient-backup.timer <<'UNIT'\n[Unit]\nDescription=Nightly PriceCharm database backup\n\n[Timer]\nOnCalendar=*-*-* 08:00:00 UTC\nRandomizedDelaySec=30m\nPersistent=true\n\n[Install]\nWantedBy=timers.target\nUNIT\nsystemctl daemon-reload\nsystemctl enable --now nginx amazon-ssm-agent certbot-renew.timer quotient-backup.timer\nprintf '%s\\n' 'Bootstrap complete. Add the deploy key, configure shared/.env, shared/migrate.env, DNS/TLS/Nginx, SES and Stripe; then deploy the API and web releases.'\n"
         },
         "Tags": [
           {
@@ -730,9 +933,30 @@
         "Ref": "AppSecurityGroup"
       }
     },
+    "DeploySecurityGroupId": {
+      "Description": "GitHub variable EC2_DEPLOY_SECURITY_GROUP_ID",
+      "Value": {
+        "Ref": "DeploySshSecurityGroup"
+      }
+    },
+    "DeployRoleArn": {
+      "Description": "GitHub variable AWS_DEPLOY_ROLE_ARN",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeployRole",
+          "Arn"
+        ]
+      }
+    },
     "PhotoBucket": {
       "Value": {
         "Ref": "PhotoBucket"
+      }
+    },
+    "BackupBucket": {
+      "Description": "BACKUP_BUCKET in shared/.env",
+      "Value": {
+        "Ref": "BackupBucket"
       }
     },
     "DeployUser": {

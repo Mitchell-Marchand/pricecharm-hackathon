@@ -9,6 +9,8 @@ const emailSchema = z.object({
   to: z.email().max(254),
   subject: z.string().min(1).max(180),
   text: z.string().min(1).max(30000),
+  // Where a reply goes. Without one, replies go to SUPPORT_EMAIL.
+  replyTo: z.email().max(254).optional(),
 });
 export type TransactionalEmail = z.infer<typeof emailSchema>;
 export function mailProvider(): 'local' | 'ses' {
@@ -55,6 +57,22 @@ export function decryptEmail(payload: string): TransactionalEmail {
     ),
   );
 }
+/**
+ * A business's customers reply to its owner, at the address the owner confirmed. Until then their
+ * replies go to SUPPORT_EMAIL like every other email.
+ */
+export async function ownerReplyTo(
+  businessId: string,
+  connection?: Sql,
+): Promise<string | undefined> {
+  const [owner] = await rows(
+    'SELECT email FROM users WHERE business_id=? AND email_verified_at IS NOT NULL ORDER BY created_at LIMIT 1',
+    [businessId],
+    connection,
+  );
+  return owner ? String(owner.email) : undefined;
+}
+
 export async function queueEmail(
   input: TransactionalEmail & { businessId?: string; dedupeKey: string },
   connection?: Sql,
@@ -124,6 +142,7 @@ export async function deliverEmail(emailId: string): Promise<void> {
   });
   if (!claimed) return;
   const { payload } = claimed;
+  const replyTo = payload.replyTo || process.env.SUPPORT_EMAIL?.trim();
   if (mailProvider() === 'local') {
     await mutate(
       "UPDATE email_outbox SET status='sent',provider_message_id=?,sent_at=UTC_TIMESTAMP(3) WHERE id=?",
@@ -141,6 +160,7 @@ export async function deliverEmail(emailId: string): Promise<void> {
       new SendEmailCommand({
         FromEmailAddress: process.env.SES_EMAIL_FROM,
         Destination: { ToAddresses: [payload.to] },
+        ...(replyTo ? { ReplyToAddresses: [replyTo] } : {}),
         Content: {
           Simple: {
             Subject: { Data: payload.subject, Charset: 'UTF-8' },

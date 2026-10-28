@@ -22,7 +22,7 @@ Place API settings and secrets in `/srv/quotient-api/shared/.env` with mode `600
 
 Set `S3_BUCKET` (with `AWS_REGION` and optional `S3_PREFIX`) to use private S3 for production photos. If `S3_BUCKET` is unset, PM2 explicitly sets the absolute `UPLOAD_DIR` to the application's `shared/uploads` directory. Include it in the backup/retention plan; photos do not belong beneath a release directory.
 
-Restrict network ingress to HTTPS, HTTP for certificate issuance/redirect, and SSH from your administration/CI mechanism. Application ports 3100 and 4100 bind only to localhost. Install TLS and adapt `nginx.conf.example` into the product domain's server block. The API trusts exactly its local reverse proxy; Nginx overwrites forwarding headers with the actual remote client address. Keep proxy timeouts compatible with the AI timeout.
+Restrict network ingress to HTTPS and HTTP for certificate issuance/redirect. SSH stays closed except to the GitHub runner deploying at that moment; administrators use Session Manager. Application ports 3100 and 4100 bind only to localhost. Install TLS and adapt `nginx.conf.example` into the product domain's server block. The API trusts exactly its local reverse proxy; Nginx overwrites forwarding headers with the actual remote client address. Keep proxy timeouts compatible with the AI timeout.
 
 Configure PM2 startup under the application user and save the process list after the first successful deployment. The process names are `quotient-api`, `quotient-worker`, and `quotient-web`.
 
@@ -36,6 +36,14 @@ Configure these **production environment secrets** in the repository:
 | `EC2_USER` | Deployment username |
 | `EC2_SSH_KEY` | Dedicated private SSH deployment key |
 | `EC2_KNOWN_HOSTS` | Pinned SSH host-key entry obtained through a trusted channel |
+
+And these **production environment variables**, from the CloudFormation stack's outputs:
+
+| Name | Value |
+| --- | --- |
+| `AWS_DEPLOY_ROLE_ARN` | `DeployRoleArn`: the role a deploy signs in to, which can only add and remove rules on the deploy SSH group |
+| `AWS_REGION` | The stack's region |
+| `EC2_DEPLOY_SECURITY_GROUP_ID` | `DeploySecurityGroupId`: the group each deploy opens port 22 on, to its own runner's address, and closes again |
 
 Configure the repository variable `ENABLE_DEPLOY` and optionally the deploy roots. The job's deployment condition is evaluated before production environment variables are loaded, so `ENABLE_DEPLOY` must be a repository variable:
 

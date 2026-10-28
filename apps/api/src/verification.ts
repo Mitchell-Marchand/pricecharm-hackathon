@@ -6,6 +6,7 @@ import { hashPassword, hashToken, loginFailureKeys, newToken, owner } from './au
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok } from './http.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
+import { recordOwnerMilestone } from './metrics.js';
 
 const emailSchema = z
   .email()
@@ -249,6 +250,7 @@ export const verifyOwnerCode: RequestHandler = async (req, res) => {
       [context.userId],
       connection,
     );
+    await recordOwnerMilestone(connection, context.userId, 'email_verified');
     await mutate(
       "UPDATE identity_tokens SET used_at=UTC_TIMESTAMP(3) WHERE user_id=? AND purpose='verify_email' AND used_at IS NULL",
       [context.userId],
@@ -324,6 +326,7 @@ export const verifyOwnerEmail: RequestHandler = async (req, res) => {
       [userId],
       connection,
     );
+    await recordOwnerMilestone(connection, userId, 'email_verified');
   });
   res.json(ok({ ok: true }));
 };

@@ -13,6 +13,7 @@
     "start": "node dist/server.js",
     "worker": "node --import tsx src/worker.ts",
     "migrate": "node --import tsx src/migrate.ts",
+    "metrics": "node --import tsx src/metrics-report.ts",
     "test": "DOTENV_CONFIG_PATH=/dev/null EXPOSE_DEV_TOKENS=1 NODE_ENV=${NODE_ENV:-test} APP_ENV=${APP_ENV:-test} AI_PROVIDER=${AI_PROVIDER:-demo} MAIL_PROVIDER=${MAIL_PROVIDER:-local} BILLING_PROVIDER=${BILLING_PROVIDER:-local} node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\" package.json tsconfig.json .prettierrc.json \"deploy/*.cjs\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" package.json tsconfig.json .prettierrc.json \"deploy/*.cjs\"",

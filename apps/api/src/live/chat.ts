@@ -11,7 +11,7 @@ import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { hashingSecret } from '../config.js';
 import { settingsFromRow } from '../charm.js';
-import { mailProvider, queueEmail } from '../integrations/email.js';
+import { mailProvider, ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
@@ -39,6 +39,7 @@ import { withAiUsage, withCustomerAiUsage } from '../usage.js';
 import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, recordAcceptance, recordLiveDelivery } from './billing.js';
 import { lossReasonPhrase, type LossReason } from './outcomes.js';
+import { recordActivity } from '../metrics.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -187,6 +188,10 @@ export async function startChat(business: Row, source: 'link' | 'widget' | 'test
       [id, business.id, hashToken(token), source, new Date(Date.now() + CHAT_DAYS * 86_400_000)],
       connection,
     );
+    await recordActivity(connection, String(business.id), 'customer_chat', {
+      ref: id,
+      detail: source,
+    });
     await addMessage(connection, {
       businessId: String(business.id),
       chatId: id,
@@ -484,6 +489,7 @@ export async function requestContact(
         businessId: String(business.id),
         dedupeKey: `chat-code:${verificationId}`,
         to: email,
+        replyTo: await ownerReplyTo(String(business.id), connection),
         subject: `Your code for ${business.name}`,
         text: `Your code is ${code}. Enter it to see your quote from ${business.name}. It works for 10 minutes.\n\nIf you didn’t ask for a quote, you can ignore this email.`,
       },
@@ -770,6 +776,11 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
       ],
       connection,
     );
+    await recordActivity(connection, businessId, 'quote_drafted', {
+      ref: quoteId,
+      detail: test ? 'test' : 'live',
+      value: totalCents,
+    });
     if (status === 'sent' && !test) {
       const access = await liveBillingAccess(businessId, connection, totalCents);
       if (!access.canSend) {
@@ -825,6 +836,11 @@ export async function markSent(
     connection,
   );
   await mutate("UPDATE lead_chats SET status='sent' WHERE id=?", [quote.chat_id], connection);
+  await recordActivity(connection, input.businessId, 'quote_sent', {
+    ref: input.quoteId,
+    detail: input.test ? 'test' : input.sentBy,
+    value: Number(quote.total_cents),
+  });
   const [business] = await rows(
     'SELECT name FROM businesses WHERE id=?',
     [input.businessId],
@@ -875,6 +891,7 @@ async function notifyCustomerQuote(
       businessId,
       dedupeKey: `live-quote:${chatId}:customer`,
       to: String(chat.customer_email),
+      replyTo: await ownerReplyTo(businessId, connection),
       subject: `Your quote from ${businessName}`,
       text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
     },
@@ -986,6 +1003,11 @@ export async function customerDecision(
       [{ accept: 'accepted', visit: 'visit', decline: 'closed' }[decision], chat.id],
       connection,
     );
+    await recordActivity(connection, String(business.id), 'quote_outcome', {
+      ref: String(quote.id),
+      detail: { accept: 'accepted', visit: 'visit', decline: 'lost' }[decision],
+      value: Number(quote.total_cents),
+    });
     // On the accepted-quote plan, this is when the quote is charged.
     if (decision === 'accept')
       await recordAcceptance(connection, {

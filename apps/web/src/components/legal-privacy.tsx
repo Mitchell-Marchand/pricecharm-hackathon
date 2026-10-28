@@ -108,6 +108,12 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 you request and when.
               </li>
               <li>
+                Which of our public pages you visit and the website that sent you there. We count
+                these visits on our own servers without cookies, using a scrambled form of your IP
+                address and browser type that changes every day. If your browser sends a Do Not
+                Track or Global Privacy Control signal, we don’t count them at all.
+              </li>
+              <li>
                 Cookies and browser storage that keep you signed in or let you come back to a
                 request. See <SectionLink id="cookies">Cookies and browser storage</SectionLink>.
               </li>
@@ -149,6 +155,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 in a trade. They combine prices and job details from at least five businesses and
                 can’t be traced back to any one business or customer. They never include names,
                 addresses or contact details. We use them to improve PriceCharm and may share them.
+              </li>
+              <li>
+                <strong>To see how PriceCharm is used,</strong> we record steps like finishing
+                setup, sending a quote or a customer accepting one. These records hold no names,
+                contact details or messages.
               </li>
               <li>
                 <strong>To send the emails the service needs:</strong> verification codes, sign-in
@@ -335,14 +346,20 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
                 ['Copies of emails we’ve sent', '30 days'],
                 ['Server logs, which include IP addresses', '30 days'],
+                ['Visit counts for our public pages', '13 months'],
+                [
+                  'Records of steps taken in PriceCharm',
+                  'Kept, but no longer linked to a business once it closes its account',
+                ],
                 ['Error reports', '90 days'],
                 ['Backups', 'Up to 30 days, then overwritten'],
               ]}
             />
             <p>
               When a business closes its account, we delete its information, including its
-              customers’ requests and photos. We keep only a record that the deletion happened: an
-              ID and the dates. Stripe keeps billing records under its own rules and the law.
+              customers’ requests and photos. We keep only a record that the deletion happened (an
+              ID and the dates) and usage records that can no longer be linked to the business.
+              Stripe keeps billing records under its own rules and the law.
             </p>
           </>
         ),

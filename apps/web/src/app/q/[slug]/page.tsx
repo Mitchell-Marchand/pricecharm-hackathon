@@ -13,6 +13,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description: `Tell ${business.name} about the job and get a price in about 2 minutes.`,
     robots: { index: false },
     openGraph: {
+      type: 'website',
+      siteName: 'PriceCharm',
       title: `Get a quote from ${business.name}`,
       description: 'Tell us about the job and add a photo. Your quote takes about 2 minutes.',
     },

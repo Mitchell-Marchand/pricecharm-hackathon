@@ -5,7 +5,7 @@ import { owner } from './auth.js';
 import { mutate, rows } from './db.js';
 import { isDisposableEmail } from './email-domains.js';
 import { ApiError, ok, rateLimit } from './http.js';
-import { queueEmail } from './integrations/email.js';
+import { ownerReplyTo, queueEmail } from './integrations/email.js';
 import { consumeAuthRateLimit } from './verification.js';
 
 /** The quote link, the website widget, and the one website allowed to show it. */
@@ -106,6 +106,7 @@ shareRouter.post('/share/instructions', rateLimit(10, 15 * 60_000), async (req, 
     businessId: context.businessId,
     dedupeKey: `share-instructions:${context.businessId}:${randomUUID()}`,
     to: email,
+    replyTo: await ownerReplyTo(context.businessId),
     subject: `Add a quote button to ${business.name}’s website`,
     text: `${context.name} asked us to send you this. It adds a "Get a quote" button to ${business.name}’s website, so visitors can get a quote in a couple of minutes.
 

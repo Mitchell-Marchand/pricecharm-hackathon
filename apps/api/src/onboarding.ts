@@ -10,6 +10,7 @@ import { ApiError, ok, rateLimit } from './http.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
 import { draftIpBudgetKey } from './usage.js';
+import { recordMilestone } from './metrics.js';
 import { consumeAuthRateLimit } from './verification.js';
 import {
   DRAFT_DAYS,
@@ -195,6 +196,7 @@ onboardingRouter.patch('/onboarding/step', requireWorkspace, async (req, res) =>
     .parse(req.body);
   const current = workspace(req);
   await mutate('UPDATE businesses SET onboarding_step=? WHERE id=?', [step, current.businessId]);
+  await recordMilestone(undefined, current.businessId, 'setup_step', step);
   res.json(ok(await onboardingState(current.businessId, current.draft)));
 });
 

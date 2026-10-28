@@ -23,6 +23,7 @@ import {
   decryptEmail,
   deliverEmail,
   encryptEmail,
+  ownerReplyTo,
   queueEmail,
   validateEmailConfiguration,
 } from '../src/integrations/email.js';
@@ -316,23 +317,37 @@ test(
         await queueEmail({ ...payload, businessId, dedupeKey: `commerce-mail:${suffix}` }),
         emailId,
       );
+      // Customers' replies reach the owner once the owner has confirmed their address.
+      const replyTo = await ownerReplyTo(businessId);
+      assert.equal(replyTo, `commerce-a-${suffix}@example.test`);
+      const toOwner = await queueEmail({
+        ...payload,
+        replyTo,
+        businessId,
+        dedupeKey: `commerce-mail-reply:${suffix}`,
+      });
       process.env.MAIL_PROVIDER = 'ses';
       process.env.SES_EMAIL_FROM = 'sender@example.test';
       process.env.AWS_REGION = 'us-east-1';
+      const savedSupport = process.env.SUPPORT_EMAIL;
+      process.env.SUPPORT_EMAIL = 'hello@example.test';
       const originalSend = SESv2Client.prototype.send;
-      let sends = 0;
+      const replies: string[][] = [];
       (SESv2Client.prototype as any).send = async (command: any) => {
-        sends++;
+        replies.push(command.input.ReplyToAddresses);
         assert.equal(command.input.Destination.ToAddresses[0], payload.to);
         return { MessageId: 'mock-ses-message' };
       };
       try {
         await deliverEmail(emailId);
         await deliverEmail(emailId);
-        assert.equal(sends, 1);
+        await deliverEmail(toOwner);
+        assert.deepEqual(replies, [['hello@example.test'], [replyTo]]);
       } finally {
         SESv2Client.prototype.send = originalSend;
         process.env.MAIL_PROVIDER = 'local';
+        if (savedSupport === undefined) delete process.env.SUPPORT_EMAIL;
+        else process.env.SUPPORT_EMAIL = savedSupport;
       }
 
       // The first quotes are free; after that a plan and a card, and each plan charges its way.

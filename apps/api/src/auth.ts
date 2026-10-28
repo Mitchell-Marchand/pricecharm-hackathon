@@ -17,6 +17,7 @@ import { authRateLimitReached, consumeAuthRateLimit, createOwnerToken } from './
 import { devTokensAllowed, hashingSecret } from './config.js';
 import { mailProvider } from './integrations/email.js';
 import { clearDraftCookie, draftFromRequest } from './workspace.js';
+import { recordMilestone } from './metrics.js';
 
 const scryptAsync = promisify(scrypt);
 const COOKIE_NAME = 'quotient_session';
@@ -243,7 +244,7 @@ export const register: RequestHandler = async (req, res) => {
         );
       } else
         await mutate(
-          'INSERT INTO businesses (id, name, slug, description) VALUES (?, ?, ?, ?)',
+          'INSERT INTO businesses (id, name, slug, description, metrics_subject) VALUES (?, ?, ?, ?, UUID())',
           [businessId, businessName, businessSlug(businessName, businessId), ''],
           connection,
         );
@@ -252,6 +253,7 @@ export const register: RequestHandler = async (req, res) => {
         [userId, businessId, name, firstName, lastName, input.email, passwordHash],
         connection,
       );
+      await recordMilestone(connection, businessId, 'account_created');
       await createSession(userId, res, connection);
       ({ code } = await createOwnerToken(
         { userId, businessId, email: input.email, purpose: 'verify_email' },

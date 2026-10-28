@@ -1,17 +1,28 @@
-# Replace quote.example.com and certificate paths, then nginx -t && systemctl reload nginx.
-# Enable this HTTP-only server first for ACME issuance, then enable the TLS server below.
+# Install as /etc/nginx/conf.d/quotient.conf, then nginx -t && systemctl reload nginx.
+# First install only the port 80 server and issue the certificate (LAUNCH.md section 3), then add the
+# two TLS servers. www.pricecharm.com and plain HTTP both redirect to https://pricecharm.com.
 log_format quotient_safe '$remote_addr [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent $request_time';
 server {
     listen 80;
-    server_name quote.example.com;
+    server_name pricecharm.com www.pricecharm.com;
     location /.well-known/acme-challenge/ { root /var/www/acme; }
-    location / { return 301 https://$host$request_uri; }
+    location / { return 301 https://pricecharm.com$request_uri; }
 }
 server {
     listen 443 ssl;
-    server_name quote.example.com;
-    ssl_certificate /etc/letsencrypt/live/quote.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/quote.example.com/privkey.pem;
+    server_name www.pricecharm.com;
+    ssl_certificate /etc/letsencrypt/live/pricecharm.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pricecharm.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    access_log off;
+    return 301 https://pricecharm.com$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name pricecharm.com;
+    ssl_certificate /etc/letsencrypt/live/pricecharm.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pricecharm.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     add_header Strict-Transport-Security "max-age=31536000" always;
     access_log /var/log/nginx/quotient-access.log quotient_safe;
