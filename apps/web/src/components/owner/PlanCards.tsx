@@ -91,7 +91,7 @@ export function PlanCards({
           >
             <div className="flex items-center justify-between gap-3">
               <h3 className="t-label text-muted">{card.label}</h3>
-              {onIt && <Tag tone="go">Your plan</Tag>}
+              {onIt && <Tag tone="go">Current</Tag>}
             </div>
             <p className="mt-5 flex flex-wrap items-baseline gap-x-2">
               <span className="qf-total text-[56px]">

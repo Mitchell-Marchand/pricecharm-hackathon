@@ -238,7 +238,7 @@ export function Tag({
   return (
     <span
       className={cx(
-        't-label inline-flex h-6 items-center rounded-xs px-2 text-[10.5px]!',
+        't-label inline-flex h-6 shrink-0 items-center rounded-xs px-2 whitespace-nowrap text-[10.5px]!',
         tone === 'neutral' && 'bg-surface-2 text-muted',
         tone === 'accent' && 'bg-accent-soft text-accent',
         tone === 'go' && 'bg-go-soft text-go',
