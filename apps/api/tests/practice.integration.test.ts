@@ -171,16 +171,35 @@ test(
     assert.equal(state.current, 1);
     const second = state.runs[1];
     assert.equal(second.customer.name, 'Marcus T.');
-    const visit = await owner
-      .post(`/api/v1/onboarding/practice/${second.id}/site-visit`)
-      .set('Origin', origin)
-      .send({ reason: 'I want to see how green it is by the planters.' });
+    // Wanting to see it is said in the chat. The customer asks once for a rough price instead.
+    const pushback = await say(second.id, "I'd need to come by and see it first.");
+    assert.equal(pushback.status, 200, JSON.stringify(pushback.body));
+    assert.equal(pushback.body.data.run.outcome, null, 'The first ask gets a push for a price');
+    assert.match(pushback.body.data.run.messages.at(-1).text, /rough price from the pics/);
+    assert.equal(pushback.body.data.nudge, true);
+    assert.equal(
+      pushback.body.data.run.messages.at(-2).text,
+      "I'd need to come by and see it first.",
+    );
+    const visit = await say(second.id, 'Sorry, I really need to see it in person.');
     assert.equal(visit.status, 200, JSON.stringify(visit.body));
-    assert.equal(visit.body.data.outcome, 'site-visit');
+    assert.equal(visit.body.data.run.outcome, 'site-visit', 'Asking again is the answer');
+    assert.match(visit.body.data.run.messages.at(-1).text, /Can you come by this week/);
     assert.ok(
-      visit.body.data.insights.some((item: { text: string }) =>
-        item.text.startsWith('Asks to see jobs like this first'),
+      visit.body.data.run.insights.some(
+        (item: { text: string }) =>
+          item.text === 'Wants to see jobs like this before giving a price',
       ),
+    );
+    const [asks] = await rows(
+      "SELECT COUNT(*) AS count FROM practice_messages WHERE run_id=? AND kind='visit_ask'",
+      [second.id],
+    );
+    assert.equal(Number(asks.count), 2, 'Visit asks stay out of the AI’s guess');
+    assert.equal(
+      (await say(second.id, 'Hello?')).body.error?.code,
+      'PRACTICE_CLOSED',
+      'A customer who got their answer takes no more messages',
     );
 
     state = await practice();

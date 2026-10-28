@@ -5,7 +5,7 @@ import { formatQuantity, roundSize } from '../pricing/units.js';
 export const SITUATIONS = [
   'A typical, clear job for one of their main services, sized like their usual past jobs. Nothing unusual.',
   'A bigger job that combines two of their services or adds an extra, where the customer also asks about a discount, for example because a neighbor wants the same work.',
-  'A trickier job: the photos and messages show something that could change the price a lot, like damage, hard access or unclear scope, so a careful owner might want to see it before pricing.',
+  'A trickier job: the photos and messages show something that could change the price a lot, like damage, hard access or unclear scope. The customer is getting a few quotes and hopes for a price from the photos.',
   'A small job at the low end of what they do, from a customer in a hurry.',
   'A job near the edge of their service area, for a customer who wants it done soon.',
 ];
@@ -14,7 +14,6 @@ export const SITUATIONS = [
 export type PracticeMiss = {
   service: string;
   situation: string;
-  siteVisit: boolean;
   /** Percent between the AI's guess and the owner's quote, when both priced it. */
   gap: number | null;
   confidence: string | null;
@@ -111,9 +110,5 @@ export function planSituation(input: PlanInput): string {
       return smaller;
   }
 
-  if (!input.finished.some((run) => run.siteVisit)) {
-    const tricky = fresh(SITUATIONS[2]);
-    if (tricky) return tricky;
-  }
   return SITUATIONS[input.position % SITUATIONS.length];
 }

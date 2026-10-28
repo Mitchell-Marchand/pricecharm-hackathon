@@ -86,22 +86,20 @@ export default async function LandingPage() {
                   className="flex h-44 flex-col justify-center gap-3 rounded-md bg-surface-2 p-5"
                   aria-hidden
                 >
+                  <div className="flex gap-1 md:max-lg:hidden">
+                    <span className="h-1.5 flex-1 rounded-full bg-canary" />
+                    <span className="h-1.5 flex-1 rounded-full bg-canary" />
+                    <span className="h-1.5 flex-1 rounded-full bg-line-strong" />
+                  </div>
                   <div className="flex items-center gap-2">
                     <Avatar initials="MT" tone="pink" size="sm" />
                     <p className="rounded-[12px] rounded-bl-[4px] border border-line bg-surface px-3 py-2 text-sm">
                       Pics attached. Is the neighbor discount still a thing?
                     </p>
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="inline-flex h-9 items-center gap-1.5 rounded-sm bg-canary px-3 text-sm font-semibold text-on-canary">
-                      <Receipt className="size-4" /> Create quote
-                    </span>
-                    <div className="flex w-24 gap-1">
-                      <span className="h-1.5 flex-1 rounded-full bg-canary" />
-                      <span className="h-1.5 flex-1 rounded-full bg-canary" />
-                      <span className="h-1.5 flex-1 rounded-full bg-line-strong" />
-                    </div>
-                  </div>
+                  <span className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-sm bg-canary px-2.5 text-[13px] font-semibold whitespace-nowrap text-on-canary">
+                    <Receipt className="size-4" /> I have enough to quote
+                  </span>
                 </div>
                 <div>
                   <p className="font-mono text-sm text-muted">Step 3</p>

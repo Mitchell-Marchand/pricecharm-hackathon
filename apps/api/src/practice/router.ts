@@ -6,7 +6,6 @@ import { businessContext } from '../pricing/history.js';
 import { requireWorkspace, workspace } from '../workspace.js';
 import {
   addPracticeRun,
-  askForSiteVisit,
   computeShadow,
   editInsight,
   ensurePracticeRuns,
@@ -100,9 +99,24 @@ practiceRouter.post(
         turn: sent.run.messages.filter((message) => message.from === 'owner').length,
         chars: text.length,
         asked_price: Boolean(sent.nudge),
+        asked_visit: sent.visitAsk,
       },
       { ref: sent.run.id },
     );
+    // Asked a second time, the visit is the owner's answer for this customer.
+    if (sent.run.outcome === 'site-visit')
+      await recordRequestEvent(
+        req,
+        businessId,
+        'practice_site_visit',
+        {
+          position: sent.run.position,
+          service: sent.run.serviceName ?? '',
+          ai_wanted_visit: Boolean(sent.run.shadow?.siteVisit),
+          guess_cents: sent.run.shadow?.siteVisit ? null : (sent.run.shadow?.cents ?? null),
+        },
+        { ref: sent.run.id },
+      );
     res.json(ok(sent));
   },
 );
@@ -144,33 +158,6 @@ practiceRouter.post(
         turns: run.messages.filter((message) => message.from === 'owner').length,
       },
       { ref: run.id, value: ownerCents },
-    );
-    res.json(ok(run));
-  },
-);
-
-practiceRouter.post(
-  '/onboarding/practice/:id/site-visit',
-  rateLimit(20, 60_000),
-  requireWorkspace,
-  async (req, res) => {
-    const { reason } = z
-      .object({ reason: z.string().trim().min(4, 'Say what you need to check.').max(600) })
-      .strict()
-      .parse(req.body);
-    const { businessId } = workspace(req);
-    const run = await askForSiteVisit(businessId, runId.parse(req.params.id), reason);
-    await recordRequestEvent(
-      req,
-      businessId,
-      'practice_site_visit',
-      {
-        position: run.position,
-        service: run.serviceName ?? '',
-        ai_wanted_visit: Boolean(run.shadow?.siteVisit),
-        guess_cents: run.shadow?.siteVisit ? null : (run.shadow?.cents ?? null),
-      },
-      { ref: run.id },
     );
     res.json(ok(run));
   },

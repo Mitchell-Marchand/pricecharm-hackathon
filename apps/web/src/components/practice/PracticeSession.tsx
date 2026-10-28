@@ -8,15 +8,14 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, CalendarCheck, Pencil, Receipt, RotateCw } from 'lucide-react';
+import { ArrowUp, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
-import { QuoteBuilder, SiteVisitSheet } from '@/components/practice/QuoteBuilder';
+import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
 import { Avatar, Button, Tag, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
-  askForVisit,
   fixInsight,
   loadPractice,
   requestGuess,
@@ -225,7 +224,6 @@ export function PracticeSession({
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [builderOpen, setBuilderOpen] = useState(false);
-  const [visitOpen, setVisitOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [nudge, setNudge] = useState(false);
@@ -285,6 +283,25 @@ export function PracticeSession({
       later(() => {
         setTyping(false);
         setPending(null);
+        if (result.run.finished) {
+          // A second ask to see the job ends this customer. What the AI picked up follows their reply.
+          setReveal({
+            runId: result.run.id,
+            messages: result.run.messages.length,
+            insights: false,
+          });
+          onRun(result.run);
+          later(
+            () =>
+              setReveal({
+                runId: result.run.id,
+                messages: result.run.messages.length,
+                insights: true,
+              }),
+            600,
+          );
+          return;
+        }
         onRun(result.run);
         if (result.nudge) setNudge(true);
       }, wait);
@@ -323,21 +340,6 @@ export function PracticeSession({
       const next = await sendPracticeQuote(run.id, quote);
       setBuilderOpen(false);
       setNudge(false);
-      stageReveal(next);
-    } catch (error) {
-      setSendError(errorMessage(error));
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function sendVisit(reason: string) {
-    if (!run) return;
-    setSending(true);
-    setSendError('');
-    try {
-      const next = await askForVisit(run.id, reason);
-      setVisitOpen(false);
       stageReveal(next);
     } catch (error) {
       setSendError(errorMessage(error));
@@ -479,19 +481,7 @@ export function PracticeSession({
                   disabled={run?.status !== 'ready' || !run.messages.length}
                   className={cx(nudge && 'pulse')}
                 >
-                  <Receipt aria-hidden /> Create quote
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSendError('');
-                    setVisitOpen(true);
-                    if (run) void requestGuess(run.id).catch(() => {});
-                  }}
-                  disabled={run?.status !== 'ready' || !run.messages.length}
-                >
-                  <CalendarCheck aria-hidden /> <span className="sm:hidden">Visit first</span>
-                  <span className="hidden sm:inline">I&apos;d need to see it first</span>
+                  <Receipt aria-hidden /> I have enough to quote
                 </Button>
               </div>
               <form onSubmit={(event) => void send(event)} className="flex items-end gap-2">
@@ -529,34 +519,19 @@ export function PracticeSession({
       </div>
 
       {run && customer && (
-        <>
-          <QuoteBuilder
-            open={builderOpen}
-            customer={{
-              id: run.id,
-              name: customer.name,
-              firstName: customer.firstName,
-              suggestions: run.suggestions,
-            }}
-            sending={sending}
-            error={sendError}
-            onClose={() => setBuilderOpen(false)}
-            onSend={(quote) => void sendQuote(quote)}
-          />
-          <SiteVisitSheet
-            open={visitOpen}
-            customer={{
-              id: run.id,
-              name: customer.name,
-              firstName: customer.firstName,
-              suggestions: run.suggestions,
-            }}
-            sending={sending}
-            error={sendError}
-            onClose={() => setVisitOpen(false)}
-            onSend={(reason) => void sendVisit(reason)}
-          />
-        </>
+        <QuoteBuilder
+          open={builderOpen}
+          customer={{
+            id: run.id,
+            name: customer.name,
+            firstName: customer.firstName,
+            suggestions: run.suggestions,
+          }}
+          sending={sending}
+          error={sendError}
+          onClose={() => setBuilderOpen(false)}
+          onSend={(quote) => void sendQuote(quote)}
+        />
       )}
     </>
   );

@@ -168,7 +168,6 @@ test('practice aims where the AI knows least', () => {
   const miss = {
     service: 'Driveways',
     situation: SITUATIONS[0],
-    siteVisit: false,
     gap: 30,
     confidence: 'medium',
   };

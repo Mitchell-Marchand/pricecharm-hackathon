@@ -122,7 +122,6 @@ async function nextSituation(
     return {
       service: scenario.serviceName,
       situation: scenario.situation ?? '',
-      siteVisit: run.outcome === 'site_visit',
       gap: quote && shadow?.cents ? gapPercent(shadow.cents, quoteTotal(quote)) : null,
       confidence: shadow?.confidence ?? null,
     };
@@ -334,7 +333,8 @@ function runView(run: Row, messages: Row[]) {
         : messages.map((message) => ({
             id: String(message.id),
             from: message.sender as 'customer' | 'owner',
-            text: message.kind === 'text' ? String(message.text) : '',
+            text:
+              message.kind === 'quote' || message.kind === 'site_visit' ? '' : String(message.text),
             photos: json<string[]>(message.photo_ids_json, []).map((id) => ({
               id,
               url: photoUrl(id),
@@ -467,7 +467,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
     throw new ApiError(
       422,
       'PRACTICE_LONG',
-      'That’s a long conversation. Send a quote, or ask to see the job first.',
+      'That’s a long conversation. Send a quote with what you have.',
     );
   const ownerId = await addMessage(undefined, businessId, runId, 'owner', 'text', text);
   const turn = before.filter((message) => message.sender === 'owner').length;
@@ -484,7 +484,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
               scenario,
               messages: before.map((message) => ({
                 from: message.sender as 'customer' | 'owner',
-                text: message.kind === 'text' ? String(message.text) : '[quote]',
+                text: message.kind === 'quote' ? '[quote]' : String(message.text),
               })),
               ownerMessage: text,
               photoAvailable,
@@ -494,6 +494,20 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
     // Take the message back, so the owner can send it again cleanly.
     await mutate('DELETE FROM practice_messages WHERE id=?', [ownerId]);
     throw error;
+  }
+  if (reply.visitAsk) {
+    // Kept out of the AI's guess, which is made from the request and not from the owner's answer.
+    await mutate("UPDATE practice_messages SET kind='visit_ask' WHERE id=?", [ownerId]);
+    // The customer asks once for a rough price from the photos, like anyone shopping online would.
+    // An owner who still wants to see the job has given their answer for this one.
+    if (before.some((message) => message.kind === 'visit_ask'))
+      return {
+        run: await finishRun(businessId, runId, {
+          siteVisit: reply.visitReason || scenario.siteVisitCue,
+        }),
+        nudge: false,
+        visitAsk: true,
+      };
   }
   const sendPhoto = reply.sendPhoto && photoAvailable;
   const asked = [...new Set([...json<string[]>(run.asked_json, []), ...reply.askedKeys])];
@@ -513,7 +527,11 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
       connection,
     );
   });
-  return { run: await viewOf(businessId, runId), nudge: reply.mentionsPrice };
+  return {
+    run: await viewOf(businessId, runId),
+    nudge: reply.mentionsPrice || reply.visitAsk,
+    visitAsk: reply.visitAsk,
+  };
 }
 
 async function businessContextName(businessId: string) {
@@ -657,7 +675,7 @@ async function insightsFor(
     }
     if (quote.note.trim()) items.push(`Remembers why: “${quote.note.trim()}”`);
   } else {
-    items.push(`Asks to see jobs like this first: “${outcome.siteVisit}”`);
+    items.push(`Wants to see ${outcome.siteVisit || 'jobs like this'} before giving a price`);
     items.push(
       scenario.siteVisitCue
         ? `Won’t send a price for ${scenario.siteVisitCue} until you’ve looked`
@@ -709,12 +727,12 @@ async function finishRun(
       );
       await addMessage(connection, businessId, runId, 'owner', 'quote', '');
     } else {
+      // No message for this: the owner asked for the visit in the chat.
       await mutate(
         "UPDATE practice_runs SET outcome='site_visit',site_visit_reason=? WHERE id=?",
         [outcome.siteVisit, runId],
         connection,
       );
-      await addMessage(connection, businessId, runId, 'owner', 'site_visit', outcome.siteVisit);
     }
     return scenario;
   });
@@ -747,10 +765,6 @@ async function finishRun(
 
 export async function sendPracticeQuote(businessId: string, runId: string, body: unknown) {
   return finishRun(businessId, runId, { quote: quoteDraftSchema.parse(body) });
-}
-
-export async function askForSiteVisit(businessId: string, runId: string, reason: string) {
-  return finishRun(businessId, runId, { siteVisit: reason });
 }
 
 /** The owner's correction. It goes to the AI as something they taught it. */

@@ -117,7 +117,7 @@ Use the situation in the input. Make it a job this business would really get, si
 - extraPhoto: one more photo the customer would send if asked (scene), and the message they'd send with it (text).
 - suggestions: three or four short line-item labels an owner in this trade would likely use for this job, like "Patio wash, about 550 sq ft" or "Stain pre-treatment". No prices.
 - siteVisitLikely: true only if something in the request makes it risky to price without seeing it. siteVisitCue: that thing in a few words, like "loose and cracked stones", or empty.
-- acceptReply: what the customer says after getting a fair quote, one sentence. siteVisitReply: what they say if the owner wants to see it first, one sentence.
+- acceptReply: what the customer says after getting a fair quote, one sentence. siteVisitReply: what they say when the owner still won't price it without seeing it first: they agree and suggest a time for the visit, one sentence.
 No prices or dollar amounts anywhere.`,
     {
       business: {
@@ -169,8 +169,10 @@ const replyJson = {
     askedKeys: { type: 'array', items: { type: 'string' } },
     sendPhoto: { type: 'boolean' },
     mentionsPrice: { type: 'boolean' },
+    visitAsk: { type: 'boolean' },
+    visitReason: { type: 'string' },
   },
-  required: ['reply', 'askedKeys', 'sendPhoto', 'mentionsPrice'],
+  required: ['reply', 'askedKeys', 'sendPhoto', 'mentionsPrice', 'visitAsk', 'visitReason'],
   additionalProperties: false,
 };
 const replySchema = z.object({
@@ -178,6 +180,8 @@ const replySchema = z.object({
   askedKeys: z.array(text(30)).max(12),
   sendPhoto: z.boolean(),
   mentionsPrice: z.boolean(),
+  visitAsk: z.boolean(),
+  visitReason: text(120),
 });
 
 /** The practice customer's next message, using only what they know. */
@@ -197,6 +201,7 @@ You are ${input.scenario.firstName}, a customer asking ${input.businessName || '
 - Answer what they asked. Don't volunteer other facts.
 - Never suggest a price or negotiate. If the owner tells you a price in the chat, say it sounds fair and ask them to send it as a quote, and set mentionsPrice to true.
 - If they ask for another photo or a closer look and photoAvailable is true, set sendPhoto to true and reply with extraPhotoText. If photoAvailable is false, say that's all the photos you have.
+- If the owner won't give any price until they've seen the job in person, set visitAsk to true and put what they want to check in visitReason, in a few plain words like "the loose stones". Push back the way someone getting a few quotes online would: ask for a rough price from the photos, and say they can firm it up when they come out. If they give any price, even a rough one, visitAsk is false and visitReason is empty.
 - askedKeys: the keys of your facts that the owner's latest message asks about.`,
     {
       facts: input.scenario.facts,
@@ -215,6 +220,8 @@ You are ${input.scenario.firstName}, a customer asking ${input.businessName || '
     askedKeys: [...new Set(result.askedKeys.filter((key) => known.has(key)))],
     sendPhoto: result.sendPhoto && input.photoAvailable,
     mentionsPrice: result.mentionsPrice,
+    visitAsk: result.visitAsk && !result.mentionsPrice,
+    visitReason: result.visitAsk ? result.visitReason.trim() : '',
   };
 }
 

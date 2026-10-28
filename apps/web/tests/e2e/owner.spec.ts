@@ -210,7 +210,7 @@ test('after setup, an owner practices with as many customers as they like', asyn
   await page.reload();
   await expect(page.getByText('How big is the patio?')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Create quote' }).click();
+  await page.getByRole('button', { name: 'I have enough to quote' }).click();
   const builder = page.getByRole('dialog', { name: /^Quote for / });
   await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill('Patio wash');
   await builder.getByRole('textbox', { name: 'Price for item 1' }).fill('280');

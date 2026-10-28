@@ -274,7 +274,7 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page).toHaveURL(/\/start\/practice$/);
 
   const quote = async (label: string, price: string) => {
-    await page.getByRole('button', { name: 'Create quote' }).click();
+    await page.getByRole('button', { name: 'I have enough to quote' }).click();
     const builder = page.getByRole('dialog', { name: /^Quote for / });
     await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill(label);
     await builder.getByRole('textbox', { name: 'Price for item 1' }).fill(price);
@@ -301,11 +301,17 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
 
   await page.getByRole('button', { name: 'Next practice request' }).click();
   await expect(page.getByText('Marcus T. · North Hills')).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: /I.d need to see it first|Visit first/ }).click();
-  const visit = page.getByRole('dialog', { name: 'Ask for a site visit' });
-  await visit.getByLabel('What do you need to check?').fill('How green it is by the planters.');
-  await visit.getByRole('button', { name: 'Send to Marcus' }).click();
-  await expect(page.getByText(/Asks to see jobs like this first/)).toBeVisible({ timeout: 15_000 });
+  // Wanting to see it first is said in the chat. The customer asks once for a rough price.
+  await expect(page.getByRole('button', { name: /see it first/i })).toHaveCount(0);
+  const marcus = page.getByLabel('Reply to Marcus');
+  await marcus.fill("I'd need to come by and see it first.");
+  await marcus.press('Enter');
+  await expect(page.getByText(/Any chance of a rough price from the pics/)).toBeVisible();
+  await marcus.fill('Sorry, I really need to see it in person.');
+  await marcus.press('Enter');
+  await expect(page.getByText(/Wants to see jobs like this before giving a price/)).toBeVisible({
+    timeout: 15_000,
+  });
 
   await page.getByRole('button', { name: 'Next practice request' }).click();
   await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });

@@ -25,6 +25,8 @@ const DAMAGE =
 const PHOTO_REQUEST =
   /\b(photos?|pictures?|pics?|images?|close[- ]?up|closer|another (shot|angle|look)|show me|send (me )?(a|another|more|one))\b/i;
 const PRICE_MENTION = /\$\s?\d|\b\d+\s?(dollars|bucks)\b/i;
+const VISIT_ASK =
+  /\b(site visit|in person|(come|stop|swing|pop) (by|out|over)|see it (first|before)|look at it first)\b/i;
 const SMALL_TALK = /^(hi|hello|hey|thanks|thank you|ok|okay|great|sounds good|cool|perfect)\b/i;
 
 const PATTERNS: Record<string, RegExp> = {
@@ -72,6 +74,8 @@ type DemoCustomer = {
   siteVisitLikely: boolean;
   siteVisitCue: string;
   priceNudge: string;
+  /** What they say the first time the owner wants to see it before giving a price. */
+  visitPushback: string;
   acceptReply: string;
   siteVisitReply: string;
 };
@@ -121,6 +125,8 @@ const CUSTOMERS: DemoCustomer[] = [
     siteVisitCue: '',
     priceNudge:
       'That sounds fair. Could you send it as a quote so I have it in writing for the realtor?',
+    visitPushback:
+      "I'm getting a couple of quotes online. Could you give me a rough number from the photos?",
     acceptReply: 'That works for us, thank you! Could you do next Thursday morning?',
     siteVisitReply: 'Sure. Could you swing by tomorrow afternoon?',
   },
@@ -162,6 +168,8 @@ const CUSTOMERS: DemoCustomer[] = [
     siteVisitLikely: false,
     siteVisitCue: '',
     priceNudge: 'Works for me. Can you send it over as a quote? I want to show Jen.',
+    visitPushback:
+      "I'm short on time with the party coming up. Any chance of a rough price from the pics?",
     acceptReply: "Perfect. I'll tell Jen to book too. Thanks!",
     siteVisitReply: "Hmm, okay. Can you come by this week? The party's coming up fast.",
   },
@@ -208,6 +216,8 @@ const CUSTOMERS: DemoCustomer[] = [
     siteVisitLikely: true,
     siteVisitCue: 'loose and cracked stones',
     priceNudge: "Okay. Could you put that in a quote? I'd like to see what's included.",
+    visitPushback:
+      "I'm getting a few quotes. Could you give me a ballpark from the photos and firm it up when you see it?",
     acceptReply: 'That sounds right. Thanks for being upfront about the loose stones.',
     siteVisitReply: 'That makes sense. Could you come by Saturday morning?',
   },
@@ -247,47 +257,49 @@ const NOT_SURE = [
   "I'd have to check. Does that change the price much?",
 ];
 
+type DemoReply = {
+  reply: string;
+  askedKeys: string[];
+  sendPhoto: boolean;
+  mentionsPrice: boolean;
+  visitAsk: boolean;
+  visitReason: string;
+};
+
 export function demoReply(
   scenario: PracticeScenario,
   text: string,
   context: { photoSent: boolean; turn: number },
-): { reply: string; askedKeys: string[]; sendPhoto: boolean; mentionsPrice: boolean } {
+) {
   const customer = BY_ID[scenario.demoId ?? ''] ?? CUSTOMERS[0];
   const message = text.trim();
-  if (PHOTO_REQUEST.test(message))
-    return context.photoSent
-      ? {
-          reply: "That's all the photos I have right now. Anything else you need?",
-          askedKeys: [],
-          sendPhoto: false,
-          mentionsPrice: false,
-        }
-      : { reply: scenario.extraPhoto.text, askedKeys: [], sendPhoto: true, mentionsPrice: false };
-  const matches = scenario.facts.filter((fact) => PATTERNS[fact.key]?.test(message));
-  if (!matches.length && PRICE_MENTION.test(message))
-    return { reply: customer.priceNudge, askedKeys: [], sendPhoto: false, mentionsPrice: true };
-  if (matches.length) {
-    const answered = matches.slice(0, 2);
-    return {
-      reply: answered.map((fact) => fact.answer).join(' '),
-      askedKeys: answered.map((fact) => fact.key),
-      sendPhoto: false,
-      mentionsPrice: false,
-    };
-  }
-  if (SMALL_TALK.test(message) && message.length < 40)
-    return {
-      reply: 'Of course! Ask me anything about the job.',
-      askedKeys: [],
-      sendPhoto: false,
-      mentionsPrice: false,
-    };
-  return {
-    reply: NOT_SURE[context.turn % NOT_SURE.length],
+  const answer = (reply: string, more: Partial<DemoReply> = {}): DemoReply => ({
+    reply,
     askedKeys: [],
     sendPhoto: false,
     mentionsPrice: false,
-  };
+    visitAsk: false,
+    visitReason: '',
+    ...more,
+  });
+  if (VISIT_ASK.test(message) && !PRICE_MENTION.test(message))
+    return answer(customer.visitPushback, { visitAsk: true, visitReason: customer.siteVisitCue });
+  if (PHOTO_REQUEST.test(message))
+    return context.photoSent
+      ? answer("That's all the photos I have right now. Anything else you need?")
+      : answer(scenario.extraPhoto.text, { sendPhoto: true });
+  const matches = scenario.facts.filter((fact) => PATTERNS[fact.key]?.test(message));
+  if (!matches.length && PRICE_MENTION.test(message))
+    return answer(customer.priceNudge, { mentionsPrice: true });
+  if (matches.length) {
+    const answered = matches.slice(0, 2);
+    return answer(answered.map((fact) => fact.answer).join(' '), {
+      askedKeys: answered.map((fact) => fact.key),
+    });
+  }
+  if (SMALL_TALK.test(message) && message.length < 40)
+    return answer('Of course! Ask me anything about the job.');
+  return answer(NOT_SURE[context.turn % NOT_SURE.length]);
 }
 
 export function sqFt(text: string): number | null {

@@ -74,11 +74,6 @@ export const requestGuess = (runId: string) =>
   api(`/onboarding/practice/${runId}/guess`, { method: 'POST', ...json({}) });
 export const sendPracticeQuote = (runId: string, quote: QuoteDraft) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/quote`, { method: 'POST', ...json(quote) });
-export const askForVisit = (runId: string, reason: string) =>
-  api<PracticeRun>(`/onboarding/practice/${runId}/site-visit`, {
-    method: 'POST',
-    ...json({ reason }),
-  });
 export const fixInsight = (runId: string, insightId: string, text: string) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/insights/${insightId}`, {
     method: 'PATCH',
