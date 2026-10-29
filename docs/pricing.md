@@ -104,3 +104,22 @@ UPLOAD_DIR=/srv/quotient-api/shared/uploads npm run proof:production -- --replay
 ```
 
 It prints business names and numbers, never customer details.
+
+## The simulated-owner benchmark
+
+Real owners' data takes time to build up. Until it has, `bash scripts/bench.sh` measures the same thing on made-up businesses ([src/bench/owners.ts](../apps/api/src/bench/owners.ts)). Each has its own hidden prices, drawn from what real businesses in its trade charge:
+
+- a rate per window, square foot or foot of gutter (some lower it on big jobs, a few price by size bands);
+- a minimum;
+- extra for a job in bad shape and for a second story;
+- add-ons;
+- a discount for two services;
+- how they round, and whether they put extras on their own lines.
+
+Each owner goes through setup like a real one: three past jobs, then setup's five practice customers, answered by their rules. Then each owner's Charm prices new jobs it has never seen, next to the same model with none of the owner's prices, and both are compared with what the owner's rules say.
+
+```sh
+bash scripts/bench.sh --owners 30 --tests 6 --curve --json bench.json
+```
+
+`--curve` also prices every job from the past jobs alone, to show what practice adds. `--json` saves every owner's rules and every price for a closer look. It runs on a fresh `quoting_bench` database in the local container, with the AI keys in `apps/api/.env`. It costs two model calls a job (three with `--curve`), so a full run is a few hundred. The numbers are about simulated owners and say so wherever they're used; the proof report is the one for real owners.
