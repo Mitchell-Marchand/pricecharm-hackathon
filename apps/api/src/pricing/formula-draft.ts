@@ -9,7 +9,14 @@ import {
 import type { PricingHistory } from '../ai/quote-engine.js';
 import { quoteTotal, type DraftedQuote } from '../practice/types.js';
 import { draftForBusiness } from './draft.js';
-import { fitGaps, formulaFits, ownerRounding, priceJob, type PriceFormula } from './formula.js';
+import {
+  fitGaps,
+  formulaFits,
+  ownerRounding,
+  priceJob,
+  refineFormula,
+  type PriceFormula,
+} from './formula.js';
 import { loadPricingData, type HistoryOptions } from './history.js';
 import { describeSpec, type JobSpec } from './spec.js';
 import { canonicalUnit } from './units.js';
@@ -133,16 +140,22 @@ export function learnedFormula(
           },
         };
         const parts = new Map(learned.examples.map((example) => [example.index, example]));
+        const checked = examples.flatMap((example) => {
+          const found = parts.get(example.index);
+          return found ? [{ parts: found, totalCents: example.totalCents }] : [];
+        });
+        const formula = refineFormula(learned.formula, checked);
         const gaps = examples.map((example) => {
           const found = parts.get(example.index);
           return found
-            ? fitGaps(learned.formula, [{ parts: found, totalCents: example.totalCents }])[0]
+            ? fitGaps(formula, [{ parts: found, totalCents: example.totalCents }])[0]
             : null;
         });
-        return { ...learned, gaps, fits: formulaFits(gaps) };
+        return { ...learned, formula, gaps, fits: formulaFits(gaps) };
       });
-      // A failed attempt isn't kept, so the next quote tries again.
-      pending.catch(() => learning.delete(key));
+      // After a failure, quotes go the usual way for ten minutes before it's tried again, so a
+      // run of quotes doesn't retry the same long call one after another.
+      pending.catch(() => setTimeout(() => learning.delete(key), 10 * 60_000).unref());
       learning.set(key, pending);
     }
     return pending;

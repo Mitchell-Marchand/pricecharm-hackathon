@@ -198,7 +198,7 @@ Work out this owner's pricing formula from their own examples: past jobs (a desc
     formulaSchema,
     [],
     [],
-    { model: input.model, timeoutMs: 120_000, maxAttempts: 2 },
+    { model: input.model, timeoutMs: 240_000, maxAttempts: 2 },
   );
   const { examples, ...formula } = result;
   return {

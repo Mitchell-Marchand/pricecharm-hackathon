@@ -33,10 +33,11 @@ import { accuracy, closer, share } from './proof.js';
  * owner's rules say. With --curve it also prices them from the past jobs alone, to show what
  * practice adds.
  *
- *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula]
+ *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
  *     [--practice original] [--concurrency 4] [--json <file>]
  *
- * With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
+ * With --messy the owners price by eye a little, straying 2–8% from their own rates job to job,
+ * the way real owners do. With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
  * falling back to the usual draft where the formula doesn't fit or doesn't cover the job.
  *
  * Each owner's past jobs, practice customers and test jobs come from their own random sequences,
@@ -320,13 +321,14 @@ async function main() {
   const model = option('model');
   const curve = process.argv.includes('--curve');
   const formula = process.argv.includes('--formula');
+  const messy = process.argv.includes('--messy');
   const planName = option('practice') ?? PLAN;
   const plan = PLANS[planName];
   if (!plan)
     throw new Error(`No practice plan called ${planName}. Try ${Object.keys(PLANS).join(' or ')}.`);
   const tokens = { input: 0, output: 0, calls: 0 };
   const generic = aiMode !== 'demo';
-  const owners = simulatedOwners(seed, count);
+  const owners = simulatedOwners(seed, count, messy);
   const start = new Date(Date.now() - 86_400_000);
 
   console.info(`Setting up ${count} simulated owners.`);
@@ -362,20 +364,20 @@ async function main() {
     ...(curve ? ([['0', new Date(start.getTime() + 30_000)]] as [string, Date][]) : []),
   ];
   /** A draft, retried if the API is down, with the tokens it used added up. */
-  const counted = <T>(businessId: string, task: () => Promise<T>) =>
-    retried(() =>
-      runWithAiUsage(
-        {
-          businessId,
-          record: async (usage) => {
-            tokens.input += usage.inputTokens;
-            tokens.output += usage.outputTokens;
-            tokens.calls++;
-          },
+  const tallied = <T>(businessId: string, task: () => Promise<T>) =>
+    runWithAiUsage(
+      {
+        businessId,
+        record: async (usage) => {
+          tokens.input += usage.inputTokens;
+          tokens.output += usage.outputTokens;
+          tokens.calls++;
         },
-        task,
-      ),
+      },
+      task,
     );
+  const counted = <T>(businessId: string, task: () => Promise<T>) =>
+    retried(() => tallied(businessId, task));
   const tasks: (() => Promise<void>)[] = [];
   for (const test of tests) {
     const owner = owners[test.owner];
@@ -454,7 +456,8 @@ async function main() {
     const ids = [...new Set(tests.map((test) => test.businessId))];
     await pool(
       ids.map((id) => async () => {
-        await counted(id, () => learnedFormula(id, {}, model)).catch((error: unknown) =>
+        // Learning retries on its own, so it isn't retried again here.
+        await tallied(id, () => learnedFormula(id, {}, model)).catch((error: unknown) =>
           console.error(`  ${id}: ${error instanceof Error ? error.message : error}`),
         );
       }),
@@ -476,7 +479,7 @@ async function main() {
   out.push(
     `PriceCharm simulated-owner benchmark, ${new Date().toISOString().slice(0, 10)}, seed ${seed}`,
     '',
-    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round. Each Charm learned only from 3 past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
+    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from 3 past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
     '',
     `All ${scored.length} jobs:`,
   );

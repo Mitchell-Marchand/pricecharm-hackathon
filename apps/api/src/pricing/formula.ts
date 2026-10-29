@@ -68,8 +68,25 @@ export type FormulaQuote = {
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
- * The main work at a size. Between sizes the owner priced, it goes on a straight line from one
- * to the next; past the biggest it carries on at the last step's rate; otherwise it's the rate.
+ * Whether the owner prices by size bands: some neighbouring sizes they priced came to the same
+ * price, like 23, 27 and 31 windows all at $290.
+ */
+export function pricesByBands(points: { size: number; cents: number }[]) {
+  return points.some(
+    (point, index) =>
+      index > 0 &&
+      point.size !== points[index - 1].size &&
+      Math.abs(point.cents - points[index - 1].cents) <= point.cents * 0.01,
+  );
+}
+
+/**
+ * The main work at a size, from the prices the owner charged at the sizes they've priced:
+ * - between two of them, on a straight line, or at the nearer one's price when they price by
+ *   size bands;
+ * - past the biggest, carrying on at their rate across everything they've priced;
+ * - below the smallest, scaled down from the smallest (a minimum still applies on top).
+ * With no prices at sizes, it's the rate.
  */
 export function mainWork(service: FormulaService, size: number): number | null {
   const points = [...service.points]
@@ -82,6 +99,7 @@ export function mainWork(service: FormulaService, size: number): number | null {
     const high = points[upper],
       low = points[Math.max(0, upper - 1)];
     if (high.size === low.size) return high.cents;
+    if (pricesByBands(points)) return size - low.size <= high.size - size ? low.cents : high.cents;
     return low.cents + ((high.cents - low.cents) * (size - low.size)) / (high.size - low.size);
   }
   if (first && last && points.length >= 2 && size > last.size) {
@@ -91,6 +109,7 @@ export function mainWork(service: FormulaService, size: number): number | null {
     const rate = slope > 0 ? slope : (service.rateCents ?? last.cents / last.size);
     return last.cents + rate * (size - last.size);
   }
+  if (first && size < first.size) return (first.cents * size) / first.size;
   if (service.rateCents) return service.rateCents * size;
   if (first) return (first.cents * size) / first.size;
   return null;
@@ -187,6 +206,46 @@ export function fitGaps(
       (Math.abs(priced.totalCents - example.totalCents) / example.totalCents) * 100,
     );
   });
+}
+
+/**
+ * Settles what the AI can't always tell from one example: whether a surcharge is a percent of the
+ * main work or a flat amount. Each is tried against the owner's own quotes, and the reading that
+ * gives them back better is kept. On a tie it's a percent, the usual way.
+ */
+export function refineFormula(
+  formula: PriceFormula,
+  examples: { parts: JobParts; totalCents: number }[],
+): PriceFormula {
+  const miss = (candidate: PriceFormula) =>
+    fitGaps(candidate, examples).reduce<number>((sum, gap) => sum + (gap ?? 100), 0);
+  let best = formula;
+  for (const [index, surcharge] of formula.surcharges.entries()) {
+    const mains = examples
+      .filter((example) => example.parts.surcharges.some((name) => same(name, surcharge.name)))
+      .map((example) => {
+        const service = best.services.find((item) => same(item.name, example.parts.service));
+        return service && example.parts.size ? mainWork(service, example.parts.size) : null;
+      })
+      .filter((cents): cents is number => cents !== null && cents > 0);
+    if (!mains.length) continue;
+    // Each job that had it gives one way to turn the amount into the other kind.
+    const others: FormulaSurcharge[] = [...new Set(mains)].map((main) =>
+      surcharge.percent !== null
+        ? { ...surcharge, percent: null, flatCents: Math.round((main * surcharge.percent) / 100) }
+        : { ...surcharge, percent: ((surcharge.flatCents ?? 0) / main) * 100, flatCents: null },
+    );
+    for (const other of others) {
+      const alternative = {
+        ...best,
+        surcharges: best.surcharges.map((item, at) => (at === index ? other : item)),
+      };
+      const [current, candidate] = [miss(best), miss(alternative)];
+      if (candidate < current || (candidate === current && other.percent !== null))
+        best = alternative;
+    }
+  }
+  return best;
 }
 
 /**

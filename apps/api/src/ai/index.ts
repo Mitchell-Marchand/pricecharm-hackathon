@@ -70,7 +70,8 @@ export function modelFor(operation: string): string | undefined {
  * Reasoning counts toward max_output_tokens, so each level carries room for it.
  */
 function metaReasoning(operation: string) {
-  if (operation === 'learn_formula') return { effort: 'medium', allowance: 12000 };
+  // Nine or ten quotes to explain at once can take Muse Spark well past a draft's reasoning.
+  if (operation === 'learn_formula') return { effort: 'medium', allowance: 32000 };
   return operation === 'draft_quote'
     ? { effort: 'medium', allowance: 6000 }
     : { effort: 'low', allowance: 2500 };

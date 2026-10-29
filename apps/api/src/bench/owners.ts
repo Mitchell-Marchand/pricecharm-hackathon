@@ -68,6 +68,11 @@ export type HiddenRules = {
   roundTo: number;
   /** Puts surcharges on their own lines, or folds them into the main price. */
   itemizes: boolean;
+  /**
+   * How far the owner's price for the main work strays from their own rate, job to job, as a
+   * share: real owners price by eye a little. Zero for an owner who follows their rules exactly.
+   */
+  wobble?: number;
 };
 
 export type SimOwner = {
@@ -247,21 +252,35 @@ function rulesFor(rng: Rng, tradeId: TradeId): HiddenRules {
   };
 }
 
-/** The owners: the same number in each trade, the same ones for the same seed. */
-export function simulatedOwners(seed: number, count: number): SimOwner[] {
+/**
+ * The owners: the same number in each trade, the same ones for the same seed. Messy owners are
+ * the same owners pricing by eye: each job's main work strays up to 2–8% from their own rate.
+ */
+export function simulatedOwners(seed: number, count: number, messy = false): SimOwner[] {
   const rng = seeded(seed);
+  // Its own sequence, so messy owners keep the same rules as tidy ones.
+  const eye = seeded(seed + 7777);
   const trades: TradeId[] = ['window-cleaning', 'pressure-washing', 'gutters'];
   return Array.from({ length: count }, (_, index) => {
     const tradeId = trades[index % trades.length];
     const names = NAMES[tradeId];
-    return {
+    const owner = {
       name: names[Math.floor(index / trades.length) % names.length],
       area: pick(rng, AREAS),
       tradeId,
       trade: TRADE_NAMES[tradeId],
       rules: rulesFor(rng, tradeId),
     };
+    const wobble = pick(eye, [0.02, 0.04, 0.06, 0.08]);
+    return messy ? { ...owner, rules: { ...owner.rules, wobble } } : owner;
   });
+}
+
+/** A number from -1 to 1 that's always the same for the same job, for how far the owner strays. */
+function jobWobble(job: SimJob) {
+  let hash = 2166136261;
+  for (const char of JSON.stringify(job)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return ((hash >>> 0) / 4294967295) * 2 - 1;
 }
 
 const rounded = (cents: number, to: number) => Math.max(to, Math.round(cents / to) * to);
@@ -286,7 +305,9 @@ export type OwnerQuote = {
 export function ownerQuote(owner: SimOwner, job: SimJob): OwnerQuote {
   const { rules } = owner;
   const main = rules.services.find((item) => item.name === job.service)!;
-  const base = workPrice(main, job.quantity);
+  const base = Math.round(
+    workPrice(main, job.quantity) * (1 + (rules.wobble ?? 0) * jobWobble(job)),
+  );
   const heavy = job.heavy ? Math.round(base * rules.heavy) : 0;
   const height = job.twoStory && main.height ? Math.round(base * rules.height) : 0;
   const lines: { label: string; amountCents: number }[] = [];

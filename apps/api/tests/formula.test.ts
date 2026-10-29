@@ -67,7 +67,7 @@ test('prices that don’t scale evenly follow the owner’s own prices at each s
   };
   assert.equal(mainWork(service, 700), 14500, 'Between two sizes it priced');
   assert.equal(mainWork(service, 1200), 22000, 'Past the biggest, at the last step’s rate');
-  assert.equal(mainWork(service, 200), 4000, 'Below the smallest, the rate');
+  assert.equal(mainWork(service, 200), 5000, 'Below the smallest, scaled down from it');
 });
 
 test('a formula is trusted only when it gives back nearly all the owner’s own prices', () => {
@@ -95,4 +95,46 @@ test('rounding is what every amount the owner wrote shares', async () => {
   assert.equal(ownerRounding([12500, 30000, 5000]), 2500);
   assert.equal(ownerRounding([14000, 8500, 15000]), 500);
   assert.equal(ownerRounding([14000, 8550]), 1);
+});
+
+test('an owner who prices by size bands is priced at the nearer size they charged', async () => {
+  const { mainWork } = await import('../src/pricing/formula.js');
+  const bands = {
+    name: 'Interior windows',
+    unit: 'windows',
+    rateCents: null,
+    points: [
+      { size: 23, cents: 22000 },
+      { size: 27, cents: 22000 },
+      { size: 40, cents: 35000 },
+    ],
+    minimumCents: null,
+  };
+  assert.equal(mainWork(bands, 31), 22000, 'Nearer 27 than 40');
+  assert.equal(mainWork(bands, 37), 35000);
+  assert.equal(mainWork(bands, 10), (22000 * 10) / 23, 'Below the smallest, scaled down from it');
+});
+
+test('a surcharge is read as a percent or a flat amount, whichever gives back the owner’s quotes', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  const flatFormula = {
+    ...formula,
+    surcharges: [{ name: 'Second story', when: 'two-story', percent: null, flatCents: 6000 }],
+    roundToCents: 100,
+    minimumCents: null,
+  };
+  // The owner adds 30%: $60 on 25 windows, $96 on 40.
+  const tall = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: ['Second story'],
+    addOns: [],
+    otherServices: [],
+  });
+  const refined = refineFormula(flatFormula, [
+    { parts: tall(25), totalCents: 26000 },
+    { parts: tall(40), totalCents: 41600 },
+  ]);
+  assert.equal(refined.surcharges[0].flatCents, null);
+  assert.equal(Math.round(refined.surcharges[0].percent ?? 0), 30);
 });
