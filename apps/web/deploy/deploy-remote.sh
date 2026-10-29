@@ -23,7 +23,8 @@ rollback() {
   if [[ -n "$previous_release" && -d "$previous_release" && -f "$previous_release/deploy/ecosystem.config.cjs" ]]; then
     ln -sfn "$previous_release" "$app_root/.current-rollback"
     mv -Tf "$app_root/.current-rollback" "$app_root/current"
-    pm2 startOrReload "$previous_release/deploy/ecosystem.config.cjs" --update-env || true
+    pm2 delete quotient-web >/dev/null 2>&1 || true
+    pm2 start "$previous_release/deploy/ecosystem.config.cjs" || true
   else
     pm2 delete quotient-web >/dev/null 2>&1 || true
     [[ -L "$app_root/current" ]] && rm "$app_root/current"
@@ -33,7 +34,9 @@ rollback() {
 trap rollback ERR
 ln -sfn "$release_dir" "$app_root/.current-next"
 mv -Tf "$app_root/.current-next" "$app_root/current"
-pm2 startOrReload "$release_dir/deploy/ecosystem.config.cjs" --update-env
+# A reload keeps the folder PM2 first started the app in, so it would rerun the old release.
+pm2 delete quotient-web >/dev/null 2>&1 || true
+pm2 start "$release_dir/deploy/ecosystem.config.cjs"
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused --retry-all-errors --max-time 5 http://127.0.0.1:3100/ >/dev/null
 pm2 save
 trap - ERR

@@ -46,7 +46,8 @@ rollback() {
   if [[ -n "$previous_config" ]]; then
     ln -sfn "$previous_release" "$app_root/.current-rollback"
     mv -Tf "$app_root/.current-rollback" "$app_root/current"
-    pm2 startOrReload "$previous_config" --update-env || true
+    pm2 delete quotient-api quotient-worker >/dev/null 2>&1 || true
+    pm2 start "$previous_config" || true
   else
     pm2 delete quotient-api quotient-worker >/dev/null 2>&1 || true
     [[ -L "$app_root/current" ]] && rm "$app_root/current"
@@ -56,7 +57,9 @@ rollback() {
 trap rollback ERR
 ln -sfn "$release_dir" "$app_root/.current-next"
 mv -Tf "$app_root/.current-next" "$app_root/current"
-pm2 startOrReload "$api_dir/deploy/ecosystem.config.cjs" --update-env
+# A reload keeps the folder PM2 first started the app in, so it would rerun the old release.
+pm2 delete quotient-api quotient-worker >/dev/null 2>&1 || true
+pm2 start "$api_dir/deploy/ecosystem.config.cjs"
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused --retry-all-errors --max-time 5 http://127.0.0.1:4100/ready >/dev/null
 node --input-type=module - "$(basename "$release_dir")" <<'NODE'
 try {
