@@ -357,6 +357,18 @@ function paidPeriodEnd(subscription: Stripe.Subscription): number | undefined {
 }
 
 /**
+ * What a price on the quote meter charges for each quote, or null when it isn't one amount. The
+ * accepted-quote plan's price is two $0 tiers: Checkout shows a flat $0 price as "$0.00 per unit",
+ * but tiers as "Price varies", under the plan's 1% terms, with the tiers folded away.
+ */
+export function centsPerQuote(price: Stripe.Price): number | null {
+  if (price.billing_scheme !== 'tiered') return price.unit_amount;
+  const amounts = new Set(price.tiers?.map((tier) => (tier.flat_amount ? -1 : tier.unit_amount)));
+  const [amount] = amounts;
+  return amounts.size === 1 && amount !== undefined && amount !== -1 ? amount : null;
+}
+
+/**
  * A plan's Stripe prices must match what the pricing page says, so a mistyped price fails closed
  * instead of charging something else.
  */
@@ -372,11 +384,11 @@ async function validatePlanPrices(plan: Plan): Promise<void> {
       : plan === 'per_accepted'
         ? 0
         : pricing.subscription.overageCents;
-  const metered = await stripe.prices.retrieve(prices.metered);
+  const metered = await stripe.prices.retrieve(prices.metered, { expand: ['tiers'] });
   if (
     !metered.active ||
     metered.currency !== 'usd' ||
-    metered.unit_amount !== perQuote ||
+    centsPerQuote(metered) !== perQuote ||
     metered.recurring?.usage_type !== 'metered' ||
     metered.recurring.interval !== 'month' ||
     !metered.recurring.meter
@@ -424,7 +436,7 @@ function checkoutTerms(plan: Plan): string {
   if (plan === 'per_quote')
     return `${dollars(pricing.perQuoteCents)} for each quote a customer gets from you, billed monthly. Nothing today.`;
   if (plan === 'per_accepted')
-    return `${accepted.basisPoints / 100}% of each quote a customer accepts, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)}, billed monthly. Nothing if they say no, and nothing today.`;
+    return `Nothing today. Each month, your card is billed ${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.`;
   return `Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.`;
 }
 
@@ -495,47 +507,40 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     // An open checkout is reused only if it's for the plan they've chosen now.
     if (account.checkout_session_id) {
       const existing = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id));
-      if (existing.status === 'open' && existing.url && existing.metadata?.plan === plan)
+      if (
+        existing.status === 'open' &&
+        existing.url &&
+        existing.mode === 'subscription' &&
+        existing.metadata?.plan === plan
+      )
         return existing.url;
     }
     const prices = planPrices(plan);
     const freeWeek = isSubscription(plan) && !account.trial_used_at;
-    const shared = {
-      customer: customerId,
-      client_reference_id: context.businessId,
-      metadata: { plan },
-      // A monthly bill for a business: no buy-now-pay-later or app wallets.
-      allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
-      custom_text: { submit: { message: checkoutTerms(plan) } },
-      success_url: `${appOrigin()}${back}?billing=active`,
-      cancel_url: `${appOrigin()}${back}`,
-    } satisfies Stripe.Checkout.SessionCreateParams;
     const checkout = await stripe.checkout.sessions.create(
-      plan === 'per_accepted'
-        ? // Stripe would show this plan as $0 a quote, so Checkout only saves the card, under the
-          // plan's terms, and reconciliation starts the subscription.
-          {
-            ...shared,
-            mode: 'setup',
-            currency: 'usd',
-            setup_intent_data: { metadata: { businessId: context.businessId, plan } },
-          }
-        : {
-            ...shared,
-            mode: 'subscription',
-            // Checkout can't mix billing intervals, so the yearly plan starts on its own price
-            // and reconciliation adds the monthly quote price before any quote goes out.
-            line_items: [
-              ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-              ...(plan === 'yearly' ? [] : [{ price: prices.metered }]),
-            ],
-            subscription_data: {
-              // Usage from before a plan switch is billed at the old price, not dropped.
-              billing_mode: { type: 'flexible' },
-              metadata: { businessId: context.businessId, plan },
-              ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
-            },
-          },
+      {
+        mode: 'subscription',
+        customer: customerId,
+        // Checkout can't mix billing intervals, so the yearly plan starts on its own price and
+        // reconciliation adds the monthly quote price before any quote goes out.
+        line_items: [
+          ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
+          ...(plan === 'yearly' ? [] : [{ price: prices.metered }]),
+        ],
+        client_reference_id: context.businessId,
+        metadata: { plan },
+        // A monthly bill for a business: no buy-now-pay-later or app wallets.
+        allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
+        custom_text: { submit: { message: checkoutTerms(plan) } },
+        subscription_data: {
+          // Usage from before a plan switch is billed at the old price, not dropped.
+          billing_mode: { type: 'flexible' },
+          metadata: { businessId: context.businessId, plan },
+          ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
+        },
+        success_url: `${appOrigin()}${back}?billing=active`,
+        cancel_url: `${appOrigin()}${back}`,
+      },
       {
         idempotencyKey: `quotient-checkout:${context.businessId}:${plan}:${Math.floor(Date.now() / 3600000)}`,
       },
@@ -787,56 +792,10 @@ export const stripeWebhook: RequestHandler = async (req, res) => {
   res.json(ok({ received: true }));
 };
 
-/**
- * Starts the subscription for a card saved in Checkout without one (the accepted-quote plan). Only
- * once, and only on the plan the card was saved for: if the owner has moved on, nothing starts.
- */
-async function startSavedCardSubscription(
-  account: RowDataPacket,
-  customerId: string,
-  subscriptions: Stripe.Subscription[],
-): Promise<Stripe.Subscription | null> {
-  if (!account.checkout_session_id || subscriptions.some((item) => isPaying(item.status)))
-    return null;
-  const stripe = stripeClient();
-  const session = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id), {
-    expand: ['setup_intent'],
-  });
-  const plan = session.metadata?.plan ?? '',
-    setupIntent = session.setup_intent as Stripe.SetupIntent | null,
-    card = setupIntent?.payment_method;
-  if (
-    session.mode !== 'setup' ||
-    session.status !== 'complete' ||
-    plan !== account.plan ||
-    !card ||
-    subscriptions.some((item) => item.created >= session.created)
-  )
-    return null;
-  const paymentMethod = typeof card === 'string' ? card : card.id;
-  await stripe.customers.update(customerId, {
-    invoice_settings: { default_payment_method: paymentMethod },
-  });
-  const prices = planPrices(plan as Plan);
-  return stripe.subscriptions.create(
-    {
-      customer: customerId,
-      items: [
-        ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-        { price: prices.metered },
-      ],
-      default_payment_method: paymentMethod,
-      billing_mode: { type: 'flexible' },
-      metadata: { businessId: String(account.business_id), plan },
-    },
-    { idempotencyKey: `quotient-subscription:${session.id}` },
-  );
-}
-
 export async function reconcileStripeCustomer(customerId: string): Promise<void> {
   if (billingProvider() !== 'stripe') return;
   const [account] = await rows(
-    'SELECT business_id,plan,checkout_session_id FROM billing_accounts WHERE stripe_customer_id=?',
+    'SELECT business_id,plan FROM billing_accounts WHERE stripe_customer_id=?',
     [customerId],
   );
   if (!account) return;
@@ -845,8 +804,6 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
   const subscriptions = (
     await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
   ).data;
-  const started = await startSavedCardSubscription(account, customerId, subscriptions);
-  if (started) subscriptions.push(started);
   const current = [...subscriptions].sort((a, b) => {
     const score = (status: string) =>
       status === 'active' ? 3 : status === 'trialing' ? 2 : status === 'past_due' ? 1 : 0;

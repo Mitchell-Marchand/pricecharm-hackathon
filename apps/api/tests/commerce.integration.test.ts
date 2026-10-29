@@ -726,7 +726,16 @@ test(
         price(cents, { usage_type: 'metered', interval: 'month', meter: 'meter_quotes' });
       const prices: Record<string, unknown> = {
         price_per_quote_mock: perQuote(200),
-        price_per_accepted_mock: perQuote(0),
+        // Two $0 tiers, so Checkout says "Price varies" instead of "$0.00 per unit".
+        price_per_accepted_mock: {
+          ...perQuote(0),
+          unit_amount: null,
+          billing_scheme: 'tiered',
+          tiers: [
+            { up_to: 1, unit_amount: 0, flat_amount: null },
+            { up_to: null, unit_amount: 0, flat_amount: null },
+          ],
+        },
         price_extra_quotes_mock: perQuote(100),
         price_monthly_mock: price(4900, { usage_type: 'licensed', interval: 'month' }),
         price_yearly_mock: price(49900, { usage_type: 'licensed', interval: 'year' }),
@@ -756,6 +765,7 @@ test(
       }) as any;
       stripe.checkout.sessions.retrieve = (async () => ({
         status: 'open',
+        mode: 'subscription',
         url: 'https://checkout.stripe.com/mock-only',
         metadata: { plan: 'monthly' },
       })) as any;
@@ -806,18 +816,16 @@ test(
       assert.equal(sessions.per_quote.mode, 'subscription');
       assert.deepEqual(sessions.per_quote.line_items, [{ price: 'price_per_quote_mock' }]);
       assert.equal(sessions.per_quote.subscription_data.trial_period_days, undefined);
-      // Stripe can't show 1% of a job as a price, so that plan's Checkout only saves the card,
-      // under the plan's terms in our words.
+      // 1% of a job isn't a price per quote, so that plan subscribes to its $0 quote price, under
+      // the plan's terms in our words.
       await pick('per_accepted');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
-      assert.deepEqual(
-        [sessions.per_accepted.mode, sessions.per_accepted.currency],
-        ['setup', 'usd'],
-      );
-      assert.equal(sessions.per_accepted.line_items, undefined);
+      assert.equal(sessions.per_accepted.mode, 'subscription');
+      assert.deepEqual(sessions.per_accepted.line_items, [{ price: 'price_per_accepted_mock' }]);
+      assert.equal(sessions.per_accepted.subscription_data.trial_period_days, undefined);
       assert.equal(
         sessions.per_accepted.custom_text.submit.message,
-        '1% of each quote a customer accepts, at least $1 and at most $25, billed monthly. Nothing if they say no, and nothing today.',
+        'Nothing today. Each month, your card is billed 1% of the quotes customers accepted, at least $1 and at most $25 each. No accepted quotes, no bill.',
       );
       await pick('monthly');
       assert.equal(
@@ -967,84 +975,6 @@ test(
       ]);
       assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), yearEnd);
 
-      // A card saved for the accepted-quote plan starts its subscription once, on that plan only.
-      await mutate(
-        "UPDATE billing_accounts SET plan='per_accepted',checkout_session_id='cs_setup_mock',stripe_subscription_id=NULL,subscription_status='cancelled' WHERE business_id=?",
-        [businessId],
-      );
-      stripe.checkout.sessions.retrieve = (async (id: string, params: any) => {
-        assert.deepEqual([id, params], ['cs_setup_mock', { expand: ['setup_intent'] }]);
-        return {
-          id,
-          mode: 'setup',
-          status: 'complete',
-          created: 1000,
-          metadata: { plan: 'per_accepted' },
-          setup_intent: { payment_method: 'pm_mock' },
-        };
-      }) as any;
-      const defaults: any[] = [],
-        starts: any[] = [];
-      stripe.customers.update = (async (id: string, params: any) => {
-        defaults.push([id, params]);
-        return {};
-      }) as any;
-      const winSubscription = {
-        id: 'sub_win_mock',
-        status: 'active',
-        created: 2000,
-        cancel_at_period_end: false,
-        items: {
-          data: [
-            {
-              id: 'si_win',
-              price: { id: 'price_per_accepted_mock' },
-              current_period_end: monthEnd,
-            },
-          ],
-        },
-      };
-      stripe.subscriptions.create = (async (params: any, options: any) => {
-        starts.push({ params, key: options.idempotencyKey });
-        return winSubscription;
-      }) as any;
-      stripe.subscriptions.list = (async () => ({ data: [] })) as any;
-      await reconcileStripeCustomer(`cus_${suffix}`);
-      assert.deepEqual(starts, [
-        {
-          params: {
-            customer: `cus_${suffix}`,
-            items: [{ price: 'price_per_accepted_mock' }],
-            default_payment_method: 'pm_mock',
-            billing_mode: { type: 'flexible' },
-            metadata: { businessId, plan: 'per_accepted' },
-          },
-          key: 'quotient-subscription:cs_setup_mock',
-        },
-      ]);
-      assert.deepEqual(defaults, [
-        [`cus_${suffix}`, { invoice_settings: { default_payment_method: 'pm_mock' } }],
-      ]);
-      const [win] = await rows(
-        'SELECT stripe_subscription_id,subscription_status FROM billing_accounts WHERE business_id=?',
-        [businessId],
-      );
-      assert.deepEqual(
-        [win.stripe_subscription_id, win.subscription_status],
-        ['sub_win_mock', 'active'],
-      );
-      assert.equal(added.length, 1, 'It starts with its quote price; nothing is added');
-      // Cancelled later, it isn't started again; and a card saved for another plan starts nothing.
-      stripe.subscriptions.list = (async () => ({
-        data: [{ ...winSubscription, status: 'canceled' }],
-      })) as any;
-      await reconcileStripeCustomer(`cus_${suffix}`);
-      await mutate("UPDATE billing_accounts SET plan='per_quote' WHERE business_id=?", [
-        businessId,
-      ]);
-      stripe.subscriptions.list = (async () => ({ data: [] })) as any;
-      await reconcileStripeCustomer(`cus_${suffix}`);
-      assert.equal(starts.length, 1);
       await mutate(
         "UPDATE billing_accounts SET plan='yearly',checkout_session_id=NULL WHERE business_id=?",
         [businessId],

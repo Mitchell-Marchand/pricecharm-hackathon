@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import Stripe from 'stripe';
-import { dollars, publicPricing } from './billing.js';
+import { centsPerQuote, dollars, publicPricing } from './billing.js';
 
 /**
  * Creates PriceCharm's products, prices and quote meter in the Stripe account the key belongs to,
@@ -55,11 +55,18 @@ async function price(
   unitAmount: number,
   recurring: Stripe.PriceCreateParams.Recurring,
 ): Promise<string> {
-  const [existing] = (await stripe.prices.list({ lookup_keys: [lookupKey], limit: 1 })).data;
+  const [existing] = (
+    await stripe.prices.list({ lookup_keys: [lookupKey], limit: 1, expand: ['data.tiers'] })
+  ).data;
+  // A $0 quote price is two $0 tiers, which Checkout shows as "Price varies", not "$0.00 per unit",
+  // under the accepted-quote plan's 1% terms. One tier would list its $0 lines in plain view.
+  const tiered = unitAmount === 0 && recurring.usage_type === 'metered';
   if (
     existing?.active &&
     existing.product === productId &&
-    existing.unit_amount === unitAmount &&
+    existing.billing_scheme === (tiered ? 'tiered' : 'per_unit') &&
+    (!tiered || existing.tiers?.length === 2) &&
+    centsPerQuote(existing) === unitAmount &&
     existing.recurring?.interval === recurring.interval &&
     existing.recurring.usage_type === (recurring.usage_type ?? 'licensed') &&
     (existing.recurring.meter ?? undefined) === recurring.meter
@@ -68,7 +75,16 @@ async function price(
   const created = await stripe.prices.create({
     product: productId,
     currency: 'usd',
-    unit_amount: unitAmount,
+    ...(tiered
+      ? {
+          billing_scheme: 'tiered' as const,
+          tiers_mode: 'graduated' as const,
+          tiers: [
+            { up_to: 1, unit_amount: 0 },
+            { up_to: 'inf' as const, unit_amount: 0 },
+          ],
+        }
+      : { unit_amount: unitAmount }),
     recurring,
     lookup_key: lookupKey,
     transfer_lookup_key: Boolean(existing),
@@ -87,7 +103,7 @@ async function main() {
   });
   const perAccepted = await product('pricecharm-per-accepted', {
     name: 'Pay when you win',
-    description: `${accepted.basisPoints / 100}% of each quote a customer accepts, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)}. Each one is its own line on the invoice.`,
+    description: `You pay only when a customer accepts a quote: ${accepted.basisPoints / 100}% of the job, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)}. Nothing when they say no.`,
   });
   const extraQuotes = await product('pricecharm-extra-quotes', {
     name: 'Extra quotes',
