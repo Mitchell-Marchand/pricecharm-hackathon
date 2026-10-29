@@ -167,8 +167,8 @@ export function Landing() {
                   <p className="font-mono text-sm text-muted">Step 3</p>
                   <h3 className="t-h2 mt-1">Practice with a customer</h3>
                   <p className="mt-2 text-ink-2">
-                    A pretend customer sends a real-looking request with photos. You ask questions and send a quote. Three of
-                    these and it's trained.
+                    A pretend customer sends a request with photos/videos. You ask questions
+                    you want, then send a quote. Train it a few times.
                   </p>
                 </div>
               </li>
@@ -178,7 +178,7 @@ export function Landing() {
 
         <section className="gutter mx-auto grid max-w-6xl items-center gap-14 py-20 md:grid-cols-2">
           <div className="max-w-md">
-            <h2 className="t-h1">Your customers get a real quote in about two minutes.</h2>
+            <h2 className="t-h1">Your customers get a real quote instantly.</h2>
             <ul className="mt-8 flex flex-col gap-4 text-ink-2">
               {[
                 { icon: MessageSquareText, text: 'Asks the questions you would ask, one at a time' },

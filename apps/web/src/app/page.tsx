@@ -106,8 +106,8 @@ export default async function LandingPage() {
                   <p className="font-mono text-sm text-muted">Step 3</p>
                   <h3 className="t-h2 mt-1">Practice quotes</h3>
                   <p className="mt-2 text-ink-2">
-                    A pretend customer sends a real-looking request with photos. You ask questions
-                    and send a quote. Train it as much as you want.
+                    A pretend customer sends a request with photos/videos. You ask questions
+                    you want, then send a quote. Train it a few times.
                   </p>
                 </div>
               </li>
@@ -122,7 +122,7 @@ export default async function LandingPage() {
           <DemoExplorer
             intro={
               <>
-                <h2 className="t-h1">Your customers get a real quote in about two minutes.</h2>
+                <h2 className="t-h1">Your customers get a real quote instantly.</h2>
                 <p className="mt-5 text-lg text-ink-2">
                   Try it as a customer. Pick an industry, answer a few questions and see the quote
                   they get. The prices are samples; yours come from your own jobs.
