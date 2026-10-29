@@ -156,6 +156,41 @@ test('a quote draft that runs long is clipped, not thrown away', async () => {
   );
 });
 
+test('the generic baseline sees the job but none of the owner’s history, and always prices it', async () => {
+  const { draftGenericQuote } = await import('../src/ai/quote-engine.js');
+  let requestBody: any;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return response({
+      decision: 'site_visit',
+      reason: 'Would want to see it',
+      lines: [{ label: 'Driveway, 600 sq ft', amountCents: 18000 }],
+      discountKind: 'percent',
+      discountValue: 10,
+      discountReason: 'First job',
+      start: '',
+      duration: '',
+      confidence: 'medium',
+      reasoning: 'Typical local rate.',
+    });
+  };
+  const drafted = await draftGenericQuote({
+    business: { trade: 'Pressure washing', services: ['Driveways'], area: 'Raleigh, NC' },
+    request: {
+      serviceName: 'Driveways',
+      conversation: [{ from: 'customer', text: 'Two-car driveway, pretty dirty.' }],
+      details: '600 sq ft',
+    },
+    images: [],
+  });
+  const sent = requestBody.input[0].content[0].text;
+  assert.match(sent, /600 sq ft/);
+  assert.doesNotMatch(sent, /pastJobs|practice|liveQuotes|rates/);
+  assert.equal(drafted.decision, 'quote', 'Every job gets a price to compare');
+  assert.equal(drafted.discount, null);
+  assert.equal(drafted.lines[0].amountCents, 18000);
+});
+
 test('explicit transient failure is retried once, with no demo fallback', async () => {
   let attempts = 0;
   globalThis.fetch = async () => {

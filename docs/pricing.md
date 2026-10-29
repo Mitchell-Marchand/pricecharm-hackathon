@@ -73,3 +73,34 @@ npm run replay --workspace @pricecharm/api -- --model gpt-5 --limit 20
 ```
 
 It calls the model once per quote, so it costs money. With `AI_PROVIDER=demo` it measures the rate card alone, for free, which is the baseline a model has to beat.
+
+Add `--generic` to price each one a second way too: the same model with none of the business's history, which is what a capable AI that doesn't know the owner would charge.
+
+## Proving it
+
+`npm run proof` is the one report marketing quotes. It won't give a percentage from fewer than 20 jobs or videos; below that it gives counts.
+
+```sh
+npm run proof --workspace @pricecharm/api                          # drafts owners checked, free
+npm run proof --workspace @pricecharm/api -- --replay --limit 20   # against a generic AI, two model calls a job
+npm run proof --workspace @pricecharm/api -- --videos ~/sam-bench  # SAM against hand counts, Meta only
+```
+
+1. **Drafts owners checked.** Each draft as it was made, before the owner priced the job, against what the owner charged: real quotes the owner reviewed before sending, and the AI's guess on each practice customer. Nothing is re-run, so it's free.
+2. **Against a generic AI.** Every job an owner priced, drafted again by their Charm (from only what the business had taught it before that job) and by the same model with none of their prices. Both are held to their best price, so a Charm that would have asked to see the job first still counts with the lines it gave. It says on how many jobs each one came closer to the owner.
+3. **Counting from video.** Each video goes through the same measuring as a customer's walk-around. The report compares SAM's count, and Muse Spark's count from watching it, with a hand count. The folder holds the videos and a `counts.json`:
+
+```json
+[{ "file": "front-of-house.mp4", "trade": "window cleaning", "service": "Exterior windows", "counts": { "windows": 11 } }]
+```
+
+Film these ourselves; customers' videos aren't ours to use for this. Count by hand from the video, each window once.
+
+It lists how many jobs each business adds, with its id. Leave out our own test accounts with `--skip <id,id>`, or look at one business with `--business <id>`. `--json <file>` saves the numbers. On the server, run it from the live release. Give it the shared uploads folder, which PM2 normally passes in, so the replay sees customers' photos:
+
+```sh
+cd /srv/quotient-api/current/apps/api
+UPLOAD_DIR=/srv/quotient-api/shared/uploads npm run proof:production -- --replay
+```
+
+It prints business names and numbers, never customer details.

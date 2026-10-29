@@ -19,6 +19,8 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\" package.json tsconfig.json .prettierrc.json \"deploy/*.cjs\"",
     "ops": "node --import tsx src/ops.ts",
     "replay": "node --import tsx src/replay.ts",
+    "proof": "node --import tsx src/proof.ts",
+    "proof:production": "node dist/proof.js",
     "ops:production": "node dist/ops.js --http",
     "stripe:setup": "node --import tsx src/stripe-setup.ts"
   },
