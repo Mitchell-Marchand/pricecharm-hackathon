@@ -807,10 +807,7 @@ test(
       await pick('yearly');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
       assert.deepEqual(sessions.yearly.line_items, [{ price: 'price_yearly_mock', quantity: 1 }]);
-      // $2 a quote, with nothing up front.
-      await mutate('DELETE FROM auth_rate_limits WHERE bucket_key=?', [
-        hashToken(`billing-checkout:${businessId}`),
-      ]);
+      // $2 a quote, with nothing up front. Trying plan after plan isn't stopped as abuse.
       await pick('per_quote');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
       assert.equal(sessions.per_quote.mode, 'subscription');

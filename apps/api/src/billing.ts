@@ -452,7 +452,8 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     from: from ?? 'settings',
   });
   // Confirming the email isn't needed first: it's asked for, never in the way of going live.
-  await consumeAuthRateLimit(`billing-checkout:${context.businessId}`, 5, 3600000);
+  // Owners try a few plans before picking one, so this only stops a script.
+  await consumeAuthRateLimit(`billing-checkout:${context.businessId}`, 30, 3600000);
   if (billingProvider() === 'local') {
     await transaction(async (connection) => {
       const account = await ensureBillingAccount(context.businessId, connection);
