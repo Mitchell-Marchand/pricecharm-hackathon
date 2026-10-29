@@ -1,4 +1,4 @@
-import { createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
@@ -11,7 +11,7 @@ import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { hashingSecret } from '../config.js';
 import { settingsFromRow } from '../charm.js';
-import { mailProvider, ownerReplyTo, queueEmail } from '../integrations/email.js';
+import { ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
@@ -283,7 +283,7 @@ export async function chatView(business: Row, chat: Row) {
     contact: {
       name: String(chat.customer_name),
       email: chat.customer_email ? String(chat.customer_email) : null,
-      verified: Boolean(chat.contact_verified_at),
+      phone: chat.customer_phone ? String(chat.customer_phone) : null,
     },
     quote: visible
       ? {
@@ -328,7 +328,10 @@ function withChatUsage<T>(req: Request, business: Row, chat: Row, task: () => Pr
       );
 }
 
-/** The assistant's next message while it's still gathering details. */
+/**
+ * The assistant's next message while it's still gathering details. Once it has enough, the quote
+ * is drafted straight away, unless the owner asks for contact details before the price shows.
+ */
 async function runIntake(req: Request, business: Row, chat: Row) {
   const messages = await rows(
     "SELECT sender,text FROM lead_messages WHERE chat_id=? AND kind='text' AND sender IN ('customer','assistant') ORDER BY created_at,id",
@@ -360,6 +363,11 @@ async function runIntake(req: Request, business: Row, chat: Row) {
       await chatImages(String(business.id), String(chat.id)),
     ),
   );
+  const next = !turn.ready
+    ? 'chatting'
+    : business.contact_first && !hasContact(chat)
+      ? 'contact'
+      : 'quoting';
   await transaction(async (connection) => {
     await addMessage(connection, {
       businessId: String(business.id),
@@ -369,19 +377,20 @@ async function runIntake(req: Request, business: Row, chat: Row) {
       chips: turn.chips,
     });
     await mutate(
-      "UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=IF(?,'contact',status) WHERE id=?",
+      'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=? WHERE id=?',
       [
         turn.serviceName,
         turn.ready,
         turn.summary,
         turn.outOfScope,
         JSON.stringify(turn.spec),
-        turn.ready,
+        next,
         chat.id,
       ],
       connection,
     );
   });
+  if (next === 'quoting') await prepareLiveQuote(req, String(business.id), String(chat.id));
 }
 
 export async function customerMessage(req: Request, text: string) {
@@ -419,154 +428,185 @@ export async function afterPhoto(req: Request, photoId: string) {
   return chatView(fresh.business, fresh.chat);
 }
 
-function hashCode(value: string): string {
-  const key = process.env.MAIL_ENCRYPTION_KEY || 'quotient-local-contact-code-pepper';
-  if (process.env.NODE_ENV === 'production' && !process.env.MAIL_ENCRYPTION_KEY)
-    throw new Error('Contact verification requires a production identity secret.');
-  const context = createHmac('sha256', key).update('quotient-chat-verification-v1').digest();
-  return createHmac('sha256', context).update(value).digest('hex');
-}
-
 const emailSchema = z
   .email()
   .max(254)
   .transform((value) => value.trim().toLowerCase());
 
-/** "Where should I send your quote?" Sends a code to confirm the email is theirs. */
-export async function requestContact(
-  req: Request,
-  input: { name: string; email: string },
-  exposeCode: boolean,
-) {
-  const email = emailSchema.parse(input.email);
-  if (isDisposableEmail(email))
+export type ContactInput = { name: string; email?: string; phone?: string };
+type Contact = { name: string; email: string | null; phone: string | null };
+
+/**
+ * A customer's name and a way to reach them: an email, a phone number, or both. Nothing is sent
+ * to check them first. Customers leave them when they want to hear back.
+ */
+export function parseContact(input: ContactInput): Contact {
+  const typedEmail = input.email?.trim() ?? '',
+    typedPhone = input.phone?.trim() ?? '';
+  const email = typedEmail ? emailSchema.safeParse(typedEmail) : null;
+  if (email && !email.success)
+    throw new ApiError(422, 'EMAIL_INVALID', 'That email doesn’t look right.');
+  if (email?.data && isDisposableEmail(email.data))
     throw new ApiError(
       422,
       'DISPOSABLE_EMAIL',
       'Please use an email address you’ll keep. Your quote will be sent there.',
     );
-  const { business, chat } = await chatAccess(req);
-  if (chat.status !== 'contact' && chat.status !== 'chatting')
-    throw new ApiError(409, 'CHAT_DONE', 'Your quote is already on its way.');
-  await mutate('UPDATE lead_chats SET customer_name=? WHERE id=?', [input.name, chat.id]);
-  if (chat.source === 'test') {
-    // The owner is testing their own link: no code, no email, straight to the quote.
-    await mutate(
-      "UPDATE lead_chats SET customer_email=?,contact_verified_at=UTC_TIMESTAMP(3),status='quoting' WHERE id=?",
-      [email, chat.id],
+  const digits = typedPhone.replace(/\D/g, '');
+  if (
+    typedPhone &&
+    (!/^\+?[\d\s().-]+$/.test(typedPhone) || digits.length < 7 || digits.length > 15)
+  )
+    throw new ApiError(422, 'PHONE_INVALID', 'That phone number doesn’t look right.');
+  if (!email?.data && !typedPhone)
+    throw new ApiError(
+      422,
+      'CONTACT_REQUIRED',
+      'Add a phone number or an email so they can reach you.',
     );
-    await prepareLiveQuote(req, String(business.id), String(chat.id));
-    const fresh = await chatAccess(req);
-    return {
-      verificationId: null,
-      devCode: undefined,
-      chat: await chatView(fresh.business, fresh.chat),
-    };
-  }
-  await consumeAuthRateLimit(`chat-contact-ip:${req.ip}`, 20, 3_600_000);
-  const verificationId = randomUUID(),
-    code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-  await transaction(async (connection) => {
-    const recent = await rows(
-      'SELECT created_at FROM contact_verifications WHERE business_id=? AND session_id=? AND created_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 15 MINUTE) ORDER BY created_at DESC FOR UPDATE',
-      [business.id, chat.id],
-      connection,
-    );
-    if (
-      recent.length >= 3 ||
-      (recent[0] && new Date(recent[0].created_at).getTime() > Date.now() - 30_000)
-    )
-      throw new ApiError(
-        429,
-        'CODE_RATE_LIMIT',
-        'Please wait a moment before asking for another code.',
-      );
-    await mutate(
-      'UPDATE contact_verifications SET used_at=UTC_TIMESTAMP(3) WHERE business_id=? AND session_id=? AND used_at IS NULL',
-      [business.id, chat.id],
-      connection,
-    );
-    await mutate(
-      'INSERT INTO contact_verifications(id,business_id,session_id,email,code_hash,expires_at) VALUES (?,?,?,?,?,?)',
-      [
-        verificationId,
-        business.id,
-        chat.id,
-        email,
-        hashCode(`${verificationId}:${chat.id}:${email}:${code}`),
-        new Date(Date.now() + 10 * 60_000),
-      ],
-      connection,
-    );
-    await queueEmail(
-      {
-        businessId: String(business.id),
-        dedupeKey: `chat-code:${verificationId}`,
-        to: email,
-        replyTo: await ownerReplyTo(String(business.id), connection),
-        fromName: String(business.name),
-        subject: `Your code for ${business.name}`,
-        text: `Your code is ${code}. Enter it to see your quote from ${business.name}. It works for 10 minutes.\n\nIf you didn’t ask for a quote, you can ignore this email.`,
-      },
-      connection,
-    );
-  });
-  return {
-    verificationId,
-    devCode: mailProvider() === 'local' && exposeCode ? code : undefined,
-    chat: null,
-  };
+  return { name: input.name.trim(), email: email?.data ?? null, phone: typedPhone || null };
 }
 
-/** The customer enters their code. Then the quote is drafted and checked. */
-export async function verifyContact(req: Request, input: { verificationId: string; code: string }) {
-  const verified = await transaction(async (connection) => {
-    const { chat } = await chatAccess(req, connection, true);
-    const [item] = await rows(
-      'SELECT * FROM contact_verifications WHERE id=? AND business_id=? AND session_id=? FOR UPDATE',
-      [input.verificationId, chat.business_id, chat.id],
-      connection,
-    );
-    if (
-      !item ||
-      item.used_at ||
-      Number(item.attempts) >= 5 ||
-      new Date(item.expires_at).getTime() <= Date.now()
-    )
-      return false;
-    await mutate(
-      'UPDATE contact_verifications SET attempts=attempts+1 WHERE id=?',
-      [item.id],
-      connection,
-    );
-    const expected = Buffer.from(String(item.code_hash), 'hex');
-    const actual = Buffer.from(
-      hashCode(`${item.id}:${chat.id}:${item.email}:${input.code}`),
-      'hex',
-    );
-    if (!/^\d{6}$/.test(input.code) || !timingSafeEqual(expected, actual)) return false;
-    await mutate(
-      'UPDATE contact_verifications SET used_at=UTC_TIMESTAMP(3) WHERE id=?',
-      [item.id],
-      connection,
-    );
-    await mutate(
-      "UPDATE lead_chats SET customer_email=?,contact_verified_at=UTC_TIMESTAMP(3),status='quoting' WHERE id=? AND status IN ('chatting','contact')",
-      [item.email, chat.id],
-      connection,
-    );
-    return true;
+const hasContact = (chat: Row) => Boolean(chat.customer_email || chat.customer_phone);
+
+/** How the quote card names the customer: "Sam K." */
+function cardName(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return parts.length > 1 ? `${parts[0]} ${parts.at(-1)?.[0]}.` : name.trim();
+}
+
+async function saveContact(connection: Sql, chatId: string, contact: Contact) {
+  await mutate(
+    'UPDATE lead_chats SET customer_name=?,customer_email=COALESCE(?,customer_email),customer_phone=COALESCE(?,customer_phone) WHERE id=?',
+    [contact.name, contact.email, contact.phone, chatId],
+    connection,
+  );
+  // The quote card says who it's for, once they've said.
+  await mutate(
+    "UPDATE live_quotes SET quote_json=JSON_SET(quote_json,'$.customer',?) WHERE chat_id=?",
+    [cardName(contact.name), chatId],
+    connection,
+  );
+}
+
+/**
+ * Whether this customer already left their details on a quote from the business in the last week.
+ * A second one isn't billed, so one person can't run up the owner's bill.
+ */
+async function repeatLead(connection: Sql, chat: Row) {
+  const email = chat.customer_email ? String(chat.customer_email) : null;
+  const phone = chat.customer_phone ? String(chat.customer_phone).replace(/\D/g, '') : null;
+  const [earlier] = await rows(
+    `SELECT COUNT(*) AS count FROM lead_chats c JOIN live_quotes q ON q.chat_id=c.id
+     JOIN quote_usage u ON u.quote_id=q.id AND u.charge='delivered'
+     WHERE c.business_id=? AND c.id<>? AND c.source<>'test'
+       AND u.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 7 DAY)
+       AND (c.customer_email=? OR REGEXP_REPLACE(c.customer_phone,'[^0-9]','')=?)`,
+    [chat.business_id, chat.id, email, phone],
+    connection,
+  );
+  return Number(earlier.count) > 0;
+}
+
+/**
+ * The owner has a lead: a customer who can see their quote and left a way to reach them. That's
+ * what the per-quote plan charges for, once per quote. Owners' tests are never billed.
+ */
+async function giveLead(
+  connection: Sql,
+  input: { businessId: string; chatId: string; sentBy?: 'auto' | 'owner'; byCustomer: boolean },
+) {
+  const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [input.chatId], connection);
+  const quote = await liveQuoteFor(input.chatId, connection);
+  if (!quote || chat.source === 'test' || !hasContact(chat)) return;
+  await recordLiveDelivery(connection, {
+    businessId: input.businessId,
+    quoteId: String(quote.id),
+    totalCents: Number(quote.total_cents),
+    sentBy: input.sentBy ?? (quote.sent_by === 'owner' ? 'owner' : 'auto'),
+    byCustomer: input.byCustomer,
+    repeat: await repeatLead(connection, chat),
   });
-  if (!verified)
-    throw new ApiError(
-      400,
-      'CODE_INVALID',
-      'That code didn’t work. Check it, or ask for a new one.',
-    );
+}
+
+/**
+ * The customer leaves their name and a way to reach them. Where the chat is, that does one of:
+ * - shows the quote, when the owner asks for details before the price;
+ * - passes a quote that waits for the owner to them, now that it has somewhere to go;
+ * - on a quote they can see, makes it a lead: a copy to their inbox, or a way for the owner to
+ *   answer the question they're about to ask.
+ */
+export async function leaveContact(
+  req: Request,
+  input: ContactInput,
+  purpose: 'copy' | 'question' = 'copy',
+) {
+  // Checked before anything about the chat is looked up.
+  const contact = parseContact(input);
   const { business, chat } = await chatAccess(req);
-  await prepareLiveQuote(req, String(business.id), String(chat.id));
+  const test = chat.source === 'test';
+  if (!test) await consumeAuthRateLimit(`chat-contact-ip:${req.ip}`, 20, 3_600_000);
+  const draft = await transaction(async (connection) => {
+    const { chat: locked } = await chatAccess(req, connection, true);
+    const chatId = String(locked.id),
+      businessId = String(business.id);
+    const quote = await liveQuoteFor(chatId, connection);
+    if (locked.status === 'chatting') {
+      await saveContact(connection, chatId, contact);
+      return false;
+    }
+    if (locked.status === 'contact' && !quote) {
+      await saveContact(connection, chatId, contact);
+      await mutate("UPDATE lead_chats SET status='quoting' WHERE id=?", [chatId], connection);
+      return true;
+    }
+    if (locked.status === 'contact' && quote?.status === 'review') {
+      await saveContact(connection, chatId, contact);
+      await mutate("UPDATE lead_chats SET status='review' WHERE id=?", [chatId], connection);
+      const owner = (await contactName(business, connection)) || String(business.name);
+      await addMessage(connection, {
+        businessId,
+        chatId,
+        sender: 'assistant',
+        kind: 'status',
+        text: contact.email
+          ? `Thanks, ${contact.name.split(/\s+/)[0]}. We’ll email you as soon as ${owner} sends it.`
+          : `Thanks, ${contact.name.split(/\s+/)[0]}. ${owner} will be in touch with your quote.`,
+      });
+      if (!test) await notifyOwner(businessId, chatId, 'review', connection);
+      return false;
+    }
+    if (quote && ANSWERABLE.includes(String(quote.status))) {
+      if (purpose === 'copy' && !contact.email)
+        throw new ApiError(422, 'EMAIL_REQUIRED', 'Add your email so we can send it.');
+      await saveContact(connection, chatId, contact);
+      await giveLead(connection, { businessId, chatId, byCustomer: true });
+      if (purpose === 'copy')
+        await addMessage(connection, {
+          businessId,
+          chatId,
+          sender: 'assistant',
+          kind: 'status',
+          text: `Sent. A copy is on its way to ${contact.email}.`,
+        });
+      if (!test) {
+        if (contact.email)
+          await notifyCustomerQuote(connection, businessId, chatId, String(business.name));
+        // A question tells the owner on its own, a moment later.
+        if (purpose === 'copy') await notifyOwner(businessId, chatId, 'lead', connection);
+      }
+      return false;
+    }
+    throw new ApiError(409, 'CHAT_DONE', 'Your quote is already on its way.');
+  });
+  if (draft) await prepareLiveQuote(req, String(business.id), String(chat.id));
   const fresh = await chatAccess(req);
-  return chatView(fresh.business, fresh.chat);
+  // Shaped like the old code step's answer, so a page from before this still works.
+  return {
+    verificationId: null,
+    devCode: undefined,
+    chat: await chatView(fresh.business, fresh.chat),
+  };
 }
 
 type Check = { id: string; passed: boolean; detail: string };
@@ -665,25 +705,6 @@ async function checkDraft(
   return checks;
 }
 
-/**
- * One email getting quote after quote could run up the owner's bill, so a repeat within a week
- * waits for them. Run it behind the quote counter's lock, so two chats can't both slip through.
- */
-async function repeatCheck(connection: Sql, business: Row, chat: Row): Promise<Check> {
-  const [earlier] = await rows(
-    `SELECT COUNT(*) AS count FROM lead_chats c JOIN live_quotes q ON q.chat_id=c.id
-    WHERE c.business_id=? AND c.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 7 DAY)
-    AND c.customer_email=? AND c.source<>'test' AND c.id<>?`,
-    [business.id, chat.customer_email, chat.id],
-    connection,
-  );
-  return {
-    id: 'repeat',
-    passed: Number(earlier.count) === 0,
-    detail: 'This email already got a quote from you in the last week.',
-  };
-}
-
 /** Card details the owner usually includes, taken from their practice quotes for this service. */
 async function usualTerms(businessId: string, serviceName: string) {
   const runs = await rows(
@@ -772,13 +793,10 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
       [number + 1, businessId],
       connection,
     );
-    if (!test) checks.push(await repeatCheck(connection, business, chat));
-    const name = String(chat.customer_name).trim();
-    const parts = name.split(/\s+/);
     const card: Quote = {
       ...pricedAs(style, totalCents, rangeSpread(progress, settings.trainedPercent)),
       number,
-      customer: parts.length > 1 ? `${parts[0]} ${parts.at(-1)?.[0]}.` : name,
+      customer: cardName(String(chat.customer_name)),
       place: String(business.service_area ?? ''),
       lines: drafted.lines.map((line, index) => ({ id: `l${index}`, ...line })),
       discount: drafted.discount,
@@ -831,8 +849,16 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
     if (status === 'sent')
       await markSent(connection, { businessId, quoteId, sentBy: 'auto', test });
     else {
-      await mutate("UPDATE lead_chats SET status='review' WHERE id=?", [chatId], connection);
+      // A quote that waits needs somewhere to go once the owner sends it, so a customer who
+      // hasn't left their details is asked for them first. Until then, the owner isn't bothered.
+      const reachable = test || hasContact(chat);
+      await mutate(
+        'UPDATE lead_chats SET status=? WHERE id=?',
+        [reachable ? 'review' : 'contact', chatId],
+        connection,
+      );
       const owner = await contactName(business);
+      const who = `${owner ? `${owner} at ` : ''}${business.name}`;
       await addMessage(connection, {
         businessId,
         chatId,
@@ -841,14 +867,21 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
         // The owner testing their own link sees what their Charm drafted, and why it would wait.
         text: test
           ? 'Here’s the quote your Charm drafted.'
-          : `Thanks! ${owner ? `${owner} at ` : ''}${business.name} will look this over and send your quote shortly. We’ll email you when it’s ready.`,
+          : !reachable
+            ? `${who} wants to look this one over before it goes out. Where should they send it?`
+            : chat.customer_email
+              ? `Thanks! ${who} will look this over and send your quote shortly. We’ll email you when it’s ready.`
+              : `Thanks! ${who} will look this over and get back to you with your quote shortly.`,
       });
-      if (!test) await notifyOwner(businessId, chatId, 'review', connection);
+      if (!test && reachable) await notifyOwner(businessId, chatId, 'review', connection);
     }
   });
 }
 
-/** Shows the quote to the customer, bills it once, and lets both sides know. */
+/**
+ * Shows the quote to the customer. When they've already left their details, it bills it once and
+ * lets both sides know; otherwise that waits until they do.
+ */
 export async function markSent(
   connection: Sql,
   input: { businessId: string; quoteId: string; sentBy: 'auto' | 'owner'; test: boolean },
@@ -859,11 +892,11 @@ export async function markSent(
     connection,
   );
   if (!input.test)
-    await recordLiveDelivery(connection, {
+    await giveLead(connection, {
       businessId: input.businessId,
-      quoteId: input.quoteId,
-      totalCents: Number(quote.total_cents),
+      chatId: String(quote.chat_id),
       sentBy: input.sentBy,
+      byCustomer: false,
     });
   const [business] = await rows(
     'SELECT * FROM businesses WHERE id=?',
@@ -886,7 +919,7 @@ export async function markSent(
     value: Number(quote.total_cents),
   });
   const [chat] = await rows(
-    'SELECT customer_name FROM lead_chats WHERE id=?',
+    'SELECT customer_name,customer_email,customer_phone FROM lead_chats WHERE id=?',
     [quote.chat_id],
     connection,
   );
@@ -896,9 +929,9 @@ export async function markSent(
     chatId: String(quote.chat_id),
     sender: 'assistant',
     kind: 'status',
-    text: `Here’s your quote${first ? `, ${first}` : ''}. A copy is on its way to your inbox.`,
+    text: `Here’s your quote${first ? `, ${first}` : ''}.${chat.customer_email ? ' A copy is on its way to your inbox.' : ''}`,
   });
-  if (input.test) return;
+  if (input.test || !hasContact(chat)) return;
   await notifyCustomerQuote(
     connection,
     input.businessId,
@@ -939,9 +972,12 @@ async function notifyCustomerQuote(
   );
 }
 
-type OwnerEvent = 'review' | 'sent' | 'accepted' | 'visit' | 'message' | 'lost';
+type OwnerEvent = 'review' | 'sent' | 'lead' | 'accepted' | 'visit' | 'message' | 'lost';
 
-/** Owners hear about every request that needs them and every quote that goes out. */
+/**
+ * Owners hear about every request that needs them and every customer who leaves a way to reach
+ * them. A quote someone only looked at isn't news.
+ */
 export async function notifyOwner(
   businessId: string,
   chatId: string,
@@ -954,7 +990,7 @@ export async function notifyOwner(
     connection,
   );
   const [chat] = await rows(
-    'SELECT customer_name,service_name FROM lead_chats WHERE id=?',
+    'SELECT customer_name,customer_email,customer_phone,service_name FROM lead_chats WHERE id=?',
     [chatId],
     connection,
   );
@@ -971,6 +1007,13 @@ export async function notifyOwner(
     ? priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))
     : '';
   const link = quote ? `${appOrigin()}/app/quotes/${quote.id}` : `${appOrigin()}/app`;
+  const reach = [
+    chat.customer_phone ? `Phone: ${chat.customer_phone}` : '',
+    chat.customer_email ? `Email: ${chat.customer_email}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const details = reach ? `\n\n${reach}` : '';
   // A quote with no price can't go out as it is, so it only gets the link to change it.
   const approve =
     event === 'review' && quote && Number(quote.total_cents) > 0
@@ -983,15 +1026,19 @@ export async function notifyOwner(
     },
     sent: {
       subject: `Quote sent: ${total} to ${first}`,
-      text: `Your Charm sent ${first} a quote for ${total}.\n\nSee the quote and the conversation:\n${link}`,
+      text: `Your Charm sent ${first} a quote for ${total}.${details}\n\nSee the quote and the conversation:\n${link}`,
+    },
+    lead: {
+      subject: `${first} asked for a copy of your ${total} quote`,
+      text: `${first} asked for your quote for ${total} to be emailed to them. They haven’t said yes yet, so it may be worth a follow-up.${details}\n\nSee the quote and the conversation:\n${link}`,
     },
     accepted: {
-      subject: `${first} accepted your ${total} quote`,
-      text: `${first} accepted your quote for ${total}. Get in touch to schedule the work:\n${link}`,
+      subject: `${first} said yes to your ${total} quote`,
+      text: `${first} said yes to your quote for ${total}. Get in touch to schedule the work.${details}\n\n${link}`,
     },
     visit: {
       subject: `${first} would like a site visit`,
-      text: `${first} would like you to see the job before going ahead:\n${link}`,
+      text: `${first} would like you to see the job before going ahead.${details}\n\n${link}`,
     },
     message: {
       subject: `${first} sent you a message`,
@@ -1017,16 +1064,37 @@ export async function notifyOwner(
 /** Statuses a customer can still answer: open, or past its valid days without an answer. */
 const ANSWERABLE = ['sent', 'expired'];
 
+/**
+ * The customer answers their quote. A yes or a visit request needs a way to reach them, which they
+ * leave now if they haven't already. That's when the owner has a lead and, on the per-quote plan,
+ * when it's billed. Only a yes with their details counts as the price winning.
+ */
 export async function customerDecision(
   req: Request,
   decision: 'accept' | 'visit' | 'decline',
   why: { reason: LossReason; note: string } = { reason: 'other', note: '' },
+  input?: ContactInput,
 ) {
+  const contact = input && decision !== 'decline' ? parseContact(input) : null;
   await transaction(async (connection) => {
     const { business, chat } = await chatAccess(req, connection, true);
     const quote = await liveQuoteFor(String(chat.id), connection);
     if (!quote || !ANSWERABLE.includes(String(quote.status)))
       throw new ApiError(409, 'QUOTE_NOT_OPEN', 'This quote can’t be changed now.');
+    if (decision !== 'decline') {
+      if (contact) await saveContact(connection, String(chat.id), contact);
+      else if (!hasContact(chat))
+        throw new ApiError(
+          422,
+          'CONTACT_REQUIRED',
+          `Add your name and a phone number or an email, so ${(await contactName(business, connection)) || business.name} can reach you.`,
+        );
+      await giveLead(connection, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        byCustomer: true,
+      });
+    }
     const status = { accept: 'accepted', visit: 'visit_requested', decline: 'lost' }[decision];
     await mutate(
       'UPDATE live_quotes SET status=?,decided_at=UTC_TIMESTAMP(3),outcome_reason=?,outcome_note=? WHERE id=?',
@@ -1062,7 +1130,7 @@ export async function customerDecision(
       sender: 'customer',
       kind: 'status',
       text: {
-        accept: 'Accepted the quote.',
+        accept: 'Said yes to the quote.',
         visit: 'Asked for a site visit before going ahead.',
         decline: `Isn’t going ahead: ${lossReasonPhrase(why.reason)}.`,
       }[decision],

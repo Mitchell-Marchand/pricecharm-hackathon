@@ -115,7 +115,7 @@ export function QuoteForm({
         <div className={cx('mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-6', pad)}>
           <FormField
             label="For"
-            value={`${quote.customer}${quote.place ? ` · ${quote.place}` : ''}`}
+            value={[quote.customer, quote.place].filter(Boolean).join(' · ')}
           />
           <FormField label="Date" value={shortDate(quote.issuedAt)} />
         </div>

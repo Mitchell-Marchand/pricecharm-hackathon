@@ -12,7 +12,7 @@ import { ArrowUp, Camera, Check, RotateCcw } from 'lucide-react';
 import { CustomerMessage, Typing } from '@/components/Chat';
 import { PhotoGrid } from '@/components/Photos';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
-import { Avatar, Button, Tag, TextInput } from '@/components/ui';
+import { Avatar, Tag, TextInput } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { greeting } from '@/lib/chat';
 import { requestDemoQuote, requestDemoTurn, startDemoChat, type DemoMessage } from '@/lib/demo-api';
@@ -90,6 +90,10 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   }>({});
 
   useEffect(() => () => timers.current.forEach((id) => window.clearTimeout(id)), []);
+  // Like the real chat, the quote follows as soon as it has the details.
+  useEffect(() => {
+    if (ready && !busy && !quote && !done) void seeQuote();
+  });
 
   // A quote is taller than the chat, so it opens at its top, where the price is, not its buttons.
   useLayoutEffect(() => {
@@ -115,8 +119,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     demo.photos?.services.includes(service) ? [SEND_PHOTOS, SKIP_PHOTOS] : [];
 
   /** The chat so far, as the API reads it. */
-  function transcript(next: Pick<Line, 'text' | 'photos'>): DemoMessage[] {
-    return [...lines, { ...next, from: 'me' as const }]
+  function transcript(next?: Pick<Line, 'text' | 'photos'>): DemoMessage[] {
+    return [...lines, ...(next ? [{ ...next, from: 'me' as const }] : [])]
       .filter((line) => line.text && (line.from === 'bot' || line.from === 'me'))
       .map((line) => ({
         from: line.from === 'me' ? ('customer' as const) : ('assistant' as const),
@@ -263,7 +267,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   async function seeQuote() {
     if (busy) return;
     setReady(false);
-    add({ from: 'me', text: 'See my quote' });
     stickToBottom();
     setBusy(true);
     let card: Quote | null = null;
@@ -274,7 +277,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
           tradeId: demo.tradeId,
           pass: pass.current,
           serviceName,
-          messages: transcript({ text: 'See my quote' }),
+          // Up to the customer's last answer, which is where the API reads from.
+          messages: (() => {
+            const said = transcript();
+            return said.slice(0, said.map((line) => line.from).lastIndexOf('customer') + 1);
+          })(),
         });
         card = result.quote;
         visit = result.visit;
@@ -294,7 +301,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     later(() => {
       if (card) {
         setQuote(card);
-        add({ from: 'bot', text: 'Here’s your quote. A copy is on its way to your inbox.' });
+        add({ from: 'bot', text: 'Here’s your quote.' });
         add({ from: 'bot', quote: true });
       } else {
         add({
@@ -378,8 +385,11 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
                               );
                             }}
                           >
-                            <Check aria-hidden /> Accept quote
+                            <Check aria-hidden /> Looks good to me
                           </PaperButton>
+                          <p className="basis-full text-center text-[13px] text-paper-muted">
+                            No payment now. {demo.owner} will reach out to book a time.
+                          </p>
                           <PaperButton
                             onClick={() => {
                               document
@@ -447,12 +457,6 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
                 {chip}
               </button>
             ))}
-          </div>
-        )}
-        {ready && !busy && !quote && !done && (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => void seeQuote()}>See my quote</Button>
-            <p className="text-xs text-muted">The demo skips the email code.</p>
           </div>
         )}
         {full && !done && (

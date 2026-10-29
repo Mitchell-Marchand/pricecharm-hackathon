@@ -100,15 +100,13 @@ test(
           .send(body);
       for (const text of [service, size, 'Skip photos'])
         await call('post', '/messages', { text }).expect(200);
-      const contact = await call('post', '/contact', {
+      // It waits for the owner, so it asks where to send it.
+      const view = await call('post', '/contact', {
         name: 'Lee Park',
         email: `lee-${randomUUID()}@example.test`,
       });
-      const view = await call('post', '/verify', {
-        verificationId: contact.body.data.verificationId,
-        code: contact.body.data.devCode,
-      });
       assert.equal(view.status, 200, JSON.stringify(view.body));
+      assert.equal(view.body.data.chat.status, 'review');
       const [quote] = await rows('SELECT * FROM live_quotes WHERE chat_id=?', [id]);
       return { id, call, quote };
     }

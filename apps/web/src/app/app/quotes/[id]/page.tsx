@@ -99,12 +99,25 @@ export default function QuotePage() {
         <h1 className="t-h1">{quote.customer}</h1>
         <QuoteStatusTag status={quote.status} />
         {quote.test && <Tag>Test</Tag>}
+        {quote.reachable === false && !quote.test && <Tag>Only looked</Tag>}
       </div>
       <p className="mt-2 text-ink-2" data-private>
-        {[quote.serviceName, `No. ${quote.number}`, shortDate(quote.createdAt), quote.customerEmail]
+        {[
+          quote.serviceName,
+          `No. ${quote.number}`,
+          shortDate(quote.createdAt),
+          quote.customerPhone,
+          quote.customerEmail,
+        ]
           .filter(Boolean)
           .join(' · ')}
       </p>
+      {quote.reachable === false && !quote.test && (
+        <p className="mt-3 text-sm text-muted">
+          They saw this quote but didn&apos;t leave a phone number or email, so it wasn&apos;t
+          billed. You&apos;ll hear from us if they come back to it.
+        </p>
+      )}
       {quote.test && (
         <p className="mt-3 text-sm text-muted">
           You tried this one yourself. Nothing was emailed or billed.

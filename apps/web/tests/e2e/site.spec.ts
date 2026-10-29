@@ -37,7 +37,6 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
   await message.press('Enter');
   await expect(demo.getByText(/send a photo or two/)).toBeVisible();
   await demo.getByRole('button', { name: 'Skip photos' }).click();
-  await demo.getByRole('button', { name: 'See my quote' }).click();
 
   const quote = demo.getByRole('article', { name: /^Quote number/ });
   await expect(quote).toHaveAttribute('aria-label', /Clean Sweep Junk Removal, total \$395/);
@@ -46,7 +45,10 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
   await message.fill('Can you come Saturday?');
   await message.press('Enter');
   await expect(demo.getByText(/this goes straight to Marcus/)).toBeVisible();
-  await demo.getByRole('button', { name: 'Accept quote' }).click();
+  await expect(
+    demo.getByText('No payment now. Marcus will reach out to book a time.'),
+  ).toBeVisible();
+  await demo.getByRole('button', { name: 'Looks good to me' }).click();
   await expect(
     demo.getByText('You’re all set. Marcus will be in touch to schedule.'),
   ).toBeVisible();
@@ -73,7 +75,6 @@ test('with uploads off, a demo visitor sends sample photos and the quote reads t
     page.getByRole('button', { name: /^Open photo \d of 2 from Sample photos$/ }),
   ).toHaveCount(2);
   await expect(page.locator('img[src="/demo-photos/pressure-washing-detail.jpg"]')).toBeVisible();
-  await page.getByRole('button', { name: 'See my quote' }).click();
   const quote = page.getByRole('article', { name: /^Quote number/ });
   await expect(quote).toContainText('Stain pre-treatment');
   await expect(quote).toHaveAttribute('aria-label', /total \$265/);
@@ -118,7 +119,6 @@ test('when the live demo is busy, it carries on as a quick scripted version', as
   await page.getByRole('button', { name: 'Send sample photos' }).click();
   await expect(page.getByText(/I can see a few nail holes/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'A few nail holes' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'See my quote' }).click();
   await expect(page.getByRole('article', { name: /^Quote number/ })).toHaveAttribute(
     'aria-label',
     /True Coat Painting, total \$1,320/,

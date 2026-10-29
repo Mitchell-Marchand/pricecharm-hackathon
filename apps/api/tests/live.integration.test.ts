@@ -13,10 +13,16 @@ const origin = 'http://localhost:3100';
 after(() => closeDatabase());
 
 test(
-  'customers chat, confirm their email and get a quote; the owner approves anything unusual',
+  'customers chat and see their quote, leave their details to say yes; the owner approves anything unusual',
   { skip: !enabled },
   async () => {
     process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-live-'));
+    // Each customer comes from their own address, as they would, so the chat's per-address
+    // limits don't run out across this many requests.
+    process.env.TRUST_PROXY = '1';
+    let visitor = 0;
+    const customerAgent = () =>
+      request.agent(app).set('X-Forwarded-For', `198.51.100.${++visitor}`);
     const { createApp } = await import('../src/app.js');
     const { decryptEmail } = await import('../src/integrations/email.js');
     const app = createApp();
@@ -101,7 +107,7 @@ test(
     const shop = await business('Moss & Stone Exterior Care');
     const rival = await business('Other Washers');
 
-    async function chat(slug: string, agent = request.agent(app)) {
+    async function chat(slug: string, agent = customerAgent()) {
       const profile = await agent.get(`/api/v1/chat/${slug}`);
       assert.equal(profile.status, 200);
       assert.deepEqual(profile.body.data.services, ['Driveways', 'House wash']);
@@ -120,30 +126,26 @@ test(
       return { id, token, base, call, test: started.body.data.chat.test as boolean };
     }
 
+    /** Describes a job. With nothing to check first, the quote comes back with the last answer. */
     async function reachQuote(
       slug: string,
       agent?: ReturnType<typeof request.agent>,
       job = { service: 'Driveways', size: 'About 600 sq ft, two cars.' },
-      email = `sam-${randomUUID()}@example.test`,
     ) {
       const customer = await chat(slug, agent);
       let view = (await customer.call('post', '/messages', { text: job.service })).body.data;
       assert.match(view.messages.at(-1).text, /\[Demo\]/);
       view = (await customer.call('post', '/messages', { text: job.size })).body.data;
       assert.deepEqual(view.messages.at(-1).chips, ['Skip photos']);
-      view = (await customer.call('post', '/messages', { text: 'Skip photos' })).body.data;
-      assert.equal(
-        view.status,
-        'contact',
-        'Once it has the details, it asks where to send the quote',
-      );
-      const contact = await customer.call('post', '/contact', {
-        name: 'Sam Kim',
-        email,
-      });
-      assert.equal(contact.status, 200, JSON.stringify(contact.body));
-      return { customer, contact: contact.body.data, email };
+      const last = await customer.call('post', '/messages', { text: 'Skip photos' });
+      assert.equal(last.status, 200, JSON.stringify(last.body));
+      return { customer, view: last.body.data };
     }
+    const sam = () => ({ name: 'Sam Kim', email: `sam-${randomUUID()}@example.test` });
+    const emailKeys = async (businessId: string) =>
+      (await rows('SELECT dedupe_key FROM email_outbox WHERE business_id=?', [businessId])).map(
+        (email) => String(email.dedupe_key),
+      );
 
     // Going live the way an owner does: a plan, a card, then deploying. No email check first.
     async function goLive(owner: ReturnType<typeof request.agent>, plan = 'per_quote') {
@@ -153,7 +155,7 @@ test(
     }
 
     // 0. The card stops working after going live: even an automatic quote waits, and the owner
-    // is told why.
+    // is told why once the customer says where to send it.
     await goLive(rival.owner);
     await mutate("UPDATE billing_accounts SET subscription_status='past_due' WHERE business_id=?", [
       rival.id,
@@ -164,11 +166,22 @@ test(
       .send({ autoSend: true })
       .expect(200);
     const unpaid = await reachQuote(rival.slug);
-    const unpaidView = await unpaid.customer.call('post', '/verify', {
-      verificationId: unpaid.contact.verificationId,
-      code: unpaid.contact.devCode,
-    });
-    assert.equal(unpaidView.body.data.waitingForOwner, true);
+    assert.equal(unpaid.view.status, 'contact', 'A quote that waits needs somewhere to go');
+    assert.equal(unpaid.view.waitingForOwner, true);
+    assert.equal(unpaid.view.quote, null);
+    assert.match(unpaid.view.messages.at(-1).text, /Where should they send it\?$/);
+    assert.ok(
+      !(await emailKeys(rival.id)).includes(`owner-review:${unpaid.customer.id}:once`),
+      'The owner isn’t asked about a request nobody can be sent',
+    );
+    assert.equal(
+      (await rival.owner.get('/api/v1/app/home')).body.data.counts.needsOk,
+      0,
+      'Nor does it wait in their quotes yet',
+    );
+    const unpaidView = await unpaid.customer.call('post', '/contact', sam());
+    assert.equal(unpaidView.status, 200, JSON.stringify(unpaidView.body));
+    assert.equal(unpaidView.body.data.chat.status, 'review');
     const [unpaidQuote] = await rows('SELECT id,review_reason FROM live_quotes WHERE chat_id=?', [
       unpaid.customer.id,
     ]);
@@ -200,35 +213,57 @@ test(
 
     await goLive(shop.owner);
 
-    // 1. Automatic quotes on: the quote goes out as soon as the email is confirmed.
+    // 1. Automatic quotes on: the quote shows as soon as the chat has the details, before any
+    // contact details, and seeing it costs the owner nothing.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
       .send({ autoSend: true })
       .expect(200);
     const automatic = await reachQuote(shop.slug);
-    assert.ok(automatic.contact.verificationId);
-    const wrong = await automatic.customer.call('post', '/verify', {
-      verificationId: automatic.contact.verificationId,
-      code: '000000' === automatic.contact.devCode ? '111111' : '000000',
-    });
-    assert.equal(wrong.status, 400);
-    const sent = await automatic.customer.call('post', '/verify', {
-      verificationId: automatic.contact.verificationId,
-      code: automatic.contact.devCode,
-    });
-    assert.equal(sent.status, 200, JSON.stringify(sent.body));
-    assert.equal(sent.body.data.status, 'sent');
-    assert.equal(sent.body.data.quote.card.customer, 'Sam K.');
+    assert.equal(automatic.view.status, 'sent');
+    assert.equal(automatic.view.messages.at(-1).text, 'Here’s your quote.');
+    assert.equal(automatic.view.quote.card.customer, '');
     assert.equal(
-      sent.body.data.quote.card.lines[0].amountCents,
+      automatic.view.quote.card.lines[0].amountCents,
       27500,
       'Priced from similar past jobs',
     );
-    const [usage] = await rows(
-      'SELECT source,trial_covered,fee_cents FROM quote_usage WHERE quote_id=?',
-      [sent.body.data.quote.id],
+    const ledger = (quoteId: string) =>
+      rows('SELECT source,trial_covered,fee_cents FROM quote_usage WHERE quote_id=?', [quoteId]);
+    assert.equal((await ledger(automatic.view.quote.id)).length, 0, 'Not billed for a look');
+    assert.ok(
+      (await emailKeys(shop.id)).every((key) => !key.includes(automatic.customer.id)),
+      'Nobody is emailed about a look',
     );
+    const noDetails = await automatic.customer.call('post', '/accept');
+    assert.equal(noDetails.body.error?.code, 'CONTACT_REQUIRED', 'A yes says how to reach them');
+    assert.equal(
+      (await automatic.customer.call('post', '/contact', { name: 'Sam Kim', phone: '555-0142' }))
+        .body.error?.code,
+      'EMAIL_REQUIRED',
+      'A copy needs an email',
+    );
+    assert.equal(
+      (await automatic.customer.call('post', '/contact', { name: 'Sam Kim', phone: '12' })).body
+        .error?.code,
+      'PHONE_INVALID',
+    );
+
+    // Asking for a copy makes it a lead: $2 on the per-quote plan, the quote in their inbox, and
+    // a note to the owner that it may be worth a follow-up.
+    const automaticEmail = sam().email;
+    const copied = await automatic.customer.call('post', '/contact', {
+      name: 'Sam Kim',
+      email: automaticEmail,
+    });
+    assert.equal(copied.status, 200, JSON.stringify(copied.body));
+    assert.equal(copied.body.data.chat.quote.card.customer, 'Sam K.');
+    assert.equal(
+      copied.body.data.chat.messages.at(-1).text,
+      `Sent. A copy is on its way to ${automaticEmail}.`,
+    );
+    const [usage] = await ledger(automatic.view.quote.id);
     assert.deepEqual(
       { ...usage, trial_covered: Boolean(usage.trial_covered), fee_cents: Number(usage.fee_cents) },
       {
@@ -236,7 +271,7 @@ test(
         trial_covered: false,
         fee_cents: 200,
       },
-      '$2 for the quote on the per-quote plan, from the first one',
+      '$2 for the lead on the per-quote plan, from the first one',
     );
     const emails = await rows(
       'SELECT dedupe_key,payload_encrypted FROM email_outbox WHERE business_id=? ORDER BY created_at',
@@ -248,7 +283,7 @@ test(
       'The customer gets the quote',
     );
     assert.ok(
-      keys.includes(`owner-sent:${automatic.customer.id}:once`),
+      keys.includes(`owner-lead:${automatic.customer.id}:once`),
       'The owner hears about it',
     );
     const customerEmail = decryptEmail(
@@ -275,30 +310,61 @@ test(
       .set('Authorization', `Bearer ${linkParams.get('token')}`);
     assert.equal(afterReply.status, 200, 'A later email keeps the quote email’s link working');
     const accepted = await automatic.customer.call('post', '/accept');
-    assert.equal(accepted.body.data.status, 'accepted');
+    assert.equal(accepted.body.data.status, 'accepted', 'Their details are already in');
     assert.equal(
       (await automatic.customer.call('post', '/accept')).status,
       409,
       'A quote is accepted once',
     );
+    assert.equal((await ledger(autoQuote.id)).length, 1, 'And billed once');
+
+    // A yes from someone who only looked: their name and a phone number come with it.
+    const looked = await reachQuote(shop.slug);
+    const yes = await looked.customer.call('post', '/accept', {
+      name: 'Ana Ruiz',
+      phone: '(503) 555-0142',
+    });
+    assert.equal(yes.status, 200, JSON.stringify(yes.body));
+    assert.equal(yes.body.data.status, 'accepted');
+    assert.equal(yes.body.data.contact.phone, '(503) 555-0142');
+    assert.equal(Number((await ledger(looked.view.quote.id))[0].fee_cents), 200);
+    const [yesEmail] = await rows('SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?', [
+      `owner-accepted:${looked.customer.id}:once`,
+    ]);
+    assert.match(decryptEmail(yesEmail.payload_encrypted).text, /Phone: \(503\) 555-0142/);
+    assert.ok(
+      !(await emailKeys(shop.id)).includes(`live-quote:${looked.customer.id}:customer`),
+      'No email to send a copy to',
+    );
+    // The same person again within the week isn't billed again, however they write the number.
+    const again = await reachQuote(shop.slug);
+    await again.customer
+      .call('post', '/visit', { name: 'Ana Ruiz', phone: '503.555.0142' })
+      .expect(200);
+    assert.equal(Number((await ledger(again.view.quote.id))[0].fee_cents), 0);
 
     // 2. Automatic quotes off: the quote waits for the owner, who edits and sends it. It's from the
-    // email that just got a quote, which holds it too, so one address can't run up their bill.
+    // email that just got a quote, so the owner isn't billed for it twice in a week.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
       .send({ autoSend: false })
       .expect(200);
-    const held = await reachQuote(shop.slug, undefined, undefined, automatic.email);
-    const waiting = await held.customer.call('post', '/verify', {
-      verificationId: held.contact.verificationId,
-      code: held.contact.devCode,
+    const held = await reachQuote(shop.slug);
+    assert.equal(held.view.status, 'contact');
+    const waiting = await held.customer.call('post', '/contact', {
+      name: 'Sam Kim',
+      email: automaticEmail,
     });
-    assert.equal(waiting.body.data.waitingForOwner, true);
+    assert.equal(waiting.body.data.chat.waitingForOwner, true);
     assert.equal(
-      waiting.body.data.quote,
+      waiting.body.data.chat.quote,
       null,
       'The customer sees no price until the owner approves',
+    );
+    assert.match(
+      waiting.body.data.chat.messages.at(-1).text,
+      /We’ll email you as soon as Maya sends it/,
     );
     const home = (await shop.owner.get('/api/v1/app/home')).body.data;
     assert.equal(home.counts.needsOk, 1);
@@ -306,13 +372,13 @@ test(
     const [listed] = (await shop.owner.get('/api/v1/app/quotes?filter=review')).body.data;
     const detail = (await shop.owner.get(`/api/v1/app/quotes/${listed.id}`)).body.data;
     assert.equal(detail.customer, 'Sam Kim');
+    assert.equal(detail.reachable, true);
     assert.deepEqual(
       detail.checks
         .filter((check: { passed: boolean }) => !check.passed)
         .map((check: { id: string }) => check.id),
-      ['auto', 'repeat'],
+      ['auto'],
     );
-    assert.match(home.waiting[0].reviewReason, /already got a quote from you in the last week/);
     assert.equal(
       (await rows('SELECT id FROM quote_usage WHERE quote_id=?', [listed.id])).length,
       0,
@@ -334,8 +400,9 @@ test(
     assert.equal(approved.body.data.totalCents, 26000);
     const customerView = (await held.customer.call('get', '')).body.data;
     assert.equal(customerView.quote.card.lines[0].amountCents, 26000);
-    const [ownerUsage] = await rows('SELECT source FROM quote_usage WHERE quote_id=?', [listed.id]);
+    const [ownerUsage] = await ledger(listed.id);
     assert.equal(ownerUsage.source, 'live_owner', 'Owner-approved quotes count too');
+    assert.equal(Number(ownerUsage.fee_cents), 0, 'The same customer within a week');
     assert.equal(
       (
         await shop.owner
@@ -346,17 +413,16 @@ test(
       409,
     );
 
-    // 3. The owner trying their own link: no code, no bill, no emails.
+    // 3. The owner trying their own link: no bill, no emails, and the draft shows right away.
     const before = (
       await rows('SELECT COUNT(*) AS count FROM email_outbox WHERE business_id=?', [shop.id])
     )[0].count;
     const trial = await reachQuote(shop.slug, shop.owner);
-    assert.equal(trial.contact.verificationId, null);
-    assert.equal(trial.contact.chat.test, true);
-    assert.equal(trial.contact.chat.waitingForOwner, true);
-    assert.ok(trial.contact.chat.quote, 'The owner sees the quote their Charm drafted');
+    assert.equal(trial.view.test, true);
+    assert.equal(trial.view.waitingForOwner, true);
+    assert.ok(trial.view.quote, 'The owner sees the quote their Charm drafted');
     assert.deepEqual(
-      trial.contact.chat.wouldWait.map((check: { id: string }) => check.id),
+      trial.view.wouldWait.map((check: { id: string }) => check.id),
       ['auto'],
       'And why a real customer would wait for it',
     );
@@ -367,6 +433,9 @@ test(
       .post(`/api/v1/app/quotes/${trialQuote.id}/approve`)
       .set('Origin', origin)
       .send({})
+      .expect(200);
+    await trial.customer
+      .call('post', '/accept', { name: 'Test Customer', email: 'test@example.test' })
       .expect(200);
     assert.equal(
       (await rows('SELECT id FROM quote_usage WHERE quote_id=?', [trialQuote.id])).length,
@@ -392,11 +461,8 @@ test(
     async function waitsBecause(job: { service: string; size: string }) {
       const reached = await reachQuote(shop.slug, undefined, job);
       lastReached = reached;
-      const view = await reached.customer.call('post', '/verify', {
-        verificationId: reached.contact.verificationId,
-        code: reached.contact.devCode,
-      });
-      assert.equal(view.body.data.waitingForOwner, true, job.size);
+      assert.equal(reached.view.waitingForOwner, true, job.size);
+      await reached.customer.call('post', '/contact', sam()).expect(200);
       const [quote] = await rows('SELECT checks_json FROM live_quotes WHERE chat_id=?', [
         reached.customer.id,
       ]);
@@ -418,12 +484,7 @@ test(
       service: 'House wash',
       size: 'About 2,000 sq ft.',
     });
-    const ranged = (
-      await learning.customer.call('post', '/verify', {
-        verificationId: learning.contact.verificationId,
-        code: learning.contact.devCode,
-      })
-    ).body.data;
+    const ranged = learning.view;
     assert.equal(ranged.status, 'sent', 'A service with no jobs yet still gets a quote');
     const { style, range } = ranged.quote.card;
     const [rangedQuote] = await rows('SELECT total_cents FROM live_quotes WHERE chat_id=?', [
@@ -435,6 +496,7 @@ test(
         range.highCents > Number(rangedQuote.total_cents),
       JSON.stringify(range),
     );
+    await learning.customer.call('post', '/contact', sam()).expect(200);
     const [rangeEmail] = await rows(
       'SELECT payload_encrypted FROM email_outbox WHERE dedupe_key=?',
       [`live-quote:${learning.customer.id}:customer`],
@@ -445,7 +507,7 @@ test(
       'The email quotes the range',
     );
     const firm = (await shop.owner.get('/api/v1/app/quotes?filter=all')).body.data.find(
-      (item: { id: string }) => item.id === sent.body.data.quote.id,
+      (item: { id: string }) => item.id === automatic.view.quote.id,
     );
     assert.equal(firm.range, null, 'A trained service quotes a firm price');
 

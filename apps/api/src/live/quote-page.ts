@@ -12,7 +12,8 @@ import { ACCEPT_WORDINGS } from './accept-wording.js';
 /**
  * What customers see on the quote link and the website widget that the owner can change: their
  * logo, the name the chat says will follow up, what it says after a customer accepts or asks for a
- * visit, and the words on the accept button. Empty text means the default.
+ * visit, the words on the accept button, and whether customers leave their details before they
+ * see the price. Empty text means the default.
  */
 
 export type Logo = { url: string; width: number; height: number };
@@ -95,6 +96,8 @@ async function quotePage(businessId: string) {
     acceptLabel: String(business.accept_label ?? ''),
     /** The wordings PriceCharm tries while acceptLabel is empty. */
     wordings: ACCEPT_WORDINGS.map((wording) => wording.label),
+    /** Customers leave their details before the price shows. Off by default. */
+    contactFirst: Boolean(business.contact_first),
   };
 }
 
@@ -112,6 +115,7 @@ const quotePageInput = z
     acceptedMessage: oneLine(280, 'Keep this to 280 characters or fewer.'),
     visitMessage: oneLine(280, 'Keep this to 280 characters or fewer.'),
     acceptLabel: oneLine(24, 'Keep the button to 24 characters or fewer, so it fits on a phone.'),
+    contactFirst: z.boolean(),
   })
   .partial()
   .strict();
@@ -133,7 +137,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
   const who = (await contactName(business)) || String(business.name);
   // A message that reads like the default is saved as the default, so it follows a new name.
-  const changes: [string, string][] = [];
+  const changes: [string, string | boolean][] = [];
   if (input.acceptedMessage !== undefined)
     changes.push([
       'accepted_message',
@@ -149,6 +153,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
       input.visitMessage === defaultVisitMessage(who) ? '' : input.visitMessage,
     ]);
   if (input.acceptLabel !== undefined) changes.push(['accept_label', input.acceptLabel]);
+  if (input.contactFirst !== undefined) changes.push(['contact_first', input.contactFirst]);
   if (changes.length)
     await mutate(
       `UPDATE businesses SET ${changes.map(([column]) => `${column}=?`).join(',')} WHERE id=?`,
@@ -159,9 +164,10 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
   await recordRequestEvent(req, businessId, 'quote_page_changed', {
     fields: Object.keys(input).join(','),
     own_contact_name: input.contactName === undefined ? undefined : Boolean(input.contactName),
-    accepted_message_chars: saved.accepted_message?.length,
-    visit_message_chars: saved.visit_message?.length,
+    accepted_message_chars: (saved.accepted_message as string | undefined)?.length,
+    visit_message_chars: (saved.visit_message as string | undefined)?.length,
     accept_label: input.acceptLabel,
+    contact_first: input.contactFirst,
   });
   res.json(ok(await quotePage(businessId)));
 });

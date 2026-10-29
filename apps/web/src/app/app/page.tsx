@@ -182,6 +182,7 @@ export default function QuotesHome() {
                       <span className="font-semibold">{quote.customer}</span>
                       <QuoteStatusTag status={quote.status} />
                       {quote.test && <Tag>Test</Tag>}
+                      {quote.reachable === false && !quote.test && <Tag>Only looked</Tag>}
                     </p>
                     <p className="mt-1 truncate text-sm text-muted">
                       {[quote.serviceName, `No. ${quote.number}`, shortDate(quote.createdAt)]

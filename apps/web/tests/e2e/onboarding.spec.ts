@@ -15,9 +15,7 @@ async function finishStepOne(page: Page, name: string) {
 test('the landing page leads into setup', async ({ page }) => {
   await page.goto('/');
   await expect(
-    page.getByRole('heading', {
-      name: 'Train an AI to produce real quotes for you in 3 easy steps.',
-    }),
+    page.getByRole('heading', { name: "Quotes your new customers while you're on the job." }),
   ).toBeVisible();
   await page.getByRole('link', { name: 'Get started' }).first().click();
   await expect(page).toHaveURL(/\/start\/business$/);

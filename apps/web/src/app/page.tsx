@@ -21,12 +21,10 @@ export default async function LandingPage() {
             <Tag tone="canary" size="lg">
               Quote More, Book More
             </Tag>
-            <h1 className="t-hero mt-5">
-              Train an AI to produce real quotes for you in 3 easy steps.
-            </h1>
+            <h1 className="t-hero mt-5">Quotes your new customers while you're on the job.</h1>
             <p className="mt-6 max-w-[34rem] text-lg text-ink-2">
-              Show it a few jobs you've done. Answer a couple of practice customers. Then it quotes
-              your real ones, with your prices and your questions.
+              Show it a few jobs you've done. It learns your prices and the questions you ask, then
+              quotes new customers on your website or through a link you send.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <ButtonLink href="/start" size="lg">

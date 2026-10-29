@@ -16,7 +16,7 @@ Generate a 32-byte secret with `openssl rand -base64 32` and store it as `MAIL_E
 
 Email rows and their `send_email` jobs are inserted in the same transaction as the triggering state change. Unique deduplication keys prevent duplicate jobs. SES receives an opaque `quotient_email_id` tag for investigation. The SDK timeout is bounded and its automatic retries are disabled because SES SendEmail has no application idempotency key. A definite rejection can be retried; an ambiguous network outcome is marked `uncertain` and requires checking provider logs before resending. Failed jobs must trigger operational alerts. Never blindly reset an uncertain email row to pending.
 
-Owner email links expire after 24 hours; password reset links expire after 30 minutes. Reset consumes the token and revokes all owner sessions. Customer codes expire after 10 minutes, allow five attempts, and bind to the exact business, chat and normalized email. Request cooldowns and durable rate limits apply. Production never returns a code or recovery token in an HTTP response.
+Owner email links expire after 24 hours; password reset links expire after 30 minutes. Reset consumes the token and revokes all owner sessions. Customers aren't sent codes: they see their quote first and leave a phone number or email when they say yes, ask for a visit or want a copy. Throwaway inboxes are refused, and leaving details has a durable limit of 20 an hour per address, since each can send a quote email to the address typed. Production never returns a recovery token in an HTTP response.
 
 ## Stripe products, prices and meter
 

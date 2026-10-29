@@ -39,6 +39,9 @@ test(
     process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-page-'));
     // Earlier test files have started setups from this address today.
     process.env.LOCAL_SETUPS_PER_ADDRESS ??= '500';
+    // Each customer comes from their own address, so the chat's per-address limits hold out.
+    process.env.TRUST_PROXY = '1';
+    let visitor = 0;
     const { createApp } = await import('../src/app.js');
     const app = createApp();
 
@@ -139,8 +142,10 @@ test(
     const setPage = (body: object) =>
       owner.patch('/api/v1/app/quote-page').set('Origin', origin).send(body);
 
-    // A customer gets a quote, sent on its own as soon as they confirm their email.
-    async function quoted(agent = request.agent(app)) {
+    // A customer gets a quote, sent on its own as soon as the chat has the details.
+    async function quoted(
+      agent = request.agent(app).set('X-Forwarded-For', `198.51.100.${++visitor}`),
+    ) {
       const started = await agent.post(`/api/v1/chat/${slug}/start`).set('Origin', origin).send({});
       assert.equal(started.status, 201, JSON.stringify(started.body));
       const base = `/api/v1/chat/${slug}/${started.body.data.chat.id}`;
@@ -149,25 +154,17 @@ test(
           .set('Origin', origin)
           .set('Authorization', `Bearer ${started.body.data.token}`)
           .send(body);
+      let view = null;
       for (const text of ['Driveways', 'About 600 sq ft, two cars.', 'Skip photos'])
-        await call('post', '/messages', { text }).expect(200);
-      const contact = await call('post', '/contact', {
-        name: 'Sam Kim',
-        email: `sam-${randomUUID()}@example.test`,
-      });
-      assert.equal(contact.status, 200, JSON.stringify(contact.body));
+        view = (await call('post', '/messages', { text }).expect(200)).body.data;
+      // Asked where to send it: a quote that waits, or an owner who wants details first.
+      if (view.status === 'contact')
+        view = (await call('post', '/contact', sam()).expect(200)).body.data.chat;
       await handBack();
-      const view = contact.body.data.chat
-        ? contact.body.data.chat
-        : (
-            await call('post', '/verify', {
-              verificationId: contact.body.data.verificationId,
-              code: contact.body.data.devCode,
-            }).expect(200)
-          ).body.data;
       const [quote] = await rows('SELECT * FROM live_quotes WHERE chat_id=?', [view.id]);
       return { call, view, quote };
     }
+    const sam = () => ({ name: 'Sam Kim', email: `sam-${randomUUID()}@example.test` });
 
     // 1. The defaults: the owner's first name, and wordings PriceCharm tries.
     const start = (await owner.get('/api/v1/app/quote-page').expect(200)).body.data;
@@ -180,7 +177,8 @@ test(
     );
     assert.equal(start.defaults.visitMessage, 'Got it. Maya will get in touch to set up a visit.');
     assert.equal(start.acceptLabel, '');
-    assert.deepEqual(start.wordings, ['Accept quote', 'Book it', 'Works for me', 'Let’s do it']);
+    assert.deepEqual(start.wordings, ['Looks good to me', 'Works for me', 'Let’s do it']);
+    assert.equal(start.contactFirst, false, 'Customers see the price first');
 
     // 2. The logo: checked, trimmed, served to anyone, replaced and removed.
     const upload = (bytes: Buffer, type = 'image/png', name = 'logo.png') =>
@@ -272,17 +270,17 @@ test(
     const yes = await quoted();
     assert.equal(yes.view.status, 'sent', JSON.stringify(yes.view.messages.at(-1)));
     assert.ok(start.wordings.includes(yes.view.quote.acceptLabel), yes.view.quote.acceptLabel);
-    assert.ok(['accept', 'book', 'works', 'do_it'].includes(yes.quote.accept_variant));
+    assert.ok(['looks_good', 'works', 'do_it'].includes(yes.quote.accept_variant));
     assert.ok(yes.quote.seen_at, 'The customer saw it when their quote came back');
     const again = (await yes.call('get').expect(200)).body.data;
     assert.equal(again.quote.acceptLabel, yes.view.quote.acceptLabel, 'It keeps its words');
-    const accepted = (await yes.call('post', '/accept').expect(200)).body.data;
+    const accepted = (await yes.call('post', '/accept', sam()).expect(200)).body.data;
     assert.equal(accepted.messages.at(-1).text, 'Thanks! I’ll text you today to pick a day.');
     const detail = (await owner.get(`/api/v1/app/quotes/${yes.quote.id}`).expect(200)).body.data;
     assert.equal(detail.acceptLabel, yes.view.quote.acceptLabel);
 
     const visit = await quoted();
-    const visited = (await visit.call('post', '/visit').expect(200)).body.data;
+    const visited = (await visit.call('post', '/visit', sam()).expect(200)).body.data;
     assert.equal(
       visited.messages.at(-1).text,
       'Great, I’ll call you tomorrow to find a time to come by.',
@@ -310,7 +308,7 @@ test(
     await setPage({ contactName: '', acceptedMessage: '', visitMessage: '', acceptLabel: '' });
     const reset = await quoted();
     assert.notEqual(reset.quote.accept_variant, 'owner');
-    const yesAgain = (await reset.call('post', '/accept').expect(200)).body.data;
+    const yesAgain = (await reset.call('post', '/accept', sam()).expect(200)).body.data;
     assert.equal(
       yesAgain.messages.at(-1).text,
       'You’re all set. Maya will be in touch to schedule.',
@@ -322,14 +320,27 @@ test(
     const held = await quoted();
     assert.equal(held.view.quote, null);
     assert.match(
-      held.view.messages.at(-1).text,
-      /^Thanks! Jenny at Moss & Stone Exterior Care will look this over/,
+      held.view.messages.at(-2).text,
+      /^Jenny at Moss & Stone Exterior Care wants to look this one over/,
     );
+    assert.match(held.view.messages.at(-1).text, /as soon as Jenny sends it/);
+
+    // Owners who'd rather hear from everyone first can ask for contact details before the price.
+    await owner.patch('/api/v1/app/settings').set('Origin', origin).send({ autoSend: true });
+    assert.equal((await setPage({ contactFirst: true }).expect(200)).body.data.contactFirst, true);
+    const asked = await quoted();
+    assert.equal(asked.view.status, 'sent', 'It shows once they leave their details');
+    assert.equal(asked.view.contact.name, 'Sam Kim');
+    const [askedUsage] = await rows('SELECT fee_cents FROM quote_usage WHERE quote_id=?', [
+      asked.quote.id,
+    ]);
+    assert.ok(askedUsage, 'A lead from the start');
+    await setPage({ contactFirst: false }).expect(200);
 
     // The weekly report says how each wording is doing.
     const { metricsReport, formatReport } = await import('../src/metrics.js');
     const report = await metricsReport(7);
-    assert.equal(report.acceptButton.wordings.length, 4);
+    assert.equal(report.acceptButton.wordings.length, 3);
     assert.match(formatReport(report), /The accept button/);
   },
 );

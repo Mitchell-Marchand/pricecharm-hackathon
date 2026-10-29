@@ -1,6 +1,5 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import { devTokensAllowed } from '../config.js';
 import { ApiError, ok, rateLimit } from '../http.js';
 import { verifyHuman } from '../human-check.js';
 import { imageUpload, saveImage, uploadSlot } from '../uploads.js';
@@ -14,10 +13,9 @@ import {
   chatView,
   customerDecision,
   customerMessage,
+  leaveContact,
   publicProfile,
-  requestContact,
   startChat,
-  verifyContact,
 } from './chat.js';
 import { recordEvent, recordRequestEvent, type EventProps } from '../metrics.js';
 
@@ -132,39 +130,51 @@ chatRouter.get('/chat/:slug/:chatId/photos/:photoId', async (req, res) => {
   res.type('image/jpeg').send(photo);
 });
 
+/** A name and an email or a phone number. Nothing is sent to check them. */
+const contactInput = z.object({
+  name: z.string().trim().min(1).max(160),
+  email: z.string().trim().max(254).default(''),
+  phone: z.string().trim().max(40).default(''),
+});
+
 chatRouter.post('/chat/:slug/:chatId/contact', rateLimit(10, 15 * 60_000), async (req, res) => {
-  const input = z
-    .object({ name: z.string().trim().min(1).max(160), email: z.string().max(254) })
+  const { purpose, ...input } = contactInput
+    .extend({ purpose: z.enum(['copy', 'question']).default('copy') })
     .strict()
     .parse(req.body);
-  const result = await requestContact(req, input, devTokensAllowed(req));
-  await customerEvent(req, 'customer_contact_given', { already_verified: Boolean(result.chat) });
+  const result = await leaveContact(req, input, purpose);
+  await customerEvent(req, 'customer_contact_given', {
+    purpose,
+    email: Boolean(input.email),
+    phone: Boolean(input.phone),
+  });
   res.json(ok(result));
 });
 
-chatRouter.post('/chat/:slug/:chatId/verify', rateLimit(20, 15 * 60_000), async (req, res) => {
-  const input = z
-    .object({ verificationId: z.uuid(), code: z.string().trim().max(10) })
+/**
+ * The customer opened a form to leave their details: for a yes, a visit, a copy or a question.
+ * Counted, so it shows how many finish it.
+ */
+chatRouter.post('/chat/:slug/:chatId/opened', rateLimit(30, 60_000), async (req, res) => {
+  const { form } = z
+    .object({ form: z.enum(['yes', 'visit', 'copy', 'question']) })
     .strict()
     .parse(req.body);
-  try {
-    const result = await verifyContact(req, input);
-    await customerEvent(req, 'customer_verified');
-    res.json(ok(result));
-  } catch (error) {
-    await customerEvent(req, 'customer_code_failed', {
-      code: error instanceof ApiError ? error.code : 'error',
-    }).catch(() => {});
-    throw error;
-  }
+  await customerEvent(req, 'customer_contact_opened', { form });
+  res.json(ok({ ok: true }));
 });
 
+/** A yes or a visit request, with the customer's details if they haven't left them yet. */
+const answerInput = contactInput.strict().optional();
+
 chatRouter.post('/chat/:slug/:chatId/accept', async (req, res) => {
-  res.json(ok(await customerDecision(req, 'accept')));
+  const contact = answerInput.parse(Object.keys(req.body ?? {}).length ? req.body : undefined);
+  res.json(ok(await customerDecision(req, 'accept', undefined, contact)));
 });
 
 chatRouter.post('/chat/:slug/:chatId/visit', async (req, res) => {
-  res.json(ok(await customerDecision(req, 'visit')));
+  const contact = answerInput.parse(Object.keys(req.body ?? {}).length ? req.body : undefined);
+  res.json(ok(await customerDecision(req, 'visit', undefined, contact)));
 });
 
 /** Not going ahead, and why. It's how the business learns which prices lose jobs. */

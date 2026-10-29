@@ -38,7 +38,8 @@ export interface ChatView {
   test: boolean;
   serviceName: string;
   messages: ChatMessage[];
-  contact: { name: string; email: string | null; verified: boolean };
+  /** phone is missing from older APIs. */
+  contact: { name: string; email: string | null; phone?: string | null };
   quote: {
     id: string;
     status: string;
@@ -126,23 +127,36 @@ export function sendPhoto(slug: string, access: ChatAccess, blob: Blob) {
   });
 }
 
-export const requestCode = (slug: string, access: ChatAccess, name: string, email: string) =>
-  api<{ verificationId: string | null; devCode?: string; chat: ChatView | null }>(
-    `${base(slug, access)}/contact`,
-    { method: 'POST', headers: auth(access), ...json({ name, email }) },
-  );
+/** A name and a way to reach them: an email, a phone number, or both. */
+export type Contact = { name: string; email: string; phone: string };
 
-export const verifyCode = (
+/**
+ * Where the customer leaves their details: before the price, when the owner asks for that; for a
+ * quote that waits for the owner; or on a quote they can see, for a copy or a question.
+ */
+export const leaveContact = (
   slug: string,
   access: ChatAccess,
-  verificationId: string,
-  code: string,
+  contact: Contact,
+  purpose: 'copy' | 'question' = 'copy',
 ) =>
-  api<ChatView>(`${base(slug, access)}/verify`, {
+  api<{ chat: ChatView | null }>(`${base(slug, access)}/contact`, {
     method: 'POST',
     headers: auth(access),
-    ...json({ verificationId, code }),
+    ...json({ ...contact, purpose }),
   });
+
+/** Counts the customer opening a form for their details, so it shows how many finish it. */
+export const openedForm = (
+  slug: string,
+  access: ChatAccess,
+  form: 'yes' | 'visit' | 'copy' | 'question',
+) =>
+  api<{ ok: boolean }>(`${base(slug, access)}/opened`, {
+    method: 'POST',
+    headers: auth(access),
+    ...json({ form }),
+  }).catch(() => {});
 
 /** Why a customer isn't going ahead. The API keeps the same list. */
 export const LOSS_REASONS = [
@@ -154,16 +168,19 @@ export const LOSS_REASONS = [
 ] as const;
 export type LossReason = (typeof LOSS_REASONS)[number]['id'];
 
+/** A yes or a visit request carries the customer's details, unless they left them already. */
 export const decide = (
   slug: string,
   access: ChatAccess,
   decision: 'accept' | 'visit' | 'decline',
-  reason?: LossReason,
+  answer?: { reason?: LossReason; contact?: Contact },
 ) =>
   api<ChatView>(`${base(slug, access)}/${decision}`, {
     method: 'POST',
     headers: auth(access),
-    ...json(decision === 'decline' ? { reason: reason ?? 'other' } : {}),
+    ...json(
+      decision === 'decline' ? { reason: answer?.reason ?? 'other' } : (answer?.contact ?? {}),
+    ),
   });
 
 /** Chat photos need the chat's token, so they're fetched and shown as local object URLs. */

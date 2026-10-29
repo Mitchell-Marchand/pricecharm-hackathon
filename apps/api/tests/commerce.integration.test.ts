@@ -67,8 +67,8 @@ test(
       newPassword = 'new commerce password456';
     let businessId = '',
       slug = '';
-    /** A customer chat on business A's quote link, asking for a code at this email. */
-    async function chatWithCode(email = 'Customer@Example.Test') {
+    /** A customer chat on business A's quote link, leaving their name and this email. */
+    async function chatWithContact(email = 'Customer@Example.Test') {
       const started = await guest
         .post(`/api/v1/chat/${slug}/start`)
         .set('Origin', origin)
@@ -84,12 +84,7 @@ test(
           .send(body);
       const contact = await call('/contact', { name: 'Test Customer', email });
       assert.equal(contact.status, 200, JSON.stringify(contact.body));
-      return {
-        id: String(started.body.data.chat.id),
-        call,
-        verificationId: String(contact.body.data.verificationId),
-        devCode: String(contact.body.data.devCode),
-      };
+      return { id: String(started.body.data.chat.id), call, chat: contact.body.data.chat };
     }
     /** A quote a customer received, recorded in the fee ledger once. */
     async function record(quoteId: string, totalCents = 10000) {
@@ -259,59 +254,17 @@ test(
       assert.equal(deployed.body.data.linkOn, true);
       assert.equal((await guest.get(`/api/v1/chat/${slug}`)).body.data.taking, true);
 
-      // Customer email codes: one at a time, for this chat only, five tries, ten minutes.
-      const contact = await chatWithCode();
-      assert.match(contact.devCode, /^\d{6}$/);
-      const again = await contact.call('/contact', {
-        name: 'Test Customer',
-        email: 'customer@example.test',
-      });
-      assert.equal(again.body.error.code, 'CODE_RATE_LIMIT');
+      // Customers' details are taken as they type them, with no code, and only on their own chat.
+      const contact = await chatWithContact();
+      assert.equal(contact.chat.contact.email, 'customer@example.test');
+      assert.equal(contact.chat.status, 'chatting', 'Still describing the job');
       const otherSlug = String(other.body.data.business.slug);
       const elsewhere = await contact.call(
-        '/verify',
-        { verificationId: contact.verificationId, code: contact.devCode },
+        '/contact',
+        { name: 'Test Customer', email: 'customer@example.test' },
         `/api/v1/chat/${otherSlug}/${contact.id}`,
       );
       assert.equal(elsewhere.status, 404, 'A chat token only works on its own business');
-      const wrong = await contact.call('/verify', {
-        verificationId: contact.verificationId,
-        code: contact.devCode === '000000' ? '111111' : '000000',
-      });
-      assert.equal(wrong.body.error.code, 'CODE_INVALID');
-      const verified = await contact.call('/verify', {
-        verificationId: contact.verificationId,
-        code: contact.devCode,
-      });
-      assert.equal(verified.status, 200, JSON.stringify(verified.body));
-      assert.equal(verified.body.data.contact.email, 'customer@example.test');
-      assert.equal(verified.body.data.contact.verified, true);
-      const reused = await contact.call('/verify', {
-        verificationId: contact.verificationId,
-        code: contact.devCode,
-      });
-      assert.equal(reused.status, 400, 'A code works once');
-      const exhausted = await chatWithCode('other@example.test');
-      for (let i = 0; i < 5; i++)
-        await exhausted.call('/verify', {
-          verificationId: exhausted.verificationId,
-          code: exhausted.devCode === '000000' ? '111111' : '000000',
-        });
-      const tooLate = await exhausted.call('/verify', {
-        verificationId: exhausted.verificationId,
-        code: exhausted.devCode,
-      });
-      assert.equal(tooLate.status, 400, 'Five wrong tries use the code up');
-      const stale = await chatWithCode('stale@example.test');
-      await mutate(
-        'UPDATE contact_verifications SET expires_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
-        [stale.verificationId],
-      );
-      const expiredCode = await stale.call('/verify', {
-        verificationId: stale.verificationId,
-        code: stale.devCode,
-      });
-      assert.equal(expiredCode.status, 400, 'Codes expire');
 
       const payload = {
         to: 'customer@example.test',

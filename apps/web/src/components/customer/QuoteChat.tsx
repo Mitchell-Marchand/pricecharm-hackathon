@@ -19,19 +19,20 @@ import {
   decide,
   greeting,
   loadChat,
+  leaveContact,
   LOSS_REASONS,
+  openedForm,
   photoUrl,
-  requestCode,
   saveAccess,
   savedAccess,
   sendMessage,
   sendPhoto,
   startChat,
-  verifyCode,
   type BusinessProfile,
   type ChatAccess,
   type ChatMessage,
   type ChatView,
+  type Contact,
   type LossReason,
 } from '@/lib/chat';
 import { useHumanCheck } from '@/lib/human-check';
@@ -43,12 +44,18 @@ import { cx, readPhoto } from '@/lib/util';
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ASKS_FOR_PHOTO = /\b(photo|picture|pic)s?\b/i;
 
+/** Seven to fifteen digits, written any usual way. */
+const isPhone = (value: string) =>
+  /^\+?[\d\s().-]+$/.test(value) && /^\d{7,15}$/.test(value.replace(/\D/g, ''));
+
 type Pending = { text?: string; photo?: string };
-type Verification = { id: string; email: string; devCode?: string };
+/** Why the customer is leaving their details, on a quote they can see. */
+type Form = 'yes' | 'visit' | 'copy' | 'question';
 
 /**
- * What a customer sees on the quote link and the website widget: a short chat, their email
- * confirmed with a code, then the quote itself.
+ * What a customer sees on the quote link and the website widget: a short chat, then the quote
+ * itself. They leave their name and a phone number or email when they say yes, ask for a visit,
+ * want a copy or ask a question. Owners can ask for those before the price shows instead.
  */
 export function QuoteChat({
   slug,
@@ -72,10 +79,8 @@ export function QuoteChat({
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [code, setCode] = useState('');
-  const [verification, setVerification] = useState<Verification | null>(null);
+  const [contact, setContact] = useState<Contact>({ name: '', email: '', phone: '' });
+  const [form, setForm] = useState<Form | null>(null);
   const [freshQuote, setFreshQuote] = useState(false);
   const human = useHumanCheck('quote_chat', !access);
   const scroller = useRef<HTMLDivElement>(null);
@@ -201,38 +206,48 @@ export function QuoteChat({
     }
   }
 
-  async function submitContact(event: FormEvent) {
-    event.preventDefault();
-    if (!access || busy || !name.trim() || !EMAIL.test(email.trim())) return;
+  // Their details, once they're good to send: an email for a copy, otherwise a phone or an email.
+  const typed = {
+    name: contact.name.trim(),
+    email: contact.email.trim(),
+    phone: contact.phone.trim(),
+  };
+  const contactReady =
+    !!typed.name &&
+    (!typed.email || EMAIL.test(typed.email)) &&
+    (!typed.phone || isPhone(typed.phone)) &&
+    (form === 'copy' ? !!typed.email : !!typed.email || !!typed.phone);
+
+  function openForm(next: Form) {
     setError('');
-    setBusy(true);
-    try {
-      const result = await requestCode(slug, access, name.trim(), email.trim());
-      if (result.chat) update(result.chat);
-      else if (result.verificationId)
-        setVerification({
-          id: result.verificationId,
-          email: email.trim(),
-          devCode: result.devCode,
-        });
-    } catch (contactError) {
-      setError(errorMessage(contactError));
-    } finally {
-      setBusy(false);
-    }
+    setDeclining(false);
+    setForm(next);
+    if (access) void openedForm(slug, access, next);
   }
 
-  async function submitCode(event: FormEvent) {
+  async function submitContact(event: FormEvent) {
     event.preventDefault();
-    if (!access || !verification || busy || code.length !== 6) return;
+    if (!access || busy || !contactReady) return;
     setError('');
     setBusy(true);
+    stickToBottom();
     try {
-      update(await verifyCode(slug, access, verification.id, code));
-      setVerification(null);
-      setCode('');
-    } catch (codeError) {
-      setError(errorMessage(codeError));
+      if (form === 'yes' || form === 'visit')
+        update(await decide(slug, access, form === 'yes' ? 'accept' : 'visit', { contact: typed }));
+      else {
+        const result = await leaveContact(
+          slug,
+          access,
+          typed,
+          form === 'question' ? 'question' : 'copy',
+        );
+        if (result.chat) update(result.chat);
+      }
+      const asking = form === 'question';
+      setForm(null);
+      if (asking) window.setTimeout(() => composer.current?.focus(), 0);
+    } catch (contactError) {
+      setError(errorMessage(contactError));
     } finally {
       setBusy(false);
     }
@@ -244,7 +259,7 @@ export function QuoteChat({
     setBusy(true);
     stickToBottom();
     try {
-      update(await decide(slug, access, decision, reason));
+      update(await decide(slug, access, decision, { reason }));
       setDeclining(false);
     } catch (decideError) {
       setError(errorMessage(decideError));
@@ -257,7 +272,7 @@ export function QuoteChat({
     saveAccess(slug, null);
     setAccess(null);
     setChat(null);
-    setVerification(null);
+    setForm(null);
     setFreshQuote(false);
     setError('');
     setDraft('');
@@ -277,7 +292,13 @@ export function QuoteChat({
   const asksForPhoto =
     status === 'chatting' && !!lastFromAssistant && ASKS_FOR_PHOTO.test(lastFromAssistant.text);
   const finished = ['accepted', 'visit', 'closed'].includes(status);
-  const canType = ['chatting', 'review', 'sent', 'accepted', 'visit'].includes(status);
+  const reachable = !!(chat?.contact.email || chat?.contact.phone);
+  // Someone who has only looked at their quote leaves their details before asking something, so
+  // the answer can reach them.
+  const canType =
+    ['chatting', 'review', 'sent', 'accepted', 'visit'].includes(status) &&
+    !form &&
+    (status !== 'sent' || reachable);
 
   // The quote card sits right after the message that announced it.
   const messages = chat?.messages ?? [];
@@ -288,6 +309,28 @@ export function QuoteChat({
         return index === -1 ? messages.length - 1 : index;
       })()
     : -2;
+
+  // The form for their details: before the price when the owner asks for that, for a quote that
+  // waits for the owner, or for what they chose on the quote.
+  const shownForm =
+    status === 'contact'
+      ? chat?.waitingForOwner
+        ? ('review' as const)
+        : ('first' as const)
+      : form && quoteOpen
+        ? form
+        : null;
+  const ASK = {
+    first: { title: 'Where should we send your quote?', submit: 'See my quote' },
+    review: { title: '', submit: 'Send it to me' },
+    yes: { title: `Where can ${ownerName} reach you to book?`, submit: `Let ${ownerName} know` },
+    visit: {
+      title: `Where can ${ownerName} reach you to set up a visit?`,
+      submit: 'Ask for a visit',
+    },
+    copy: { title: 'Where should we email it?', submit: 'Email it to me' },
+    question: { title: `Where can ${ownerName} answer you?`, submit: 'Next' },
+  };
 
   const placeholder =
     status === 'review'
@@ -362,19 +405,35 @@ export function QuoteChat({
                           <PaperButton
                             primary
                             disabled={busy}
-                            onClick={() => void choose('accept')}
+                            onClick={() => (reachable ? void choose('accept') : openForm('yes'))}
                           >
-                            <Check aria-hidden /> {chat.quote.acceptLabel || 'Accept quote'}
+                            <Check aria-hidden /> {chat.quote.acceptLabel || 'Looks good to me'}
                           </PaperButton>
-                          <PaperButton onClick={() => composer.current?.focus()}>
+                          <p className="basis-full text-center text-[13px] text-paper-muted">
+                            No payment now. {ownerName} will reach out to book a time.
+                          </p>
+                          <PaperButton
+                            onClick={() =>
+                              reachable ? composer.current?.focus() : openForm('question')
+                            }
+                          >
                             Ask a question
                           </PaperButton>
-                          <PaperButton disabled={busy} onClick={() => void choose('visit')}>
+                          {!chat.contact.email && (
+                            <PaperButton disabled={busy} onClick={() => openForm('copy')}>
+                              Email me a copy
+                            </PaperButton>
+                          )}
+                          <PaperButton
+                            disabled={busy}
+                            onClick={() => (reachable ? void choose('visit') : openForm('visit'))}
+                          >
                             Request a site visit
                           </PaperButton>
                           <PaperButton
                             disabled={busy}
                             onClick={() => {
+                              setForm(null);
                               setDeclining(true);
                               stickToBottom();
                             }}
@@ -429,15 +488,14 @@ export function QuoteChat({
               </CustomerBubble>
             </div>
           )}
-          {busy &&
-            (status === 'chatting' || verification || (chat?.test && status === 'contact')) && (
-              <Typing
-                name={profile.name}
-                initials={profile.initials}
-                tone="blue"
-                logo={profile.logo}
-              />
-            )}
+          {busy && (status === 'chatting' || status === 'contact') && (
+            <Typing
+              name={profile.name}
+              initials={profile.initials}
+              tone="blue"
+              logo={profile.logo}
+            />
+          )}
         </div>
       </div>
 
@@ -478,35 +536,71 @@ export function QuoteChat({
           </div>
         )}
 
-        {status === 'contact' && !verification && (
-          <form className="flex flex-col gap-2" onSubmit={submitContact}>
-            <p className="text-sm text-ink-2">Where should we send your quote?</p>
-            <label htmlFor="chat-name" className="sr-only">
-              Your name
-            </label>
-            <TextInput
-              id="chat-name"
-              autoComplete="name"
-              placeholder="Your name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
-            <label htmlFor="chat-email" className="sr-only">
-              Your email
-            </label>
-            <TextInput
-              id="chat-email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-            <Button type="submit" disabled={busy || !name.trim() || !EMAIL.test(email.trim())}>
-              {chat?.test ? 'See my quote' : 'Send me a code'}
-            </Button>
+        {shownForm && (
+          <form className="fade-up flex flex-col gap-2" onSubmit={submitContact}>
+            {ASK[shownForm].title && <p className="text-sm text-ink-2">{ASK[shownForm].title}</p>}
+            <div>
+              <label htmlFor="chat-name" className="sr-only">
+                Your name
+              </label>
+              <TextInput
+                id="chat-name"
+                autoComplete="name"
+                placeholder="Your name"
+                value={contact.name}
+                onChange={(event) => setContact({ ...contact, name: event.target.value })}
+              />
+            </div>
+            <div className={cx('grid gap-2', shownForm !== 'copy' && 'sm:grid-cols-2')}>
+              {shownForm !== 'copy' && (
+                <div>
+                  <label htmlFor="chat-phone" className="sr-only">
+                    Your phone number
+                  </label>
+                  <TextInput
+                    id="chat-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="Phone"
+                    value={contact.phone}
+                    onChange={(event) => setContact({ ...contact, phone: event.target.value })}
+                  />
+                </div>
+              )}
+              <div>
+                <label htmlFor="chat-email" className="sr-only">
+                  Your email
+                </label>
+                <TextInput
+                  id="chat-email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="Email"
+                  value={contact.email}
+                  onChange={(event) => setContact({ ...contact, email: event.target.value })}
+                />
+              </div>
+            </div>
+            {shownForm !== 'copy' && (
+              <p className="text-xs text-muted">A phone number or an email is enough.</p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Button type="submit" disabled={busy || !contactReady}>
+                {ASK[shownForm].submit}
+              </Button>
+              {form && (
+                <button
+                  type="button"
+                  onClick={() => setForm(null)}
+                  className="text-sm text-muted underline underline-offset-4 hover:text-ink"
+                >
+                  Not now
+                </button>
+              )}
+            </div>
             <p className="text-xs text-muted">
-              {profile.name} gets your name, email and this chat so they can reply.{' '}
+              {profile.name} gets your name, how to reach you and this chat so they can reply.{' '}
               <a
                 href="/privacy"
                 target="_blank"
@@ -519,62 +613,13 @@ export function QuoteChat({
           </form>
         )}
 
-        {verification && (
-          <form className="flex flex-col gap-2" onSubmit={submitCode}>
-            <label htmlFor="chat-code" className="text-sm text-ink-2">
-              We sent a 6-digit code to <span className="font-semibold">{verification.email}</span>.
-              Enter it to see your quote.
-            </label>
-            <div className="flex gap-2">
-              <TextInput
-                id="chat-code"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                placeholder="123456"
-                value={code}
-                onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                className="font-mono tracking-[0.3em]"
-              />
-              <Button type="submit" disabled={busy || code.length !== 6}>
-                See my quote
-              </Button>
-            </div>
-            {verification.devCode && (
-              <p className="text-xs text-muted">
-                Local test code: <span className="font-mono">{verification.devCode}</span>
-              </p>
-            )}
-            <div className="flex flex-wrap gap-x-4 text-sm">
-              <button
-                type="button"
-                className="text-accent underline underline-offset-4"
-                disabled={busy}
-                onClick={(event) => void submitContact(event)}
-              >
-                Send a new code
-              </button>
-              <button
-                type="button"
-                className="text-accent underline underline-offset-4"
-                onClick={() => {
-                  setVerification(null);
-                  setCode('');
-                  setError('');
-                }}
-              >
-                Use a different email
-              </button>
-            </div>
-          </form>
-        )}
-
         {status === 'quoting' && (
           <p className="py-2 text-sm text-muted">Putting your quote together…</p>
         )}
 
         {status === 'closed' && <p className="py-1 text-sm text-muted">This request is closed.</p>}
 
-        {canType && !restoring && !verification && (
+        {canType && !restoring && (
           <form
             className="flex items-center gap-2"
             onSubmit={(event) => {

@@ -27,7 +27,7 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 | --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
 | Setup     | `/onboarding` (start, business, step, resume link), `/onboarding/jobs`, `/onboarding/photos`, `/onboarding/practice/*`, `/onboarding/profile`, `/onboarding/knows` with questions and notes (what the chat asks, each service's rate, notes every draft follows) | A draft or a signed-in owner |
 | Accounts  | `/auth/register`, `/login`, `/logout`, `/me`, `/forgot-password`, `/reset-password`, `/request-verification`, `/verify-email`                 | Anyone, or the owner         |
-| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, verify, accept, visit; `/chat/:slug/logo/:id`                           | Anyone with the chat token   |
+| Customers | `/chat/:slug` and `/chat/:slug/:chatId/*`: messages, photos, contact, opened, accept, visit, decline; `/chat/:slug/logo/:id`                           | Anyone with the chat token   |
 | Demo      | `/demo/start` (bot check), `/demo/turn`, `/demo/quote`: the live demo with the sample businesses                                              | Anyone with a demo pass      |
 | Quotes    | `/app/home`, `/app/quotes`, `/app/quotes/:id` with approve, decline and messages; `/app/profile`, `/app/settings`, `/app/billing`             | The owner                    |
 | Quote page | `/app/quote-page` (logo, the name customers hear from, the lines after a yes or a visit request, the accept button's words), `/app/quote-page/logo` | The owner                    |
@@ -45,11 +45,11 @@ Everything is under `/api/v1`. Success bodies are `{ "data": ... }` and failures
 
 **Pricing.** The AI drafts line items only from this business's own past jobs, practice quotes and the lessons the owner confirmed. The server adds them up and checks the result: it must be priced, under the owner's limit, for a listed service, inside the area, and close to what similar past jobs cost. Anything that fails a check, or any quote while automatic sending is off, waits for the owner.
 
-**Customers.** A chat token, stored only as a hash, scopes each customer to their own chat. Customers confirm their email with a six-digit code (five tries, ten minutes) before they see a price. Emailed links carry a separate token in the URL fragment. An owner chatting with their own link gets a test chat that is never emailed or billed.
+**Customers.** A chat token, stored only as a hash, scopes each customer to their own chat. Customers see their quote as soon as the chat has the details. They leave their name and a phone number or email when they say yes, ask for a visit, want a copy or ask a question; nothing is sent to check them. A quote that waits for the owner asks for them first, and owners can ask for them before every price (`contact_first`). Emailed links carry a separate token in the URL fragment. An owner chatting with their own link gets a test chat that is never emailed or billed.
 
 **The live demo.** Visitors to the website can chat with a sample business for any trade and get a quote. The sample businesses and prices live in `@pricecharm/trades/demos`, on the server, so a visitor can't change them. Each demo chat starts with a bot check that earns a signed pass, good for an hour. Demo AI calls have their own daily pool inside the app-wide one, plus caps per visitor and per chat. Messages are short, nothing is saved, and replies or quote lines with links, emails or phone numbers are replaced.
 
-**Billing.** Each quote a verified customer receives has a fee (1% by default, at least $1 and at most $25), recorded once in `quote_usage` and reported to Stripe by the worker. Owners add a payment method before their first customer quote; until then, quotes wait for them. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
+**Billing.** Each quote a customer leaves their contact details on has a fee (1% by default, at least $1 and at most $25), recorded once in `quote_usage` and reported to Stripe by the worker. Owners add a payment method before their first customer quote; until then, quotes wait for them. See [deploy/COMMERCE.md](deploy/COMMERCE.md).
 
 ## Photos and AI allowances
 

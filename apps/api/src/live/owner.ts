@@ -44,13 +44,22 @@ const FILTERS = {
   all: '1=1',
 } as const;
 
+/**
+ * A quote that would wait for the owner, from a customer who hasn't said where to send it. It
+ * isn't anyone's request until they do, so the owner doesn't see it.
+ */
+const ASKING_FOR_CONTACT = "c.status='contact'";
+
 function listItem(row: Record<string, any>) {
   const card = json<Partial<Quote>>(row.quote_json, {});
+  const reachable = Boolean(row.customer_email || row.customer_phone);
   return {
     id: String(row.id),
     number: Number(row.number),
     status: String(row.status),
-    customer: String(row.customer_name || 'A customer'),
+    customer: String(row.customer_name || (reachable ? 'A customer' : 'Visitor')),
+    /** The customer left a phone number or an email. Someone who only looked didn't. */
+    reachable,
     serviceName: String(row.service_name || ''),
     totalCents: Number(row.total_cents),
     /** What the customer sees instead of the total, for a range quote. */
@@ -67,12 +76,13 @@ ownerQuotesRouter.get('/app/home', async (req, res) => {
     `SELECT COALESCE(SUM(q.status='review'),0) review,
       COALESCE(SUM(q.status IN ('sent','accepted','visit_requested') AND q.sent_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) sent,
       COALESCE(SUM(q.status IN ('accepted') AND q.decided_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) accepted
-      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id WHERE q.business_id=? AND c.source<>'test'`,
+      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
+      WHERE q.business_id=? AND c.source<>'test' AND NOT ${ASKING_FOR_CONTACT}`,
     [businessId],
   );
   const waiting = await rows(
-    `SELECT q.*,c.customer_name,c.service_name,c.source FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
-     WHERE q.business_id=? AND q.status='review' ORDER BY q.created_at DESC LIMIT 10`,
+    `SELECT q.*,c.customer_name,c.customer_email,c.customer_phone,c.service_name,c.source FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
+     WHERE q.business_id=? AND q.status='review' AND NOT ${ASKING_FOR_CONTACT} ORDER BY q.created_at DESC LIMIT 10`,
     [businessId],
   );
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
@@ -105,8 +115,8 @@ ownerQuotesRouter.get('/app/quotes', async (req, res) => {
     .default('all')
     .parse(req.query.filter ?? undefined);
   const items = await rows(
-    `SELECT q.*,c.customer_name,c.service_name,c.source FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
-     WHERE q.business_id=? AND ${FILTERS[filter]} ORDER BY q.created_at DESC LIMIT 200`,
+    `SELECT q.*,c.customer_name,c.customer_email,c.customer_phone,c.service_name,c.source FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
+     WHERE q.business_id=? AND ${FILTERS[filter]} AND NOT ${ASKING_FOR_CONTACT} ORDER BY q.created_at DESC LIMIT 200`,
     [businessId],
   );
   res.json(ok(items.map(listItem)));
@@ -114,7 +124,7 @@ ownerQuotesRouter.get('/app/quotes', async (req, res) => {
 
 async function quoteDetail(businessId: string, quoteId: string) {
   const [quote] = await rows(
-    `SELECT q.*,c.customer_name,c.customer_email,c.service_name,c.source,c.summary,c.spec_json,c.id AS chat_id
+    `SELECT q.*,c.customer_name,c.customer_email,c.customer_phone,c.service_name,c.source,c.summary,c.spec_json,c.id AS chat_id
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id WHERE q.id=? AND q.business_id=?`,
     [quoteId, businessId],
   );
@@ -128,6 +138,7 @@ async function quoteDetail(businessId: string, quoteId: string) {
   return {
     ...listItem(quote),
     customerEmail: quote.customer_email ? String(quote.customer_email) : null,
+    customerPhone: quote.customer_phone ? String(quote.customer_phone) : null,
     summary: String(quote.summary || ''),
     /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
     details: describeSpec(json<JobSpec | null>(quote.spec_json, null)),
@@ -188,6 +199,13 @@ export async function sendWaitingQuote(
 ): Promise<void> {
   if (quote.status !== 'review')
     throw new ApiError(409, 'QUOTE_NOT_WAITING', 'This quote has already gone out.');
+  const [chat] = await rows(
+    'SELECT status FROM lead_chats WHERE id=?',
+    [quote.chat_id],
+    connection,
+  );
+  if (chat?.status === 'contact')
+    throw new ApiError(409, 'NO_CONTACT', 'This customer hasn’t said where to send it yet.');
   const drafted = Number(quote.total_cents);
   if (edits || style) {
     // A range follows the owner's new price; they can also send it firm, or as an estimate.

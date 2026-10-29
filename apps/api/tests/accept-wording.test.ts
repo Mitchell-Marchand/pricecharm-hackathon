@@ -30,29 +30,28 @@ test('every accept-button wording is a plain yes that fits on a phone button', (
 });
 
 test('with nothing to go on, each wording gets about the same share of quotes', () => {
-  for (const [id, share] of shares([])) assert.ok(share > 0.18 && share < 0.32, `${id}: ${share}`);
+  for (const [id, share] of shares([])) assert.ok(share > 0.25 && share < 0.42, `${id}: ${share}`);
 });
 
 test('a wording that gets more yeses gets most quotes, and the others keep being tried', () => {
   const stats = [
-    { id: 'accept', seen: 400, accepted: 60 },
-    { id: 'book', seen: 400, accepted: 160 },
+    { id: 'looks_good', seen: 400, accepted: 160 },
     { id: 'works', seen: 400, accepted: 64 },
     { id: 'do_it', seen: 400, accepted: 56 },
   ];
   const picked = shares(stats);
-  assert.ok(picked.get('book')! > 0.6, `book: ${picked.get('book')}`);
-  for (const id of ['accept', 'works', 'do_it'])
-    assert.ok(picked.get(id)! >= 0.08, `${id} still gets tried: ${picked.get(id)}`);
+  assert.ok(picked.get('looks_good')! > 0.6, `looks_good: ${picked.get('looks_good')}`);
+  for (const id of ['works', 'do_it'])
+    assert.ok(picked.get(id)! >= 0.1, `${id} still gets tried: ${picked.get(id)}`);
   const best = chanceBest(stats, 2000, seeded(3));
-  assert.ok(best.get('book')! > 0.99);
+  assert.ok(best.get('looks_good')! > 0.99);
   const total = [...best.values()].reduce((sum, value) => sum + value, 0);
   assert.ok(Math.abs(total - 1) < 1e-9);
 });
 
 test('a handful of answers is not enough to settle it', () => {
   const picked = shares([
-    { id: 'book', seen: 3, accepted: 2 },
+    { id: 'looks_good', seen: 3, accepted: 2 },
     { id: 'works', seen: 3, accepted: 1 },
   ]);
   for (const [id, share] of picked) assert.ok(share > 0.1, `${id}: ${share}`);

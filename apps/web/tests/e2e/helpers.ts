@@ -8,8 +8,8 @@ export const OWNER_PASSWORD = 'test password strong123';
  * A signed-up business with three past driveway jobs, set up through the API. It's live unless
  * asked otherwise, done the way an owner does it: a plan, a card, then going live. New accounts
  * quote on their own; this owner has their Charm check with them first unless asked otherwise.
- * Its accept button says "Accept quote", rather than one of the wordings PriceCharm tries, unless
- * acceptLabel is empty.
+ * Its accept button always says "Looks good to me", rather than one of the wordings PriceCharm
+ * tries, unless acceptLabel is empty.
  */
 export async function createBusiness(
   browser: Browser,
@@ -17,7 +17,7 @@ export async function createBusiness(
   {
     billing = true,
     autoSend = false,
-    acceptLabel = 'Accept quote',
+    acceptLabel = 'Looks good to me',
   }: { billing?: boolean; autoSend?: boolean; acceptLabel?: string } = {},
 ) {
   const context = await browser.newContext({ baseURL });
@@ -77,7 +77,10 @@ export async function createBusiness(
   };
 }
 
-/** A customer asks for a quote through the API, so it waits for the owner. Returns the chat. */
+/**
+ * A customer asks for a quote through the API, and says where to send it, since it waits for the
+ * owner. Returns the chat.
+ */
 export async function waitingQuote(baseURL: string, slug: string, name: string) {
   const customer = await request.newContext({
     baseURL,
@@ -89,19 +92,11 @@ export async function waitingQuote(baseURL: string, slug: string, name: string) 
   const base = `/api/v1/chat/${slug}/${started.chat.id}`;
   for (const text of ['Driveways', 'About 600 sq ft, two cars.', 'Skip photos'])
     await customer.post(`${base}/messages`, { headers: auth, data: { text } });
-  const contact = (
-    await (
-      await customer.post(`${base}/contact`, {
-        headers: auth,
-        data: { name, email: `${name.split(' ')[0].toLowerCase()}@example.test` },
-      })
-    ).json()
-  ).data;
-  const verified = await customer.post(`${base}/verify`, {
+  const contact = await customer.post(`${base}/contact`, {
     headers: auth,
-    data: { verificationId: contact.verificationId, code: contact.devCode },
+    data: { name, email: `${name.split(' ')[0].toLowerCase()}@example.test` },
   });
-  expect(verified.ok(), await verified.text()).toBe(true);
+  expect(contact.ok(), await contact.text()).toBe(true);
   await customer.dispose();
   return String(started.chat.id);
 }

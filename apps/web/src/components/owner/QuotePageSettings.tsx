@@ -24,7 +24,7 @@ const initialsOf = (name: string) =>
     .map((word) => word[0].toUpperCase())
     .join('');
 
-/** “Accept quote”, “Book it” and “Works for me” */
+/** “Looks good to me”, “Works for me” and “Let’s do it” */
 const listed = (items: string[]) =>
   items
     .map((item) => `“${item}”`)
@@ -43,7 +43,8 @@ function drafts(page: QuotePage) {
 
 /**
  * What customers see on the quote link and the website button: the logo, who they hear from, what
- * the chat says after a yes or a visit request, and the words on the accept button.
+ * the chat says after a yes or a visit request, the words on the accept button, and whether they
+ * see the price before leaving their details.
  */
 export function QuotePageSettings({ business }: { business: string }) {
   const notify = useToast();
@@ -78,7 +79,10 @@ export function QuotePageSettings({ business }: { business: string }) {
   if (unavailable) return <p className="text-sm text-muted">{unavailable}</p>;
   if (!page || !text) return <div className="shimmer h-40 rounded-md" />;
 
-  const save = (patch: Partial<QuotePageText>, saved: (next: QuotePage) => string) =>
+  const save = (
+    patch: Partial<QuotePageText> & { contactFirst?: boolean },
+    saved: (next: QuotePage) => string,
+  ) =>
     saveQuotePage(patch)
       .then((next) => {
         show(next);
@@ -227,7 +231,7 @@ export function QuotePageSettings({ business }: { business: string }) {
         htmlFor="page-button-choice"
         hint={
           ownWords
-            ? 'Keep it a clear yes. Tapping it accepts the quote.'
+            ? 'Keep it a clear yes. Tapping it is how customers accept.'
             : `PriceCharm tries ${listed(page.wordings)} with customers, and leans toward the ones they say yes to most.`
         }
       >
@@ -283,6 +287,34 @@ export function QuotePageSettings({ business }: { business: string }) {
             </div>
           </div>
         )}
+      </Field>
+
+      <Field
+        label="When customers see the price"
+        htmlFor="page-contact-first"
+        hint={
+          page.contactFirst
+            ? 'They give a name and a phone number or email before the price shows. Fewer people get that far, but you hear from everyone who does.'
+            : 'Straight away. They leave a phone number or email when they say yes, ask for a visit or want a copy. More people get to a price this way.'
+        }
+      >
+        <div id="page-contact-first">
+          <Segmented
+            label="When customers see the price"
+            value={page.contactFirst ? 'contact' : 'price'}
+            onChange={(value) =>
+              save({ contactFirst: value === 'contact' }, (next) =>
+                next.contactFirst
+                  ? 'Saved. Customers leave their details before the price shows.'
+                  : 'Saved. Customers see their price straight away.',
+              )
+            }
+            options={[
+              { value: 'price', label: 'Show the price first' },
+              { value: 'contact', label: 'Ask for contact first' },
+            ]}
+          />
+        </div>
       </Field>
     </div>
   );

@@ -18,13 +18,14 @@ import { ApiError } from '../http.js';
 
 /**
  * Billing for quotes from the customer chat, on the plan the owner chose:
- * - $2 for each quote a verified customer receives;
+ * - $2 for each quote a customer leaves their contact details on: a yes, a visit request, or a
+ *   copy to their inbox. Seeing the price costs the owner nothing;
  * - 1% of each quote a customer accepts, charged when they accept;
  * - a subscription that covers a set number of quotes a month, then a fee for each one past it.
  * A payment method has to be on file first. An account can have `trial_quote_limit` free quotes
  * before that (none by default). For 30 days after the first card, quote fees on any plan stop at
- * the first-month max, and quotes past it still go out. Owner tests and repeat sends are never
- * billed.
+ * the first-month max, and quotes past it still go out. Owner tests, repeat sends and a second
+ * quote to the same customer within a week are never billed.
  */
 const LIVE_SOURCES = "('live_auto','live_owner')";
 const MONTH_START = "DATE_FORMAT(UTC_DATE(),'%Y-%m-01')";
@@ -148,10 +149,26 @@ export async function liveBillingSummary(businessId: string) {
   });
 }
 
-/** Records one delivered quote, once. Call in the transaction that shows it to the customer. */
+/**
+ * Records one quote that reached a customer who left their contact details, once. Call it in the
+ * transaction that gives the owner the lead.
+ *
+ * A customer saying yes is never turned away over the owner's billing: past their spending limit,
+ * or with their card failing since the quote showed, the lead is recorded with no fee. Neither is a
+ * second quote to the same customer within a week, so one person can't run up the owner's bill.
+ */
 export async function recordLiveDelivery(
   connection: Sql,
-  input: { businessId: string; quoteId: string; totalCents: number; sentBy: 'auto' | 'owner' },
+  input: {
+    businessId: string;
+    quoteId: string;
+    totalCents: number;
+    sentBy: 'auto' | 'owner';
+    /** The customer is leaving their details now, rather than the owner sending it. */
+    byCustomer?: boolean;
+    /** This customer already had a quote from the business in the last week. */
+    repeat?: boolean;
+  },
 ): Promise<{ recorded: boolean; feeCents: number }> {
   const [existing] = await rows(
     "SELECT id FROM quote_usage WHERE business_id=? AND quote_id=? AND charge='delivered'",
@@ -160,14 +177,16 @@ export async function recordLiveDelivery(
   );
   if (existing) return { recorded: false, feeCents: 0 };
   const access = await liveBillingAccess(input.businessId, connection, input.totalCents);
-  if (!access.canSend) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
+  if (!access.canSend && !input.byCustomer) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
   const account = await ensureBillingAccount(input.businessId, connection);
   const plan = PLANS.includes(account.plan) ? (account.plan as Plan) : null;
   const usage = await liveUsage(input.businessId, connection);
+  const trial = access.canSend && access.trial;
+  const free = trial || !plan || !access.canSend || input.repeat;
   const { feeCents, waivedCents } = await underFirstMonthMax(
     connection,
     account,
-    access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered),
+    free ? 0 : deliveryFee(plan, account, usage.covered),
     'delivered',
   );
   const usageId = await insertUsage(connection, account, {
@@ -175,11 +194,13 @@ export async function recordLiveDelivery(
     quoteId: input.quoteId,
     charge: 'delivered',
     source: input.sentBy === 'auto' ? 'live_auto' : 'live_owner',
-    trial: access.trial,
+    trial,
     totalCents: input.totalCents,
     feeCents,
     waivedCents,
-    plan,
+    // Without a plan behind it, a yes on the accepted-quote plan isn't charged either, and the
+    // lead doesn't count against a subscription's allowance.
+    plan: access.canSend && !input.repeat ? plan : null,
   });
   await mutate(
     'INSERT IGNORE INTO usage_events(id,business_id,kind,dedupe_key,metadata_json) VALUES (?,?,?,?,?)',
@@ -195,7 +216,8 @@ export async function recordLiveDelivery(
         totalCents: input.totalCents,
         feeCents,
         waivedCents,
-        trialCovered: access.trial,
+        trialCovered: trial,
+        repeat: Boolean(input.repeat),
         usageId,
       }),
     ],
@@ -232,7 +254,8 @@ async function insertUsage(
       input.charge,
       input.plan,
       input.source,
-      true,
+      // Customers' contact details aren't checked with a code anymore.
+      false,
       input.trial,
       input.totalCents,
       'USD',

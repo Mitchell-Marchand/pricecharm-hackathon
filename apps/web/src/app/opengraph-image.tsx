@@ -24,18 +24,18 @@ export default async function Image() {
         <OgWordmark size={34} />
         <div
           style={{
-            marginTop: 60,
+            marginTop: 44,
             fontFamily: 'Archivo',
-            fontSize: 72,
+            fontSize: 60,
             fontWeight: 800,
             lineHeight: 0.98,
             letterSpacing: '-0.025em',
           }}
         >
-          Train an AI to quote like you.
+          Quotes your new customers while you’re on the job.
         </div>
-        <div style={{ marginTop: 28, fontSize: 30, lineHeight: 1.3, color: OG.ink2 }}>
-          Show it a few jobs you’ve done. It quotes your customers with your prices.
+        <div style={{ marginTop: 24, fontSize: 28, lineHeight: 1.3, color: OG.ink2 }}>
+          With your prices, on your website or a link.
         </div>
         <div style={{ marginTop: 'auto', fontFamily: 'Plex Mono', fontSize: 22, color: OG.muted }}>
           pricecharm.com

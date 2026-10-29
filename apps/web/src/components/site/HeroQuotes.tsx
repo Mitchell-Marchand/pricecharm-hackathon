@@ -5,10 +5,16 @@ import { QuoteForm } from '@/components/QuoteForm';
 import { Avatar } from '@/components/ui';
 import { HERO_EXAMPLES, heroQuote } from '@/lib/demos';
 import { PHOTOS } from '@/lib/photos';
-import { TRADE_DATA_BY_ID } from '@/lib/trades';
 import { cx, prefersReducedMotion } from '@/lib/util';
 
 const EVERY_MS = 4000;
+/** When each request came in, and from where: the owner was out working, not at a desk. */
+const ARRIVED = [
+  '11:20 am · from your website',
+  '2:45 pm · from your link',
+  '8:40 pm · from your website',
+  '7:05 am · from your link',
+];
 
 /**
  * Accepted quotes from different trades, one after another. It holds still while the visitor
@@ -33,7 +39,6 @@ export function HeroQuotes() {
 
   const demo = HERO_EXAMPLES[index];
   const { customer } = demo.hero;
-  const trade = TRADE_DATA_BY_ID[demo.tradeId]?.name ?? '';
 
   return (
     <div
@@ -54,10 +59,7 @@ export function HeroQuotes() {
             <p className="text-sm font-semibold">
               {customer.name} · {customer.place}
             </p>
-            <p className="text-xs text-muted">
-              New {trade.toLowerCase()} request
-              {demo.hero.photos ? ` · ${demo.hero.photos.length} photos` : ''}
-            </p>
+            <p className="text-xs text-muted">New request · {ARRIVED[index % ARRIVED.length]}</p>
           </div>
         </div>
         <p className="mt-3 text-[15px] leading-[1.55]">{demo.hero.request}</p>

@@ -6,7 +6,7 @@ import { createBusiness, expectQuoteFromTop } from './helpers';
 
 const photo = path.resolve('public/photos/patio-stains.jpg');
 
-/** Describes the job, then gives a name and email and enters the code from the screen. */
+/** Describes the job. The quote, or the owner's hold on it, follows the last answer. */
 async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
   await expect(page.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
   await page.getByRole('button', { name: 'Driveways' }).click();
@@ -18,17 +18,9 @@ async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
     await page.locator('input[type=file]').setInputFiles(photo);
     await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
   } else await page.getByRole('button', { name: 'Skip photos' }).click();
-
-  await expect(page.getByText('Where should we send your quote?')).toBeVisible();
-  await page.getByLabel('Your name').fill('Sam Kim');
-  await page.getByLabel('Your email').fill('sam@example.test');
-  await page.getByRole('button', { name: 'Send me a code' }).click();
-  const hint = await page.getByText(/Local test code: \d{6}/).textContent();
-  await page.getByLabel(/We sent a 6-digit code to sam@example.test/).fill(hint!.slice(-6));
-  await page.getByRole('button', { name: 'See my quote' }).click();
 }
 
-test('a customer gets a quote on the owner’s page, comes back to it, and accepts it', async ({
+test('a customer sees a quote on the owner’s page, comes back to it, and says yes', async ({
   page,
   browser,
   baseURL,
@@ -52,10 +44,12 @@ test('a customer gets a quote on the owner’s page, comes back to it, and accep
   await afterYes.fill('Thanks! Jenny will text you today to pick a day.');
   await afterYes.blur();
   await expect(owner.getByText('Saved. Customers see this after they accept.')).toBeVisible();
-  await expect(owner.getByText(/PriceCharm tries “Accept quote”, “Book it”/)).toBeVisible();
+  await expect(
+    owner.getByText(/PriceCharm tries “Looks good to me”, “Works for me”/),
+  ).toBeVisible();
   await owner.getByRole('radio', { name: 'Choose my own' }).click();
-  await owner.getByRole('button', { name: 'Book it' }).click();
-  await expect(owner.getByText('Saved. The button says “Book it”.')).toBeVisible();
+  await owner.getByRole('button', { name: 'Works for me' }).click();
+  await expect(owner.getByText('Saved. The button says “Works for me”.')).toBeVisible();
 
   await page.goto(`/q/${shop.slug}`);
   await expect(page).toHaveTitle(/Get a quote from Moss & Stone Exterior Care/);
@@ -66,7 +60,8 @@ test('a customer gets a quote on the owner’s page, comes back to it, and accep
   await expect(quote).toBeVisible();
   await expect(quote).toContainText('$275');
   await expect(quote.locator('img[src*="/logo/"]')).toBeVisible();
-  await expect(page.getByText(/Here.s your quote, Sam/)).toBeVisible();
+  await expect(page.getByText('Here’s your quote.')).toBeVisible();
+  await expect(page.getByText('Where should we send your quote?')).toHaveCount(0);
   await expectQuoteFromTop(quote);
 
   // Coming back to answer it, it opens on the quote again, once their photo has loaded above it.
@@ -83,17 +78,25 @@ test('a customer gets a quote on the owner’s page, comes back to it, and accep
     scroller!.scrollTop = scroller!.scrollHeight;
   });
   await expectQuoteFromTop(quote);
-  await quote.getByRole('button', { name: 'Book it' }).click();
+  // Saying yes asks where Jenny can reach them, and that's the yes.
+  await expect(quote).toContainText('No payment now. Jenny will reach out to book a time.');
+  await quote.getByRole('button', { name: 'Works for me' }).click();
+  await expect(page.getByText('Where can Jenny reach you to book?')).toBeVisible();
+  await page.getByLabel('Your name').fill('Sam Kim');
+  await page.getByLabel('Your phone number').fill('503 555 0142');
+  await page.getByRole('button', { name: 'Let Jenny know' }).click();
   await expect(page.getByText('Thanks! Jenny will text you today to pick a day.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Book it' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Works for me' })).toHaveCount(0);
   await expect(quote).toContainText('Accepted');
+  await expect(quote).toContainText('Sam K.');
 
   // The owner sees which words the customer tapped.
   const accepted = (
     await (await shop.context.request.get('/api/v1/app/quotes?filter=accepted')).json()
   ).data;
   await owner.goto(`/app/quotes/${accepted[0].id}`);
-  await expect(owner.getByText('Sam tapped “Book it”.')).toBeVisible();
+  await expect(owner.getByText('Sam tapped “Works for me”.')).toBeVisible();
+  await expect(owner.getByText(/503 555 0142/)).toBeVisible();
   await shop.context.close();
 });
 
@@ -106,8 +109,12 @@ test('a quote that needs the owner’s OK appears once they send it', async ({
   await page.goto(`/q/${shop.slug}`);
   await askForQuote(page, { withPhoto: false });
   await expect(
-    page.getByText(/Maya at Moss & Stone Exterior Care will look this over/),
+    page.getByText(/Maya at Moss & Stone Exterior Care wants to look this one over/),
   ).toBeVisible();
+  await page.getByLabel('Your name').fill('Sam Kim');
+  await page.getByLabel('Your email').fill('sam@example.test');
+  await page.getByRole('button', { name: 'Send it to me' }).click();
+  await expect(page.getByText(/We’ll email you as soon as Maya sends it/)).toBeVisible();
   await expect(page.getByRole('article')).toHaveCount(0);
   await expect(page.getByLabel('Message')).toHaveAttribute('placeholder', 'Add a note for Maya');
 
@@ -133,9 +140,6 @@ test('the owner trying their own link always sees the quote, and why it would wa
     await page.getByLabel('Message').fill('Two-story house, vinyl siding.');
     await page.getByLabel('Message').press('Enter');
     await page.getByRole('button', { name: 'Skip photos' }).click();
-    await page.getByLabel('Your name').fill('Test Customer');
-    await page.getByLabel('Your email').fill('test@example.test');
-    await page.getByRole('button', { name: 'See my quote' }).click();
   };
   await page.goto(`/q/${shop.slug}`);
 

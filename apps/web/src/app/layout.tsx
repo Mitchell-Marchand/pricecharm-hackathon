@@ -25,17 +25,20 @@ const plexMono = IBM_Plex_Mono({
 });
 
 const description =
-  'Teach an AI how you price your jobs in about 5 minutes. It answers your customers, asks the right questions and sends quotes the way you would.';
+  'New customers get your quote in about two minutes, on your website or through a link, while you’re out working. Show it a few jobs you’ve done and it quotes with your prices and asks your questions.';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: 'PriceCharm: train an AI to quote like you', template: '%s · PriceCharm' },
+  title: {
+    default: 'PriceCharm: quotes your customers while you work',
+    template: '%s · PriceCharm',
+  },
   description,
   openGraph: {
     type: 'website',
     siteName: 'PriceCharm',
     locale: 'en_US',
-    title: 'PriceCharm: train an AI to quote like you',
+    title: 'PriceCharm: quotes your customers while you work',
     description,
   },
   twitter: { card: 'summary_large_image' },

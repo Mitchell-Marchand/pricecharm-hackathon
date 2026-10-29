@@ -3,13 +3,14 @@ import type { Row } from '../models.js';
 
 /**
  * The words PriceCharm tries on a quote's accept button when the owner hasn't chosen their own.
- * Each one has to mean yes: tapping it accepts the quote, which bills it on the accepted-quote
- * plan and tells the Charm the price won. A question like "Can we finalize this?" would catch
- * people who meant to ask something, so it isn't one of them.
+ * They say yes to the price without sounding like signing anything: the tap only asks where the
+ * owner can reach them, and it's that answer which accepts the quote, bills it on the
+ * accepted-quote plan and tells the Charm the price won. Each still has to mean yes. A question
+ * like "Can we finalize this?" would catch people who meant to ask something, so it isn't one.
+ * "Accept quote" and "Book it" were tried until 2026-10-29 and read as a commitment.
  */
 export const ACCEPT_WORDINGS = [
-  { id: 'accept', label: 'Accept quote' },
-  { id: 'book', label: 'Book it' },
+  { id: 'looks_good', label: 'Looks good to me' },
   { id: 'works', label: 'Works for me' },
   { id: 'do_it', label: 'Let’s do it' },
 ] as const;

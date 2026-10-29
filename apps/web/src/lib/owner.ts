@@ -26,6 +26,11 @@ export interface QuoteListItem {
   reviewReason: string;
   test: boolean;
   createdAt: string;
+  /**
+   * The customer left a phone number or an email. False for someone who only looked at their
+   * quote. Missing from older APIs.
+   */
+  reachable?: boolean;
 }
 
 export interface Home {
@@ -59,6 +64,8 @@ export interface ThreadMessage {
 
 export interface QuoteDetail extends QuoteListItem {
   customerEmail: string | null;
+  /** Missing from older APIs. */
+  customerPhone?: string | null;
   summary: string;
   /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
   details: string;
@@ -104,13 +111,15 @@ export interface QuotePage {
   /** Empty lets PriceCharm try wordings. */
   acceptLabel: string;
   wordings: string[];
+  /** Customers leave their details before the price shows. Missing from older APIs. */
+  contactFirst?: boolean;
 }
 export type QuotePageText = Pick<
   QuotePage,
   'contactName' | 'acceptedMessage' | 'visitMessage' | 'acceptLabel'
 >;
 export const loadQuotePage = () => api<QuotePage>('/app/quote-page');
-export const saveQuotePage = (patch: Partial<QuotePageText>) =>
+export const saveQuotePage = (patch: Partial<QuotePageText> & { contactFirst?: boolean }) =>
   api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
 export function uploadLogo(file: File) {
   const body = new FormData();
