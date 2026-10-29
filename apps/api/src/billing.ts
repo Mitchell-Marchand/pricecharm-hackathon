@@ -54,6 +54,32 @@ export function publicPricing() {
     },
     // Free quotes before fees start, on any plan. None by default.
     trialQuotes: setting('BILLING_TRIAL_QUOTES', 0, 100),
+    // Quote fees in the 30 days after a business first adds a card stop here, on every plan.
+    firstMonthMaxCents: setting('BILLING_FIRST_MONTH_MAX_CENTS', 4900, 1000000),
+  };
+}
+
+const FIRST_MONTH_DAYS = 30;
+/**
+ * The 30 days after a business first added a card, while they last: when they end, the fees so
+ * far, what the first-month max let off, and what's left under it. Null before a card and after.
+ */
+export async function firstMonth(account: RowDataPacket, connection: Sql) {
+  if (!account.card_added_at) return null;
+  const start = new Date(account.card_added_at),
+    end = new Date(start.getTime() + FIRST_MONTH_DAYS * 86400000);
+  if (end.getTime() <= Date.now()) return null;
+  const [usage] = await rows(
+    'SELECT COALESCE(SUM(fee_cents),0) fees,COALESCE(SUM(waived_cents),0) waived FROM quote_usage WHERE business_id=? AND created_at>=?',
+    [account.business_id, start],
+    connection,
+  );
+  const feesCents = Number(usage.fees);
+  return {
+    endsAt: end,
+    feesCents,
+    waivedCents: Number(usage.waived),
+    roomCents: Math.max(0, publicPricing().firstMonthMaxCents - feesCents),
   };
 }
 
@@ -240,7 +266,8 @@ export async function planEvent(
 export async function getBilling(businessId: string) {
   return transaction(async (connection) => {
     const account = await ensureBillingAccount(businessId, connection),
-      usage = await billingCounts(businessId, connection);
+      usage = await billingCounts(businessId, connection),
+      first = await firstMonth(account, connection);
     const provider = billingProvider(),
       configured = provider === 'local' || stripeConfigured();
     return {
@@ -253,6 +280,15 @@ export async function getBilling(businessId: string) {
       pricing: publicPricing(),
       /** The subscription's free week, if they haven't had it. */
       freeWeek: !account.trial_used_at,
+      /**
+       * The first-month max while they have it: still ahead until a card is added, with no end
+       * date yet, then for 30 days. Null once those are over.
+       */
+      firstMonth: first
+        ? { endsAt: iso(first.endsAt), feesCents: first.feesCents, waivedCents: first.waivedCents }
+        : account.card_added_at
+          ? null
+          : { endsAt: null, feesCents: 0, waivedCents: 0 },
       periodEnd: account.period_end ? iso(account.period_end) : null,
       status: String(account.subscription_status),
       usage: {
@@ -429,15 +465,21 @@ const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' 
 export function dollars(cents: number): string {
   return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
 }
-/** What the plan costs, in a line above Checkout's button. Stripe can't show 1% as a price. */
-function checkoutTerms(plan: Plan): string {
+/**
+ * What the plan costs, in a line above Checkout's button. Stripe can't show 1% as a price. A first
+ * card also gets the first-month max.
+ */
+function checkoutTerms(plan: Plan, firstCard: boolean): string {
   const pricing = publicPricing(),
     { accepted, subscription } = pricing;
+  const first = firstCard
+    ? ` In your first 30 days, quote fees stop at ${dollars(pricing.firstMonthMaxCents)}.`
+    : '';
   if (plan === 'per_quote')
-    return `${dollars(pricing.perQuoteCents)} for each quote a customer gets from you, billed monthly. Nothing today.`;
+    return `${dollars(pricing.perQuoteCents)} for each quote a customer gets from you, billed monthly. Nothing today.${first}`;
   if (plan === 'per_accepted')
-    return `Nothing today. Each month, your card is billed ${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.`;
-  return `Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.`;
+    return `Nothing today. Each month, your card is billed ${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.${first}`;
+  return `Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.${first}`;
 }
 
 billingRouter.post('/billing/checkout', async (req, res) => {
@@ -461,7 +503,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
       // Locally the card is taken as given, and a subscription starts on its free week.
       const freeWeek = isSubscription(plan) && !account.trial_used_at;
       await mutate(
-        `UPDATE billing_accounts SET subscription_status=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${freeWeek ? ',trial_used_at=UTC_TIMESTAMP(3)' : ''} WHERE business_id=?`,
+        `UPDATE billing_accounts SET subscription_status=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3),card_added_at=COALESCE(card_added_at,UTC_TIMESTAMP(3))${freeWeek ? ',trial_used_at=UTC_TIMESTAMP(3)' : ''} WHERE business_id=?`,
         [
           freeWeek ? 'trialing' : 'active',
           freeWeek
@@ -532,7 +574,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         metadata: { plan },
         // A monthly bill for a business: no buy-now-pay-later or app wallets.
         allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
-        custom_text: { submit: { message: checkoutTerms(plan) } },
+        custom_text: { submit: { message: checkoutTerms(plan, !account.card_added_at) } },
         subscription_data: {
           // Usage from before a plan switch is billed at the old price, not dropped.
           billing_mode: { type: 'flexible' },
@@ -825,13 +867,18 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
       connection,
     );
     const periodEnd = current ? paidPeriodEnd(current) : undefined;
+    // The first card is when their first subscription started, kept once it's known.
+    const paying = current && isPaying(current.status);
     await mutate(
-      `UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status=?,cancel_at_period_end=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${current?.status === 'trialing' ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''} WHERE business_id=?`,
+      `UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status=?,cancel_at_period_end=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${current?.status === 'trialing' ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''}${paying ? ',card_added_at=COALESCE(card_added_at,?)' : ''} WHERE business_id=?`,
       [
         current?.id ?? null,
         current?.status ?? 'cancelled',
         current?.cancel_at_period_end ?? false,
         periodEnd ? new Date(periodEnd * 1000) : null,
+        ...(paying
+          ? [new Date(Math.min(...subscriptions.map((item) => item.created)) * 1000)]
+          : []),
         account.business_id,
       ],
       connection,
@@ -875,7 +922,8 @@ export async function dispatchFee(usageId: string): Promise<void> {
           customer: item.stripe_customer_id,
           amount: Number(item.fee_cents),
           currency: 'usd',
-          description: `Accepted quote for ${usd.format(Number(item.quote_value_cents) / 100)}`,
+          // A fee the first-month max cut short says so, or it reads as less than 1%.
+          description: `Accepted quote for ${usd.format(Number(item.quote_value_cents) / 100)}${Number(item.waived_cents) > 0 ? ', up to your first-month max' : ''}`,
           metadata: { usageId, quoteId: String(item.quote_id) },
         },
         { idempotencyKey: `quotient-fee:${usageId}` },

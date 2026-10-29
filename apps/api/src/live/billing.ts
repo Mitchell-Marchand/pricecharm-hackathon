@@ -3,6 +3,7 @@ import {
   billingProvider,
   ensureBillingAccount,
   feeForQuote,
+  firstMonth,
   getBilling,
   isPaying,
   isSubscription,
@@ -21,7 +22,9 @@ import { ApiError } from '../http.js';
  * - 1% of each quote a customer accepts, charged when they accept;
  * - a subscription that covers a set number of quotes a month, then a fee for each one past it.
  * A payment method has to be on file first. An account can have `trial_quote_limit` free quotes
- * before that (none by default). Owner tests and repeat sends are never billed.
+ * before that (none by default). For 30 days after the first card, quote fees on any plan stop at
+ * the first-month max, and quotes past it still go out. Owner tests and repeat sends are never
+ * billed.
  */
 const LIVE_SOURCES = "('live_auto','live_owner')";
 const MONTH_START = "DATE_FORMAT(UTC_DATE(),'%Y-%m-01')";
@@ -57,6 +60,23 @@ function deliveryFee(plan: Plan, account: Parameters<typeof feeForQuote>[1], cov
   return 0;
 }
 
+/**
+ * A fee under the first-month max, and what the max let off. A delivered quote's fee counts one
+ * on the quote meter, so it's charged whole or not at all. An accepted quote's fee is its own line
+ * on the invoice, so it's cut to what's left.
+ */
+async function underFirstMonthMax(
+  connection: Sql,
+  account: Awaited<ReturnType<typeof ensureBillingAccount>>,
+  feeCents: number,
+  charge: 'delivered' | 'accepted',
+) {
+  const room = (await firstMonth(account, connection))?.roomCents;
+  const charged =
+    room === undefined || feeCents <= room ? feeCents : charge === 'accepted' ? room : 0;
+  return { feeCents: charged, waivedCents: feeCents - charged };
+}
+
 /** Whether one more quote can go out, and why not when it can't. Locks the billing account. */
 export async function liveBillingAccess(
   businessId: string,
@@ -84,10 +104,14 @@ export async function liveBillingAccess(
     return { canSend: false, reason: 'We’re checking your billing. Try again in a few minutes.' };
   // On the accepted-quote plan the fee comes later, so the cap allows for it in case they say yes.
   const plan = account.plan as Plan;
-  const fee =
+  const { feeCents: fee } = await underFirstMonthMax(
+    connection,
+    account,
     plan === 'per_accepted'
       ? feeForQuote(quoteCents, account)
-      : deliveryFee(plan, account, usage.covered);
+      : deliveryFee(plan, account, usage.covered),
+    plan === 'per_accepted' ? 'accepted' : 'delivered',
+  );
   if (usage.monthFees + fee > Number(account.spending_cap_cents))
     return {
       canSend: false,
@@ -140,7 +164,12 @@ export async function recordLiveDelivery(
   const account = await ensureBillingAccount(input.businessId, connection);
   const plan = PLANS.includes(account.plan) ? (account.plan as Plan) : null;
   const usage = await liveUsage(input.businessId, connection);
-  const feeCents = access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered);
+  const { feeCents, waivedCents } = await underFirstMonthMax(
+    connection,
+    account,
+    access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered),
+    'delivered',
+  );
   const usageId = await insertUsage(connection, account, {
     businessId: input.businessId,
     quoteId: input.quoteId,
@@ -149,6 +178,7 @@ export async function recordLiveDelivery(
     trial: access.trial,
     totalCents: input.totalCents,
     feeCents,
+    waivedCents,
     plan,
   });
   await mutate(
@@ -164,6 +194,7 @@ export async function recordLiveDelivery(
         sentBy: input.sentBy,
         totalCents: input.totalCents,
         feeCents,
+        waivedCents,
         trialCovered: access.trial,
         usageId,
       }),
@@ -185,13 +216,15 @@ async function insertUsage(
     trial: boolean;
     totalCents: number;
     feeCents: number;
+    /** What the first-month max let off. */
+    waivedCents: number;
     plan: Plan | null;
   },
 ) {
   const usageId = randomUUID();
   await mutate(
-    `INSERT INTO quote_usage(id,business_id,quote_id,charge,plan,source,verified_contact,trial_covered,quote_value_cents,currency,fee_cents,fee_basis_points,minimum_fee_cents,maximum_fee_cents,tariff_version)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO quote_usage(id,business_id,quote_id,charge,plan,source,verified_contact,trial_covered,quote_value_cents,currency,fee_cents,waived_cents,fee_basis_points,minimum_fee_cents,maximum_fee_cents,tariff_version)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       usageId,
       input.businessId,
@@ -204,6 +237,7 @@ async function insertUsage(
       input.totalCents,
       'USD',
       input.feeCents,
+      input.waivedCents,
       Number(account.fee_basis_points),
       Number(account.minimum_fee_cents),
       Number(account.maximum_fee_cents),
@@ -245,11 +279,16 @@ export async function recordAcceptance(
   const account = await ensureBillingAccount(input.businessId, connection);
   // The terms it was delivered under, even if the owner has since moved plans.
   const terms = planTariff('per_accepted');
-  const feeCents = feeForQuote(input.totalCents, {
-    fee_basis_points: terms.basisPoints,
-    minimum_fee_cents: terms.minimumFeeCents,
-    maximum_fee_cents: terms.maximumFeeCents,
-  });
+  const { feeCents, waivedCents } = await underFirstMonthMax(
+    connection,
+    account,
+    feeForQuote(input.totalCents, {
+      fee_basis_points: terms.basisPoints,
+      minimum_fee_cents: terms.minimumFeeCents,
+      maximum_fee_cents: terms.maximumFeeCents,
+    }),
+    'accepted',
+  );
   await insertUsage(
     connection,
     {
@@ -267,6 +306,7 @@ export async function recordAcceptance(
       trial: false,
       totalCents: input.totalCents,
       feeCents,
+      waivedCents,
       plan: 'per_accepted',
     },
   );

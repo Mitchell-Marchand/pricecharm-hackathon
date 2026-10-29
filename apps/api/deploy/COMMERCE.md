@@ -30,13 +30,13 @@ STRIPE_SECRET_KEY=sk_test_... npm run stripe:setup --workspace @pricecharm/api
 
 It makes a meter, `pricecharm_quotes` (sum, customer from `stripe_customer_id`, value from `value`), that counts billed quotes, and a product for each plan, named the way the pricing page names it, so Checkout and invoices read in quotes rather than cents:
 
-| Setting | Product | Price |
-| --- | --- | --- |
-| `STRIPE_PRICE_PER_QUOTE` | Pay per quote | **$2.00 a quote** on the meter, monthly |
-| `STRIPE_PRICE_PER_ACCEPTED` | Pay when you win | **$0 a quote** on the meter, monthly, as two $0 tiers. The fees are invoice items, below |
-| `STRIPE_PRICE_EXTRA_QUOTES` | Extra quotes | **$1.00 a quote** on the meter, monthly: quotes past the subscription's allowance |
-| `STRIPE_PRICE_MONTHLY` | PriceCharm subscription | **$49.00** a month, flat |
-| `STRIPE_PRICE_YEARLY` | PriceCharm subscription | **$499.00** a year, flat |
+| Setting                     | Product                 | Price                                                                                    |
+| --------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| `STRIPE_PRICE_PER_QUOTE`    | Pay per quote           | **$2.00 a quote** on the meter, monthly                                                  |
+| `STRIPE_PRICE_PER_ACCEPTED` | Pay when you win        | **$0 a quote** on the meter, monthly, as two $0 tiers. The fees are invoice items, below |
+| `STRIPE_PRICE_EXTRA_QUOTES` | Extra quotes            | **$1.00 a quote** on the meter, monthly: quotes past the subscription's allowance        |
+| `STRIPE_PRICE_MONTHLY`      | PriceCharm subscription | **$49.00** a month, flat                                                                 |
+| `STRIPE_PRICE_YEARLY`       | PriceCharm subscription | **$499.00** a year, flat                                                                 |
 
 Every subscription has one item on the meter, with its plan's price on it; the subscription plans also have their monthly or yearly price. A delivered quote that's billed (every one on the per-quote plan, each one past the allowance on the subscription) sends `value=1` to the meter, and the item's price makes it $2 or $1. An accepted quote's fee is 1% of the job, which no price per quote can say, so it goes on the next invoice as an invoice item of its own: "Accepted quote for $1,450.00", $14.50.
 
@@ -54,14 +54,16 @@ There are no free quotes by default: owners choose a plan and add a payment meth
 
 The plans, with their server settings and defaults:
 
-| Plan | What it costs |
-| --- | --- |
-| Per quote | $2 for each quote a customer receives (`BILLING_PER_QUOTE_CENTS`). |
+| Plan               | What it costs                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Per quote          | $2 for each quote a customer receives (`BILLING_PER_QUOTE_CENTS`).                                                                                                                                      |
 | Per accepted quote | 1% of the quote when the customer accepts it, at least $1 and at most $25 (`BILLING_ACCEPTED_BASIS_POINTS`, `BILLING_ACCEPTED_MINIMUM_CENTS`, `BILLING_ACCEPTED_MAXIMUM_CENTS`). Nothing if they don't. |
-| Monthly | $49 a month, covering 100 quotes a month (`BILLING_INCLUDED_QUOTES`), then $1 a quote (`BILLING_OVERAGE_CENTS`). |
-| Yearly | $499 a year, with the same monthly allowance and overage. |
+| Monthly            | $49 a month, covering 100 quotes a month (`BILLING_INCLUDED_QUOTES`), then $1 a quote (`BILLING_OVERAGE_CENTS`).                                                                                        |
+| Yearly             | $499 a year, with the same monthly allowance and overage.                                                                                                                                               |
 
 The first monthly or yearly subscription starts with a 7-day free trial (`BILLING_TRIAL_DAYS`). Public `/api/v1/pricing` shows the current prices. Prices use integer cents and exact rounding. A quote qualifies when a customer with a verified email receives it, whether it went out automatically or the owner approved it. Each account's `trial_quote_limit` qualifying quotes are free first (none by default). Practice, owner test chats, abandoned requests and repeat sends of the same quote never incur fees.
+
+For 30 days after a business first adds a card (`billing_accounts.card_added_at`, once per business), its quote fees on any plan stop at $49 (`BILLING_FIRST_MONTH_MAX_CENTS`). Quotes past that still go out. A delivered quote's fee is charged whole or not at all, since the meter counts quotes. An accepted quote's fee is cut to what's left, and its invoice line says so. Each fee records what the max let off in `quote_usage.waived_cents`, and a fee that's let off never reaches Stripe. The subscription's own price isn't a quote fee, so on that plan the max covers quotes past the allowance. Checkout and the plan picker say so before the first card.
 
 `quote_usage` is the durable delivery/fee ledger. Each quote has one immutable fee/tariff snapshot; associated dispatch timestamps do not change its financial fields. Trial allowance and the monthly spending cap are enforced while holding the business row lock, including the next quote's fee. The default cap is $100 in platform fees per UTC calendar month; an owner can change it through `PATCH /api/v1/billing`. The UTC cap window is distinct from Stripe's subscription invoice dates. If billing is unavailable, past due, stale or capped, new quotes wait for the owner, and the owner can't send them until billing is fixed or the cap is raised.
 

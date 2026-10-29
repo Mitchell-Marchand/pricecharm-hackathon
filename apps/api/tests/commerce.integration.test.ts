@@ -475,8 +475,43 @@ test(
       );
       assert.equal(Number(choices), 5, 'Every pick is recorded, for seeing what owners choose');
 
+      // For 30 days after the first card, quote fees stop at the first-month max, and quotes past
+      // it still go out. A $2 fee is charged whole or not at all; an accepted quote's fee is cut.
+      const started = (await a.get('/api/v1/app/billing')).body.data.firstMonth;
+      assert.ok(started.endsAt, 'The 30 days run from the card');
+      process.env.BILLING_FIRST_MONTH_MAX_CENTS = String(started.feesCents + 300);
+      const [underMax, pastMax, cutShort] = [randomUUID(), randomUUID(), randomUUID()];
+      await record(underMax);
+      await record(pastMax);
+      assert.deepEqual(await fees(underMax), [['delivered', 200]]);
+      assert.deepEqual(await fees(pastMax), [['delivered', 0]], 'Only $1 was left');
+      assert.equal(await canSend(), true, 'Quotes past the max still go out');
+      await choose(a, 'per_accepted');
+      await record(cutShort);
+      assert.deepEqual(await accept(cutShort, 32000), { recorded: true, feeCents: 100 });
+      const ended = (await a.get('/api/v1/app/billing')).body.data.firstMonth;
+      assert.deepEqual(
+        [ended.feesCents - started.feesCents, ended.waivedCents - started.waivedCents],
+        [300, 420],
+        'What the max let off is kept with each fee',
+      );
+      await mutate(
+        'UPDATE billing_accounts SET card_added_at=DATE_SUB(card_added_at,INTERVAL 30 DAY) WHERE business_id=?',
+        [businessId],
+      );
+      assert.equal((await a.get('/api/v1/app/billing')).body.data.firstMonth, null);
+      const afterMax = randomUUID();
+      await record(afterMax);
+      assert.equal((await accept(afterMax, 32000)).feeCents, 320, 'After 30 days, fees are back');
+      delete process.env.BILLING_FIRST_MONTH_MAX_CENTS;
+      await choose(a, 'per_quote');
+
       // From setup: the subscription's free week starts with the card, then they deploy.
-      await b.get('/api/v1/app/billing').expect(200);
+      assert.deepEqual(
+        (await b.get('/api/v1/app/billing').expect(200)).body.data.firstMonth,
+        { endsAt: null, feesCents: 0, waivedCents: 0 },
+        'The first-month max is ahead of them until a card',
+      );
       await mutate('UPDATE billing_accounts SET trial_quote_limit=0 WHERE business_id=?', [
         other.body.data.business.id,
       ]);
@@ -546,6 +581,15 @@ test(
           key: `quotient-fee:${acceptedFee.id}`,
         },
       ]);
+      const [cutFee] = await rows(
+        "SELECT id FROM quote_usage WHERE quote_id=? AND charge='accepted'",
+        [cutShort],
+      );
+      await dispatchFee(cutFee.id);
+      assert.deepEqual(
+        [invoiceLines[1].amount, invoiceLines[1].description],
+        [100, 'Accepted quote for $320.00, up to your first-month max'],
+      );
       assert.equal(meterCalls, 1, 'Accepted fees never go on the meter');
       stripe.subscriptions.list = (async () => ({
         data: [
@@ -799,7 +843,7 @@ test(
       assert.deepEqual(sessions.monthly.subscription_data.billing_mode, { type: 'flexible' });
       assert.equal(
         sessions.monthly.custom_text.submit.message,
-        'Includes 100 quotes a month. Each one past that is $1, billed monthly.',
+        'Includes 100 quotes a month. Each one past that is $1, billed monthly. In your first 30 days, quote fees stop at $49.',
       );
       // Checkout can't mix a yearly price with the monthly quote price, so yearly starts alone.
       const pick = (plan: string) =>
@@ -822,7 +866,7 @@ test(
       assert.equal(sessions.per_accepted.subscription_data.trial_period_days, undefined);
       assert.equal(
         sessions.per_accepted.custom_text.submit.message,
-        'Nothing today. Each month, your card is billed 1% of the quotes customers accepted, at least $1 and at most $25 each. No accepted quotes, no bill.',
+        'Nothing today. Each month, your card is billed 1% of the quotes customers accepted, at least $1 and at most $25 each. No accepted quotes, no bill. In your first 30 days, quote fees stop at $49.',
       );
       await pick('monthly');
       assert.equal(
@@ -967,10 +1011,16 @@ test(
       stripe.subscriptions.list = subscriptionWith([usageItem, yearlyItem]);
       await reconcileStripeCustomer(`cus_${suffix}`);
       assert.equal(added.length, 1, 'Once it has the usage price, nothing more is added');
-      const [paid] = await rows('SELECT period_end FROM billing_accounts WHERE business_id=?', [
-        businessId,
-      ]);
+      const [paid] = await rows(
+        'SELECT period_end,card_added_at FROM billing_accounts WHERE business_id=?',
+        [businessId],
+      );
       assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), yearEnd);
+      assert.equal(
+        new Date(paid.card_added_at).getTime(),
+        100000,
+        'The first card is when the first subscription started',
+      );
 
       await mutate(
         "UPDATE billing_accounts SET plan='yearly',checkout_session_id=NULL WHERE business_id=?",

@@ -73,76 +73,87 @@ export function PlanCards({
   };
 
   return (
-    <div className="grid gap-4 md:grid-cols-3" role="list" aria-label="Plans">
-      {billing.planOrder.map((choice) => {
-        const card = cards[choice];
-        const plan: Plan = choice === 'subscription' ? (yearly ? 'yearly' : 'monthly') : choice;
-        const mine = current !== null && current === plan;
-        const onIt = current !== null && choiceOf(current) === choice;
-        return (
-          <article
-            key={choice}
-            role="listitem"
-            aria-label={card.label}
-            className={cx(
-              'flex flex-col rounded-lg border bg-surface p-6 shadow-1 transition-colors',
-              onIt ? 'border-ink' : 'border-line hover:border-line-strong',
-            )}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="t-label text-muted">{card.label}</h3>
-              {onIt && <Tag tone="go">Current</Tag>}
-            </div>
-            <p className="mt-5 flex flex-wrap items-baseline gap-x-2">
-              <span className="qf-total text-[56px]">
-                <span className="hl">{card.price}</span>
-              </span>
-              <span className="text-lg text-ink-2">{card.unit}</span>
-            </p>
-            {choice === 'subscription' ? (
-              // Where the others say when you pay: monthly or yearly, and what yearly saves.
-              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Segmented
-                  label="Pay monthly or yearly"
-                  value={yearly ? 'yearly' : 'monthly'}
-                  onChange={(value) => setYearly(value === 'yearly')}
-                  options={[
-                    { value: 'monthly', label: 'Monthly' },
-                    { value: 'yearly', label: 'Yearly' },
-                  ]}
-                />
-                {saving > 0 && (
-                  <span className={cx('text-sm', yearly ? 'font-semibold text-go' : 'text-muted')}>
-                    Save {money(saving)}
-                  </span>
-                )}
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 md:grid-cols-3" role="list" aria-label="Plans">
+        {billing.planOrder.map((choice) => {
+          const card = cards[choice];
+          const plan: Plan = choice === 'subscription' ? (yearly ? 'yearly' : 'monthly') : choice;
+          const mine = current !== null && current === plan;
+          const onIt = current !== null && choiceOf(current) === choice;
+          return (
+            <article
+              key={choice}
+              role="listitem"
+              aria-label={card.label}
+              className={cx(
+                'flex flex-col rounded-lg border bg-surface p-6 shadow-1 transition-colors',
+                onIt ? 'border-ink' : 'border-line hover:border-line-strong',
+              )}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="t-label text-muted">{card.label}</h3>
+                {onIt && <Tag tone="go">Current</Tag>}
               </div>
-            ) : (
-              <p className="mt-2 text-[15px] text-ink-2">{card.line}</p>
-            )}
-            <ul className="mt-5 flex flex-col gap-2.5 border-t border-line pt-5 text-[15px]">
-              {card.points.map((point) => (
-                <li key={point} className="flex gap-2.5">
-                  <Check className="mt-0.5 size-4 shrink-0 text-go" aria-hidden />
-                  {point}
-                </li>
-              ))}
-            </ul>
-            {/* Buttons line up along the bottom, however much each card says. */}
-            <div className="mt-auto pt-7">
-              <Button
-                size="lg"
-                variant={mine ? 'secondary' : 'primary'}
-                className="w-full"
-                disabled={mine || Boolean(busy)}
-                onClick={() => onChoose(plan)}
-              >
-                {busy === plan ? 'Opening…' : mine ? 'Your plan' : action(plan)}
-              </Button>
-            </div>
-          </article>
-        );
-      })}
+              <p className="mt-5 flex flex-wrap items-baseline gap-x-2">
+                <span className="qf-total text-[56px]">
+                  <span className="hl">{card.price}</span>
+                </span>
+                <span className="text-lg text-ink-2">{card.unit}</span>
+              </p>
+              {choice === 'subscription' ? (
+                // Where the others say when you pay: monthly or yearly, and what yearly saves.
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <Segmented
+                    label="Pay monthly or yearly"
+                    value={yearly ? 'yearly' : 'monthly'}
+                    onChange={(value) => setYearly(value === 'yearly')}
+                    options={[
+                      { value: 'monthly', label: 'Monthly' },
+                      { value: 'yearly', label: 'Yearly' },
+                    ]}
+                  />
+                  {saving > 0 && (
+                    <span
+                      className={cx('text-sm', yearly ? 'font-semibold text-go' : 'text-muted')}
+                    >
+                      Save {money(saving)}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-2 text-[15px] text-ink-2">{card.line}</p>
+              )}
+              <ul className="mt-5 flex flex-col gap-2.5 border-t border-line pt-5 text-[15px]">
+                {card.points.map((point) => (
+                  <li key={point} className="flex gap-2.5">
+                    <Check className="mt-0.5 size-4 shrink-0 text-go" aria-hidden />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+              {/* Buttons line up along the bottom, however much each card says. */}
+              <div className="mt-auto pt-7">
+                <Button
+                  size="lg"
+                  variant={mine ? 'secondary' : 'primary'}
+                  className="w-full"
+                  disabled={mine || Boolean(busy)}
+                  onClick={() => onChoose(plan)}
+                >
+                  {busy === plan ? 'Opening…' : mine ? 'Your plan' : action(plan)}
+                </Button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {/* Under every plan alike, so it doesn't favor one. */}
+      {billing.firstMonth && pricing.firstMonthMaxCents ? (
+        <p className="text-[15px] text-ink-2">
+          Whichever you pick, your quote fees stop at {money(pricing.firstMonthMaxCents)} for the
+          first 30 days. Quotes past that still go out, and you don’t pay for them.
+        </p>
+      ) : null}
     </div>
   );
 }

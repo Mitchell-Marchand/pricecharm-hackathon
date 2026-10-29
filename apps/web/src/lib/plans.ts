@@ -13,6 +13,8 @@ export interface Pricing {
     overageCents: number;
   };
   trialQuotes: number;
+  /** Quote fees in the 30 days after the first card stop here. An older API leaves it out. */
+  firstMonthMaxCents?: number;
 }
 
 /** The API's defaults, shown only if it can't be reached. */
@@ -28,6 +30,7 @@ export const DEFAULT_PRICING: Pricing = {
     overageCents: 100,
   },
   trialQuotes: 0,
+  firstMonthMaxCents: 4900,
 };
 
 export type Plan = 'per_quote' | 'per_accepted' | 'monthly' | 'yearly';

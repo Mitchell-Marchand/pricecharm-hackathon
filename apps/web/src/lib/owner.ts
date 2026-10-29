@@ -138,6 +138,11 @@ export interface Billing {
   pricing: Pricing;
   /** The subscription's free week is still theirs to use. */
   freeWeek: boolean;
+  /**
+   * The first-month max while they have it: no end date until a card is added, then 30 days.
+   * Null once it's over.
+   */
+  firstMonth: { endsAt: string | null; feesCents: number; waivedCents: number } | null;
   periodEnd: string | null;
   coveredThisMonth: number;
   /** The quote link takes requests: deployed, and not paused. */
@@ -170,6 +175,7 @@ function complete(billing: Billing): Billing {
       : ['per_quote', 'per_accepted', 'subscription'],
     pricing: billing.pricing ?? DEFAULT_PRICING,
     freeWeek: billing.freeWeek ?? true,
+    firstMonth: billing.firstMonth ?? null,
     periodEnd: billing.periodEnd ?? null,
     coveredThisMonth: billing.coveredThisMonth ?? 0,
     // Before deploying existed, a link with billing in place was already taking requests.

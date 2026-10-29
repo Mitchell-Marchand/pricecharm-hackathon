@@ -80,6 +80,18 @@ export function PricingDetails() {
           </dd>
         </div>
       ))}
+      {pricing?.firstMonthMaxCents ? (
+        <div className="rounded-md border border-line bg-surface p-5 md:col-span-3">
+          <dt className="t-label text-muted">Your first 30 days</dt>
+          <dd className="mt-2">
+            <p className="t-h2">Quote fees stop at {money(pricing.firstMonthMaxCents)}</p>
+            <p className="mt-2 text-ink-2">
+              On any plan, counted from the day you add a card. Quotes past that still go out, and
+              you don’t pay for them.
+            </p>
+          </dd>
+        </div>
+      ) : null}
       <div className="rounded-md border border-line bg-surface p-5 md:col-span-3">
         <dt className="t-label text-muted">What counts as a quote</dt>
         <dd className="mt-2 text-ink-2">

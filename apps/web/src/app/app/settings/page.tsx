@@ -407,6 +407,13 @@ function BillingDetails({
             Your free week ends {shortDate(billing.periodEnd)}.
           </p>
         )}
+        {billing.firstMonth?.endsAt && pricing.firstMonthMaxCents ? (
+          <p className="mt-2 text-sm text-ink-2">
+            {billing.firstMonth.waivedCents > 0
+              ? `Your quote fees have reached the first-month max, so quotes are free until ${shortDate(billing.firstMonth.endsAt)}.`
+              : `Until ${shortDate(billing.firstMonth.endsAt)}, your quote fees stop at ${money(pricing.firstMonthMaxCents)}. You’re at ${money(billing.firstMonth.feesCents)}.`}
+          </p>
+        ) : null}
         {billing.nextPlan && billing.periodEnd && (
           <p className="mt-2 text-sm text-ink-2">
             Moving to {planName(billing.nextPlan, pricing)} on {shortDate(billing.periodEnd)}.
