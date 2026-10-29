@@ -64,7 +64,8 @@ export function createApp() {
     if (
       (aiProvider === 'openai' && !process.env.OPENAI_API_KEY) ||
       (aiProvider === 'anthropic' &&
-        (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_MODEL))
+        (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_MODEL)) ||
+      (aiProvider === 'meta' && !process.env.META_API_KEY)
     )
       throw new Error('Configure credentials and model for the selected production AI provider.');
     if (

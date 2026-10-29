@@ -15,6 +15,7 @@ const base: NodeJS.ProcessEnv = {
   OPENAI_MODEL: 'gpt-4.1-mini',
   ANTHROPIC_API_KEY: 'test-anthropic-config-only-never-send',
   ANTHROPIC_MODEL: 'claude-sonnet-4-5',
+  META_API_KEY: 'test-meta-config-only-never-send',
   APP_ORIGIN: 'https://app.example.test',
   MAIL_PROVIDER: 'ses',
   MAIL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
@@ -75,7 +76,7 @@ const production: NodeJS.ProcessEnv = {
   SENTRY_DSN: 'https://config-only@errors.example.test/1',
 };
 
-for (const provider of ['openai', 'anthropic']) {
+for (const provider of ['openai', 'anthropic', 'meta']) {
   test(`fully configured staging initializes with ${provider} without any network action`, () => {
     const result = inspect({ AI_PROVIDER: provider });
     assert.equal(result.status, 0, result.stderr);
@@ -160,6 +161,11 @@ const rejected: { name: string; env: NodeJS.ProcessEnv; message: RegExp }[] = [
   {
     name: 'missing Anthropic model',
     env: { AI_PROVIDER: 'anthropic', ANTHROPIC_MODEL: '' },
+    message: /selected production AI provider/,
+  },
+  {
+    name: 'missing Meta credentials',
+    env: { AI_PROVIDER: 'meta', META_API_KEY: '' },
     message: /selected production AI provider/,
   },
   {

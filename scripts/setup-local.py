@@ -55,12 +55,13 @@ else:
 values = {
     'APP_ENV': 'local', 'NODE_ENV': 'development', 'PORT': '4100', 'APP_ORIGIN': 'http://localhost:3100',
     'PUBLIC_APP_URL': 'http://localhost:3100', 'EXPOSE_DEV_TOKENS': '1',
-    'DB_CONNECTION_LIMIT': '5', 'AI_PROVIDER': 'openai', 'OPENAI_MODEL': 'gpt-4.1-mini',
+    'DB_CONNECTION_LIMIT': '5', 'AI_PROVIDER': 'meta', 'META_MODEL': 'muse-spark-1.3',
+    'OPENAI_MODEL': 'gpt-4.1-mini',
     'ANTHROPIC_MODEL': 'claude-sonnet-4-5', 'AI_TIMEOUT_MS': '25000',
     'AI_MAX_OUTPUT_TOKENS': '1200', 'AI_MAX_TURNS': '40',
     'MAIL_PROVIDER': 'local', 'BILLING_PROVIDER': 'local',
     'SESSION_SECRET': secrets.token_urlsafe(48),
-    'OPENAI_API_KEY': '', 'ANTHROPIC_API_KEY': '',
+    'META_API_KEY': '', 'OPENAI_API_KEY': '', 'ANTHROPIC_API_KEY': '',
 }
 # Keep settings from earlier runs (including keys you added), then apply the chosen database.
 values.update(existing)
@@ -81,6 +82,6 @@ if not web_path.exists():
         out.write('API_BASE_URL=http://127.0.0.1:4100\nNEXT_PUBLIC_APP_URL=http://localhost:3100\n')
 print('Local configuration ready in apps/api/.env. Values were not printed.')
 print(f"Database: {database['DB_NAME']} on {database['DB_HOST']}:{database['DB_PORT']}.")
-if not values.get('OPENAI_API_KEY') and not values.get('ANTHROPIC_API_KEY'):
+if not any(values.get(name) for name in ('META_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY')):
     print("Add PriceCharm's own dev AI keys to apps/api/.env (docs/ops/ai-keys.md), or set AI_PROVIDER=demo.")
 print('Next: npm run migrate --workspace @pricecharm/api, then npm run dev.')

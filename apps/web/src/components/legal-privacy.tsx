@@ -211,16 +211,16 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              PriceCharm uses AI models from OpenAI and Anthropic. To reply to a customer, read a
-              document or draft a quote, we send the model the parts of the conversation, the
+              PriceCharm uses AI models from Meta, OpenAI and Anthropic. To reply to a customer,
+              read a document or draft a quote, we send the model the parts of the conversation, the
               business’s pricing information and any photos it needs, and use its answer. We also
-              use OpenAI to create the photos that come with practice requests. Those photos are
-              made up and don’t show anyone’s real property.
+              use Meta or OpenAI to create the photos that come with practice requests. Those photos
+              are made up and don’t show anyone’s real property.
             </p>
             <p>
               We use these providers’ business services. Under their terms, they don’t use what we
-              send to train their models, and they keep it only for a limited time, generally up to
-              30 days, to watch for abuse.
+              send to train their models. OpenAI and Anthropic keep it only for a limited time,
+              generally up to 30 days, to watch for abuse.
             </p>
             <p>
               A business can let its assistant send quotes automatically, without the owner
@@ -254,8 +254,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Everything stored in PriceCharm, and the emails we send',
                 ],
                 [
-                  'OpenAI and Anthropic',
-                  'AI replies, reading documents and, at OpenAI, practice photos',
+                  'Meta, OpenAI and Anthropic',
+                  'AI replies, reading documents and, at Meta and OpenAI, practice photos',
                   'The conversation, pricing details, documents and photos each task needs',
                 ],
                 [

@@ -237,6 +237,68 @@ test('Anthropic uses a constrained tool result and separate base64 image content
   }
 });
 
+test('Meta uses the Responses API with reasoning room and skips commentary', async () => {
+  process.env.AI_PROVIDER = 'meta';
+  const originalMetaKey = process.env.META_API_KEY;
+  const originalMetaModel = process.env.META_MODEL;
+  process.env.META_API_KEY = 'test-meta-key-not-real';
+  delete process.env.META_MODEL;
+  try {
+    const adapter = (await import(
+      new URL('../src/ai/index.ts?test-provider=meta', import.meta.url).href
+    )) as typeof ai;
+    let requestBody: any;
+    let authorization: string | null = null;
+    globalThis.fetch = async (url, init) => {
+      assert.equal(url, 'https://api.meta.ai/v1/responses');
+      authorization = new Headers(init?.headers).get('authorization');
+      requestBody = JSON.parse(String(init?.body));
+      return response(
+        { reply: 'Upstairs too?' },
+        {
+          output: [
+            { type: 'reasoning', id: 'rs_1' },
+            {
+              type: 'message',
+              phase: 'commentary',
+              content: [{ type: 'output_text', text: 'Checking the windows.' }],
+            },
+            {
+              type: 'message',
+              content: [{ type: 'output_text', text: JSON.stringify({ reply: 'Upstairs too?' }) }],
+            },
+          ],
+        },
+      );
+    };
+    const photo = Buffer.from('normalized-fixture').toString('base64');
+    const result = await ask([{ mimeType: 'image/png', dataBase64: photo }], adapter);
+    assert.equal(result.reply, 'Upstairs too?');
+    assert.equal(authorization, 'Bearer test-meta-key-not-real');
+    assert.equal(requestBody.model, 'muse-spark-1.3');
+    assert.equal(requestBody.store, false);
+    assert.equal(requestBody.reasoning.effort, 'low');
+    assert.ok(requestBody.max_output_tokens > 2500);
+    assert.equal(requestBody.input[0].content[1].image_url, `data:image/png;base64,${photo}`);
+    assert.equal(requestBody.input[0].content[1].detail, undefined);
+
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return response({ reply: 'Hi' });
+    };
+    process.env.META_MODEL = 'muse-spark-1.3-contributor';
+    await assert.rejects(ask([], adapter), /Standard-mode/);
+    assert.equal(calls, 0);
+  } finally {
+    process.env.AI_PROVIDER = 'openai';
+    if (originalMetaKey === undefined) delete process.env.META_API_KEY;
+    else process.env.META_API_KEY = originalMetaKey;
+    if (originalMetaModel === undefined) delete process.env.META_MODEL;
+    else process.env.META_MODEL = originalMetaModel;
+  }
+});
+
 test('demo mode never calls a live provider', async () => {
   process.env.AI_PROVIDER = 'demo';
   try {

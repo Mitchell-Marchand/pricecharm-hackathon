@@ -4,6 +4,19 @@ PriceCharm needs its own keys, one set per environment, each with a spending cap
 
 Only you can create these keys. They live in your provider accounts.
 
+## Meta (the default)
+
+PriceCharm runs on Meta's models with `AI_PROVIDER=meta`: Muse Spark 1.3 for chat, reading documents and drafting quotes, and Muse Image for practice photos. One key covers both.
+
+1. At dev.meta.ai, create a key for each environment and put it in `META_API_KEY`.
+2. On the Billing page, add a card and set a spend limit with alerts.
+3. Leave `META_MODEL` on a Standard-mode model such as `muse-spark-1.3`. Never use a `-contributor` model: Contributor mode lets Meta train on what we send, which is customers' photos and owners' prices. The API refuses those models.
+4. Free credits work the same way: while a team spends them, Billing says its content "may be used for product improvement." Spend free credits only on local development with made-up data. Staging and production keys belong to a team with "Stop using free credits" turned on, so the privacy policy's promise that providers don't train on what we send stays true.
+
+`META_DRAFT_MODEL` can name a different model just for drafting quotes, such as `muse-wonder-1.0`. Compare candidates with `npm run replay`.
+
+OpenAI and Anthropic still work by setting `AI_PROVIDER` to `openai` or `anthropic`.
+
 ## What to create
 
 | Environment | OpenAI | Anthropic | Suggested monthly cap |
@@ -18,7 +31,7 @@ Only you can create these keys. They live in your provider accounts.
 2. In the project's limits, set a monthly budget with email alerts, and allow only the models PriceCharm uses: the chat model in `OPENAI_MODEL`, the drafting model in `OPENAI_DRAFT_MODEL` if you set one, and the image model in `OPENAI_IMAGE_MODEL`.
 3. Create an API key inside that project.
 
-Practice photos always use OpenAI, so production needs an OpenAI key even when chat runs on Anthropic.
+Practice photos use OpenAI unless the app runs on Meta, so production on Anthropic still needs an OpenAI key.
 
 **Anthropic** (console.anthropic.com):
 
@@ -28,7 +41,7 @@ Practice photos always use OpenAI, so production needs an OpenAI key even when c
 
 ## Where the keys go
 
-- **Local:** `apps/api/.env`, as `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Restart the API and worker after changing them.
+- **Local:** `apps/api/.env`, as `META_API_KEY`, `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`. Restart the API and worker after changing them.
 - **Staging and production:** `/srv/quotient-api/shared/.env` on the server only.
 - **Nowhere else:** not GitHub secrets (CI uses the demo provider and never calls a model), not the web app, and not any `NEXT_PUBLIC_` variable.
 

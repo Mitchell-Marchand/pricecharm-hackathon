@@ -19,7 +19,7 @@ export type LegalDocument = {
 };
 
 /** Both documents change together, so they share one date. */
-export const LEGAL_UPDATED = 'October 27, 2026';
+export const LEGAL_UPDATED = 'October 29, 2026';
 
 export function Mail({ operator }: { operator?: Operator }) {
   return operator?.email ? (

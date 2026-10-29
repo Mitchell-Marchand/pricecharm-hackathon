@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 
-export type AiProvider = 'openai' | 'anthropic' | 'demo';
+export type AiProvider = 'openai' | 'anthropic' | 'meta' | 'demo';
 export type AiUsage = {
   provider: string;
   model: string;
@@ -36,27 +36,35 @@ export type AiRequestOptions = {
 export type AiImage = { mimeType: string; dataBase64: string };
 export type AiDocument = { filename: string; mimeType: 'application/pdf'; dataBase64: string };
 const providerValue = process.env.AI_PROVIDER ?? 'openai';
-if (!['openai', 'anthropic', 'demo'].includes(providerValue)) {
-  throw new Error('AI_PROVIDER must be openai, anthropic, or demo.');
+if (!['openai', 'anthropic', 'meta', 'demo'].includes(providerValue)) {
+  throw new Error('AI_PROVIDER must be openai, anthropic, meta, or demo.');
 }
 export const aiProvider = providerValue as AiProvider;
 export const aiMode: 'live' | 'demo' = aiProvider === 'demo' ? 'demo' : 'live';
 
+const envPrefix = { openai: 'OPENAI', anthropic: 'ANTHROPIC', meta: 'META' } as const;
+const defaultModel = { openai: 'gpt-4.1-mini', anthropic: undefined, meta: 'muse-spark-1.3' };
+
 /**
  * The model for an operation. Drafting a quote can use a stronger model than the chat
- * (OPENAI_DRAFT_MODEL or ANTHROPIC_DRAFT_MODEL); everything else uses the provider's default.
+ * (OPENAI_DRAFT_MODEL, ANTHROPIC_DRAFT_MODEL or META_DRAFT_MODEL); everything else uses the
+ * provider's default.
  */
 export function modelFor(operation: string): string | undefined {
   if (aiProvider === 'demo') return undefined;
-  const prefix = aiProvider === 'openai' ? 'OPENAI' : 'ANTHROPIC';
+  const prefix = envPrefix[aiProvider];
   const drafting = operation === 'draft_quote' ? process.env[`${prefix}_DRAFT_MODEL`]?.trim() : '';
-  return (
-    drafting ||
-    (aiProvider === 'openai'
-      ? (process.env.OPENAI_MODEL ?? 'gpt-4.1-mini')
-      : process.env.ANTHROPIC_MODEL) ||
-    undefined
-  );
+  return drafting || (process.env[`${prefix}_MODEL`] ?? defaultModel[aiProvider]) || undefined;
+}
+
+/**
+ * Muse Spark reasons before it answers. Chat turns stay quick; drafting a price gets more thought.
+ * Reasoning counts toward max_output_tokens, so each level carries room for it.
+ */
+function metaReasoning(operation: string) {
+  return operation === 'draft_quote'
+    ? { effort: 'medium', allowance: 6000 }
+    : { effort: 'low', allowance: 2500 };
 }
 const usageContexts = new AsyncLocalStorage<UsageContext>();
 
@@ -103,13 +111,17 @@ export async function requestJson<T>(
 ): Promise<T> {
   if (aiProvider === 'demo')
     throw new AiError('A live model was requested while demo mode is enabled.');
-  const key = aiProvider === 'openai' ? process.env.OPENAI_API_KEY : process.env.ANTHROPIC_API_KEY;
+  const prefix = envPrefix[aiProvider];
+  const key = process.env[`${prefix}_API_KEY`];
   const model = options.model || modelFor(operation);
   if (!key || !model) {
     throw new AiError(
-      `Configure ${aiProvider === 'openai' ? 'OPENAI_API_KEY and OPENAI_MODEL' : 'ANTHROPIC_API_KEY and ANTHROPIC_MODEL'} to use the selected AI provider.`,
+      `Configure ${prefix}_API_KEY and ${prefix}_MODEL to use the selected AI provider.`,
     );
   }
+  // Contributor-mode models let Meta train on what we send: customers' photos and owners' prices.
+  if (aiProvider === 'meta' && /-contributor$/.test(model))
+    throw new AiError('Use a Standard-mode Meta model, never a -contributor one.');
   const maxOutput = boundedEnv('AI_MAX_OUTPUT_TOKENS', 1800, 256, 8000);
   const maxAttempts = options.maxAttempts === 1 ? 1 : 2;
   if (
@@ -141,12 +153,15 @@ export async function requestJson<T>(
   let failure: AiFailure['reason'] = 'transport';
   try {
     // No endpoint override: API credentials are sent only to the selected provider's official endpoint.
-    const url =
-      aiProvider === 'openai'
-        ? 'https://api.openai.com/v1/responses'
-        : 'https://api.anthropic.com/v1/messages';
+    const url = {
+      openai: 'https://api.openai.com/v1/responses',
+      anthropic: 'https://api.anthropic.com/v1/messages',
+      meta: 'https://api.meta.ai/v1/responses',
+    }[aiProvider];
+    // Meta serves the same Responses API as OpenAI, with reasoning and without image detail.
+    const reasoning = aiProvider === 'meta' ? metaReasoning(operation) : undefined;
     const body =
-      aiProvider === 'openai'
+      aiProvider !== 'anthropic'
         ? {
             model,
             store: false,
@@ -164,12 +179,13 @@ export async function requestJson<T>(
                   ...images.map((image) => ({
                     type: 'input_image',
                     image_url: `data:${image.mimeType};base64,${image.dataBase64}`,
-                    detail: 'low',
+                    ...(aiProvider === 'openai' ? { detail: 'low' } : {}),
                   })),
                 ],
               },
             ],
-            max_output_tokens: maxOutput,
+            max_output_tokens: maxOutput + (reasoning?.allowance ?? 0),
+            ...(reasoning ? { reasoning: { effort: reasoning.effort } } : {}),
             text: {
               format: { type: 'json_schema', name: 'quotient_response', strict: true, schema },
             },
@@ -208,7 +224,7 @@ export async function requestJson<T>(
             tool_choice: { type: 'tool', name: 'emit_result' },
           };
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (aiProvider === 'openai') headers.Authorization = `Bearer ${key}`;
+    if (aiProvider !== 'anthropic') headers.Authorization = `Bearer ${key}`;
     else {
       headers['x-api-key'] = key;
       headers['anthropic-version'] = '2023-06-01';
@@ -273,13 +289,14 @@ export async function requestJson<T>(
     }
     failure = 'invalid';
     let result: unknown;
-    if (aiProvider === 'openai') {
+    if (aiProvider !== 'anthropic') {
       const parsed = z
         .object({
           status: z.string(),
           output: z.array(
             z
               .object({
+                phase: z.string().optional(),
                 content: z
                   .array(z.object({ type: z.string(), text: z.string().optional() }).passthrough())
                   .optional(),
@@ -291,7 +308,9 @@ export async function requestJson<T>(
         .parse(raw);
       if (parsed.status !== 'completed')
         throw new AiError('The AI response was incomplete. Please try again.');
+      // Muse Spark can narrate between steps in "commentary" messages; only the answer is JSON.
       const text = parsed.output
+        .filter((item) => item.phase !== 'commentary')
         .flatMap((item) => item.content ?? [])
         .filter((item) => item.type === 'output_text')
         .map((item) => item.text ?? '')
