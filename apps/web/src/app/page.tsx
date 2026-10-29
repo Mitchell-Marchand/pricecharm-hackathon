@@ -21,7 +21,7 @@ export default async function LandingPage() {
             <Tag tone="canary" size="lg">
               Quote More, Book More
             </Tag>
-            <h1 className="t-hero mt-5">Quotes your new customers while you're on the job.</h1>
+            <h1 className="t-hero mt-5">Accurate quotes for your customers with your own AI</h1>
             <p className="mt-6 max-w-[34rem] text-lg text-ink-2">
               Show it a few jobs you've done. It learns your prices and the questions you ask, then
               quotes new customers on your website or through a link you send.

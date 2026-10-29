@@ -32,7 +32,7 @@ export default async function Image() {
             letterSpacing: '-0.025em',
           }}
         >
-          Quotes your new customers while you’re on the job.
+          Accurate quotes for your customers with your own AI
         </div>
         <div style={{ marginTop: 24, fontSize: 28, lineHeight: 1.3, color: OG.ink2 }}>
           With your prices, on your website or a link.
