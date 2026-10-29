@@ -20,7 +20,8 @@ module.exports = {
         APP_RELEASE: release,
         UPLOAD_DIR: uploadDirectory,
       },
-      max_memory_restart: '500M',
+      // A customer's walk-around video is held in memory while it's saved and sent to Meta.
+      max_memory_restart: '1G',
       kill_timeout: 40000,
       restart_delay: 2000,
       time: true,
