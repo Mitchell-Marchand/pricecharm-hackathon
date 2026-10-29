@@ -349,6 +349,7 @@ test(
       (SESv2Client.prototype as any).send = async (command: any) => {
         replies.push(command.input.ReplyToAddresses);
         assert.equal(command.input.Destination.ToAddresses[0], payload.to);
+        assert.equal(command.input.FromEmailAddress, '"PriceCharm" <sender@example.test>');
         return { MessageId: 'mock-ses-message' };
       };
       try {

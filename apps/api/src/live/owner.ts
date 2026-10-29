@@ -264,6 +264,7 @@ async function emailCustomer(businessId: string, chatId: string, subject: string
     dedupeKey: `owner-reply:${chatId}:${randomUUID()}`,
     to: String(chat.customer_email),
     replyTo: await ownerReplyTo(businessId),
+    fromName: String(business.name),
     subject: subject.replace('{business}', String(business.name)),
     text: `${intro.replace('{business}', String(business.name))}\n${link}`,
   });

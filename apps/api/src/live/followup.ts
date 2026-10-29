@@ -57,6 +57,7 @@ export async function followUpQuotes(now = new Date()) {
           dedupeKey: `live-quote:${quote.chat_id}:followup`,
           to: String(quote.customer_email),
           replyTo: await ownerReplyTo(String(quote.business_id), connection),
+          fromName: String(quote.name),
           subject: `Your quote from ${quote.name}`,
           text: `Hi${first ? ` ${first}` : ''},\n\nYour ${money(Number(quote.total_cents))} quote from ${quote.name} is still here:\n${link}\n\nYou can accept it or ask a question there. If you’ve decided not to go ahead, you can tell them in one tap, which helps them either way.\n\nThe link works for ${days} days. Keep it to yourself, since anyone with it can see your quote.`,
         },

@@ -11,8 +11,39 @@ const emailSchema = z.object({
   text: z.string().min(1).max(30000),
   // Where a reply goes. Without one, replies go to SUPPORT_EMAIL.
   replyTo: z.email().max(254).optional(),
+  // The name inboxes show it's from. Customers see the business; everyone else sees PriceCharm.
+  fromName: z.string().trim().min(1).max(200).optional(),
 });
 export type TransactionalEmail = z.infer<typeof emailSchema>;
+
+/**
+ * SES_EMAIL_FROM with a name in front, so inboxes show "PriceCharm" instead of "quotes". A name
+ * that isn't plain ASCII, like "Joe’s Plumbing", goes out MIME-encoded, which SES requires.
+ */
+export function fromAddress(name = 'PriceCharm'): string {
+  const configured = String(process.env.SES_EMAIL_FROM || '').trim();
+  const address = configured.match(/<([^>]+)>/)?.[1] ?? configured;
+  const clean =
+    name
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'PriceCharm';
+  if (/^[\x20-\x7e]*$/.test(clean)) return `"${clean.replace(/["\\]/g, '\\$&')}" <${address}>`;
+  // An encoded word is at most 75 characters, so long names take several, split between characters.
+  const words: string[] = [];
+  let chunk = '';
+  for (const character of clean) {
+    if (Buffer.byteLength(chunk + character) > 45) {
+      words.push(chunk);
+      chunk = '';
+    }
+    chunk += character;
+  }
+  words.push(chunk);
+  const encoded = words.map((word) => `=?UTF-8?B?${Buffer.from(word).toString('base64')}?=`);
+  return `${encoded.join(' ')} <${address}>`;
+}
 export function mailProvider(): 'local' | 'ses' {
   const value =
     process.env.MAIL_PROVIDER || (process.env.NODE_ENV === 'production' ? 'ses' : 'local');
@@ -158,7 +189,7 @@ export async function deliverEmail(emailId: string): Promise<void> {
     });
     const result = await client.send(
       new SendEmailCommand({
-        FromEmailAddress: process.env.SES_EMAIL_FROM,
+        FromEmailAddress: fromAddress(payload.fromName),
         Destination: { ToAddresses: [payload.to] },
         ...(replyTo ? { ReplyToAddresses: [replyTo] } : {}),
         Content: {

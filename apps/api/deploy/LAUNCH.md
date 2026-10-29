@@ -25,11 +25,16 @@ PriceCharm sends email: customers' verification codes and quotes, owner alerts, 
        {
          "Effect": "Allow",
          "Action": "ses:SendEmail",
-         "Resource": "arn:aws:ses:us-east-1:ACCOUNT:identity/pricecharm.com"
+         "Resource": [
+           "arn:aws:ses:us-east-1:ACCOUNT:identity/pricecharm.com",
+           "arn:aws:ses:us-east-1:ACCOUNT:configuration-set/my-first-configuration-set"
+         ]
        }
      ]
    }
    ```
+
+   The second line is for the configuration set SES's setup wizard attaches to the domain. Without it, every send fails with `AccessDeniedException`. If the domain uses a different set, or none, change or drop that line.
 
 2. **Launch the instance** from the EC2 console:
    - Name it `pricecharm`. The snapshot policy in step 5 finds it by this name.
