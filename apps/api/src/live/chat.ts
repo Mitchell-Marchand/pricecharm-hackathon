@@ -43,6 +43,7 @@ import { lossReasonPhrase, type LossReason } from './outcomes.js';
 import { recordActivity } from '../metrics.js';
 import { chooseAcceptLabel, DEFAULT_ACCEPT_LABEL } from './accept-wording.js';
 import { acceptedMessage, businessLogo, contactName, visitMessage } from './quote-page.js';
+import { previewView, startAfterPreview } from './previews.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -307,6 +308,10 @@ export async function chatView(business: Row, chat: Row) {
           sentAt: quote.sent_at ? new Date(quote.sent_at).toISOString() : null,
           /** The words on its accept button. */
           acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
+          /** The customer's photo, and a picture of the job done made from it, once it's ready. */
+          preview: business.after_preview
+            ? previewView(quote, `/api/v1/chat/${business.slug}/${chat.id}/preview`)
+            : null,
         }
       : null,
     waitingForOwner: quote?.status === 'review',
@@ -933,6 +938,10 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       if (!test && reachable) await notifyOwner(businessId, chatId, 'review', connection);
     }
   });
+  // The after picture is drawn outside this request and shows up with the quote once it's ready.
+  void startAfterPreview(req, chatId).catch((error) =>
+    reportError(error, { event: 'after_preview' }),
+  );
 }
 
 /**

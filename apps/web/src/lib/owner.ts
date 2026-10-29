@@ -98,6 +98,8 @@ export interface QuoteDetail extends QuoteListItem {
   messages: ThreadMessage[];
   /** Missing from older APIs. */
   videos?: QuoteVideo[];
+  /** The before-and-after customers see with the quote, once it's drawn. Missing from older APIs. */
+  preview?: { before: string; after: string } | null;
 }
 
 export type QuoteFilter = 'review' | 'sent' | 'accepted' | 'all';
@@ -131,14 +133,17 @@ export interface QuotePage {
   wordings: string[];
   /** Customers leave their details before the price shows. Missing from older APIs. */
   contactFirst?: boolean;
+  /** Quotes show a picture of the job done, made from the customer's photo. Missing from older APIs. */
+  afterPreview?: boolean;
 }
 export type QuotePageText = Pick<
   QuotePage,
   'contactName' | 'acceptedMessage' | 'visitMessage' | 'acceptLabel'
 >;
 export const loadQuotePage = () => api<QuotePage>('/app/quote-page');
-export const saveQuotePage = (patch: Partial<QuotePageText> & { contactFirst?: boolean }) =>
-  api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
+export const saveQuotePage = (
+  patch: Partial<QuotePageText> & { contactFirst?: boolean; afterPreview?: boolean },
+) => api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
 export function uploadLogo(file: File) {
   const body = new FormData();
   body.append('file', file);

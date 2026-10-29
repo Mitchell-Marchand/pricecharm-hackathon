@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, ArrowUp, Check, CircleAlert, Pencil, Send } from 'lucide-react';
+import { BeforeAfter } from '@/components/BeforeAfter';
 import { CustomerMessage, OwnerMessage } from '@/components/Chat';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { QuoteStatusTag } from '@/components/owner/QuoteStatus';
@@ -138,6 +139,24 @@ export default function QuotePage() {
           {quote.videos?.map((video) => (
             <VideoFindings key={video.id} video={video} />
           ))}
+          {quote.preview && (
+            <div className="mt-5">
+              <BeforeAfter
+                before={quote.preview.before}
+                after={quote.preview.after}
+                caption={
+                  <>
+                    Customers see this with the quote: their photo, and a picture of it done that
+                    Muse Image made from it. You can turn it off in{' '}
+                    <Link href="/app/settings" className="underline underline-offset-2">
+                      Settings
+                    </Link>
+                    .
+                  </>
+                }
+              />
+            </div>
+          )}
           <Thread messages={quote.messages} customer={quote.customer} />
           <Reply quote={quote} first={first} onSent={setQuote} />
         </div>

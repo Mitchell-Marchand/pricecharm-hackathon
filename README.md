@@ -8,7 +8,7 @@ PriceCharm runs on Meta's models through the Meta Model API, in Standard mode on
 
 - **Muse Spark 1.3** runs the customer's quote chat, reads old quotes and invoices into past jobs, and drafts each quote from the owner's own prices. See [`apps/api/src/ai/index.ts`](apps/api/src/ai/index.ts).
 - **Walk-around video quotes.** A customer films the job instead of taking photos. Muse Spark 1.2 watches it and hears what they say, then picks what the price depends on, like windows to count or a driveway to size. **SAM 3.1** follows each window through the video and counts it once, then outlines what it found on a still for the owner. The count becomes the size on the quote, in the unit the owner prices by. See [`walkaround.ts`](apps/api/src/ai/walkaround.ts), [`meta-media.ts`](apps/api/src/ai/meta-media.ts) and [`live/videos.ts`](apps/api/src/live/videos.ts).
-- **Muse Image** makes the photos that come with the practice customers owners train on. See [`practice-images.ts`](apps/api/src/ai/practice-images.ts).
+- **Muse Image** edits the customer's own photo to show the job done, like the same patio with the moss gone. The quote shows the two as a before-and-after the customer can drag across. Owners can turn it off. See [`after-preview.ts`](apps/api/src/ai/after-preview.ts) and [`live/previews.ts`](apps/api/src/live/previews.ts). Muse Image also makes the photos that come with the practice customers owners train on ([`practice-images.ts`](apps/api/src/ai/practice-images.ts)).
 
 ### What we built during the hackathon
 
@@ -17,7 +17,7 @@ PriceCharm runs on Meta's models through the Meta Model API, in Standard mode on
 - the customer quote chat, on a link and as a website widget, with quotes that send themselves once a service has earned it
 - the owner app: quotes waiting for an OK, replies, settings, and what the AI knows
 - plans and billing rules, the public site and live demo, and the production deploy
-- everything on Meta above: the Muse provider, Muse Image, and walk-around video with SAM 3.1
+- everything on Meta above: the Muse provider, walk-around video with SAM 3.1, and Muse Image's after pictures and practice photos
 
 | Folder | What it is |
 | --- | --- |

@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ArrowUp, Camera, Check, Video, X } from 'lucide-react';
+import { BeforeAfter } from '@/components/BeforeAfter';
 import { BusinessMark, CustomerMessage, Typing } from '@/components/Chat';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
 import { Button, TextInput } from '@/components/ui';
@@ -510,6 +511,9 @@ export function QuoteChat({
                       </button>
                     </div>
                   )}
+                  {chat.quote.preview && access && (
+                    <QuotePreview preview={chat.quote.preview} access={access} />
+                  )}
                 </div>
               )}
             </div>
@@ -899,6 +903,42 @@ function Message({
       </div>
     );
   return <AssistantBubble profile={profile}>{message.text}</AssistantBubble>;
+}
+
+/** The quote's before-and-after. Like photos, the pictures need the chat's token to load. */
+function QuotePreview({
+  preview,
+  access,
+}: {
+  preview: { before: string; after: string };
+  access: ChatAccess;
+}) {
+  const [sources, setSources] = useState<{ before: string; after: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const loaded: string[] = [];
+    Promise.all([photoUrl(access, preview.before), photoUrl(access, preview.after)])
+      .then(([before, after]) => {
+        loaded.push(before, after);
+        if (live) setSources({ before, after });
+        else loaded.forEach((url) => URL.revokeObjectURL(url));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      loaded.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [preview.before, preview.after, access]);
+  if (!sources) return null;
+  return (
+    <div className="mt-4">
+      <BeforeAfter
+        before={sources.before}
+        after={sources.after}
+        caption="What it could look like when it’s done. This picture was made with AI from your photo, so the real result can look different."
+      />
+    </div>
+  );
 }
 
 /** Like photos, chat videos need the chat's token, so they're fetched rather than linked. */

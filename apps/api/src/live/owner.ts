@@ -18,6 +18,7 @@ import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
 import { overlayFile, ownerVideos, videoFile } from './videos.js';
+import { previewFile, previewView } from './previews.js';
 import {
   recordActivity,
   recordEvent,
@@ -173,8 +174,23 @@ async function quoteDetail(businessId: string, quoteId: string) {
     })),
     /** Walk-around videos the customer sent, with what was counted and measured in them. */
     videos: await ownerVideos(businessId, String(quote.chat_id)),
+    /** The before-and-after customers see with the quote, once it's drawn, while it's turned on. */
+    preview: (await rows('SELECT after_preview FROM businesses WHERE id=?', [businessId]))[0]
+      ?.after_preview
+      ? previewView(quote, `/api/v1/app/quotes/${quote.id}/preview`)
+      : null,
   };
 }
+
+ownerQuotesRouter.get('/app/quotes/:id/preview/:which', async (req, res) => {
+  const [quote] = await rows('SELECT * FROM live_quotes WHERE id=? AND business_id=?', [
+    z.uuid().parse(req.params.id),
+    owner(req).businessId,
+  ]);
+  if (!quote) throw new ApiError(404, 'NOT_FOUND', 'Picture not found.');
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type('image/jpeg').send(await previewFile(quote, String(req.params.which)));
+});
 
 ownerQuotesRouter.get('/app/videos/:id', async (req, res) => {
   const video = await videoFile(owner(req).businessId, String(req.params.id));

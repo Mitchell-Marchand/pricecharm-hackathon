@@ -6,6 +6,8 @@ import { imageUpload, saveImage, uploadSlot } from '../uploads.js';
 import { workspaceFromRequest } from '../workspace.js';
 import { lossReasons } from './outcomes.js';
 import { kickVideos, saveVideo, videoFile, videoUpload } from './videos.js';
+import { previewFile } from './previews.js';
+import { rows } from '../db.js';
 import {
   afterPhoto,
   businessBySlug,
@@ -156,6 +158,23 @@ chatRouter.get('/chat/:slug/:chatId/videos/:videoId', async (req, res) => {
   const video = await videoFile(String(business.id), String(req.params.videoId), String(chat.id));
   res.set('Cache-Control', 'private, max-age=86400');
   res.type(video.mimeType).send(video.bytes);
+});
+
+/** The quote's before and after, once the customer can see the quote. */
+chatRouter.get('/chat/:slug/:chatId/preview/:which', async (req, res) => {
+  const { business, chat } = await chatAccess(req);
+  const [quote] = await rows('SELECT * FROM live_quotes WHERE chat_id=? AND business_id=?', [
+    chat.id,
+    business.id,
+  ]);
+  const visible =
+    quote &&
+    business.after_preview &&
+    (['sent', 'accepted', 'visit_requested', 'lost', 'expired'].includes(String(quote.status)) ||
+      (chat.source === 'test' && quote.status === 'review'));
+  if (!visible) throw new ApiError(404, 'NOT_FOUND', 'Picture not found.');
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type('image/jpeg').send(await previewFile(quote, String(req.params.which)));
 });
 
 chatRouter.get('/chat/:slug/:chatId/photos/:photoId', async (req, res) => {

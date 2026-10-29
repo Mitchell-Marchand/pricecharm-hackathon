@@ -80,7 +80,7 @@ export function QuotePageSettings({ business }: { business: string }) {
   if (!page || !text) return <div className="shimmer h-40 rounded-md" />;
 
   const save = (
-    patch: Partial<QuotePageText> & { contactFirst?: boolean },
+    patch: Partial<QuotePageText> & { contactFirst?: boolean; afterPreview?: boolean },
     saved: (next: QuotePage) => string,
   ) =>
     saveQuotePage(patch)
@@ -316,6 +316,36 @@ export function QuotePageSettings({ business }: { business: string }) {
           />
         </div>
       </Field>
+
+      {page.afterPreview !== undefined && (
+        <Field
+          label="After picture on quotes"
+          htmlFor="page-after-preview"
+          hint={
+            page.afterPreview
+              ? 'Quotes show the customer’s photo next to a picture of the job done, made with AI from that photo.'
+              : 'Quotes show the price and the details, without a picture of the job done.'
+          }
+        >
+          <div id="page-after-preview">
+            <Segmented
+              label="After picture on quotes"
+              value={page.afterPreview ? 'on' : 'off'}
+              onChange={(value) =>
+                save({ afterPreview: value === 'on' }, (next) =>
+                  next.afterPreview
+                    ? 'Saved. Quotes show an after picture when the customer sent a photo or video.'
+                    : 'Saved. Quotes don’t show an after picture.',
+                )
+              }
+              options={[
+                { value: 'on', label: 'Show it' },
+                { value: 'off', label: 'Don’t show it' },
+              ]}
+            />
+          </div>
+        </Field>
+      )}
     </div>
   );
 }

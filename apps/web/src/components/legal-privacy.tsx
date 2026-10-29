@@ -215,7 +215,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               read a document or draft a quote, we send the model the parts of the conversation, the
               business’s pricing information and any photos or videos it needs, and use its answer.
               We also use Meta or OpenAI to create the photos that come with practice requests.
-              Those photos are made up and don’t show anyone’s real property.
+              Those photos are made up and don’t show anyone’s real property. When a business shows
+              after pictures with its quotes, Meta’s Muse Image makes one from the customer’s photo,
+              to show what the job could look like done.
             </p>
             <p>
               We use these providers’ business services. Under their terms, they don’t use what we
@@ -255,7 +257,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
                 [
                   'Meta, OpenAI and Anthropic',
-                  'AI replies, reading documents and, at Meta and OpenAI, practice photos',
+                  'AI replies, reading documents and, at Meta and OpenAI, practice photos and after pictures',
                   'The conversation, pricing details, documents, photos and videos each task needs',
                 ],
                 [

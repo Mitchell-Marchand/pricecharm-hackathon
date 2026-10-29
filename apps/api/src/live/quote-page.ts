@@ -98,6 +98,8 @@ async function quotePage(businessId: string) {
     wordings: ACCEPT_WORDINGS.map((wording) => wording.label),
     /** Customers leave their details before the price shows. Off by default. */
     contactFirst: Boolean(business.contact_first),
+    /** Quotes show a picture of the job done, made from the customer's photo. On by default. */
+    afterPreview: Boolean(business.after_preview),
   };
 }
 
@@ -116,6 +118,7 @@ const quotePageInput = z
     visitMessage: oneLine(280, 'Keep this to 280 characters or fewer.'),
     acceptLabel: oneLine(24, 'Keep the button to 24 characters or fewer, so it fits on a phone.'),
     contactFirst: z.boolean(),
+    afterPreview: z.boolean(),
   })
   .partial()
   .strict();
@@ -154,6 +157,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
     ]);
   if (input.acceptLabel !== undefined) changes.push(['accept_label', input.acceptLabel]);
   if (input.contactFirst !== undefined) changes.push(['contact_first', input.contactFirst]);
+  if (input.afterPreview !== undefined) changes.push(['after_preview', input.afterPreview]);
   if (changes.length)
     await mutate(
       `UPDATE businesses SET ${changes.map(([column]) => `${column}=?`).join(',')} WHERE id=?`,
@@ -168,6 +172,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
     visit_message_chars: (saved.visit_message as string | undefined)?.length,
     accept_label: input.acceptLabel,
     contact_first: input.contactFirst,
+    after_preview: input.afterPreview,
   });
   res.json(ok(await quotePage(businessId)));
 });
