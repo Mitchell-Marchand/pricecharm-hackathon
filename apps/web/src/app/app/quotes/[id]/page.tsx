@@ -20,6 +20,7 @@ import {
   loadQuote,
   messageCustomer,
   type QuoteDetail,
+  type QuoteVideo,
   type ThreadMessage,
 } from '@/lib/owner';
 import { restyle, type Quote } from '@/lib/quote';
@@ -134,6 +135,9 @@ export default function QuotePage() {
               {quote.details}
             </p>
           )}
+          {quote.videos?.map((video) => (
+            <VideoFindings key={video.id} video={video} />
+          ))}
           <Thread messages={quote.messages} customer={quote.customer} />
           <Reply quote={quote} first={first} onSent={setQuote} />
         </div>
@@ -285,6 +289,77 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
   );
 }
 
+const plural = (unit: string, count: number) => (count === 1 ? unit.replace(/s$/, '') : unit);
+
+/** What was counted and measured in a customer's walk-around video, and where each number came from. */
+function VideoFindings({ video }: { video: QuoteVideo }) {
+  if (video.status === 'measuring')
+    return <p className="mt-4 text-sm text-muted">Measuring the video they sent…</p>;
+  if (video.status === 'failed')
+    return (
+      <p className="mt-4 text-sm text-muted">
+        They sent a video, but it couldn&apos;t be measured. {video.failure}
+      </p>
+    );
+  return (
+    <section
+      className="mt-5 rounded-md border border-line bg-surface p-4"
+      aria-labelledby={`video-${video.id}`}
+    >
+      <h3 id={`video-${video.id}`} className="font-semibold">
+        Measured from their video
+      </h3>
+      <ul className="mt-2 flex flex-col gap-1.5 text-[15px]">
+        {video.counts.map((item) => (
+          <li key={item.label}>
+            <span className="font-semibold">
+              {item.count} {plural(item.unit, item.count)}
+            </span>
+            <span className="text-ink-2">
+              {' '}
+              — each one followed through the video and counted once
+              {item.sparkCount !== null && item.sparkCount !== item.count
+                ? `. Watching it straight through, about ${item.sparkCount}.`
+                : '.'}
+            </span>
+          </li>
+        ))}
+        {video.area && (
+          <li>
+            <span className="font-semibold">
+              {video.area.surface}: about {video.area.low.toLocaleString()}–
+              {video.area.high.toLocaleString()} {video.area.unit}
+            </span>
+            {video.area.basis && (
+              <span className="text-ink-2"> — sized from {video.area.basis}.</span>
+            )}
+          </li>
+        )}
+        {video.narration && (
+          <li className="text-ink-2">
+            <span className="font-semibold text-ink">They said: </span>
+            {video.narration}
+          </li>
+        )}
+      </ul>
+      {video.overlays.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {video.overlays.map((overlay) => (
+            <figure key={overlay.url} className="flex flex-col gap-1">
+              <img
+                src={overlay.url}
+                alt={`${overlay.label} outlined on a still from their video`}
+                className="w-full rounded-[10px] border border-line"
+              />
+              <figcaption className="text-xs text-muted">{overlay.label} outlined</figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Thread({ messages, customer }: { messages: ThreadMessage[]; customer: string }) {
   const initials = customer
     .split(/\s+/)
@@ -301,6 +376,25 @@ function Thread({ messages, customer }: { messages: ThreadMessage[]; customer: s
               {message.from === 'customer' ? `${customer.split(' ')[0]}: ` : ''}
               {message.text}
             </p>
+          );
+        if (message.from === 'customer' && message.videoId)
+          return (
+            <CustomerMessage
+              key={message.id}
+              name={customer}
+              initials={initials || 'C'}
+              tone="blue"
+            >
+              <video
+                src={`/api/v1/app/videos/${message.videoId}`}
+                controls
+                playsInline
+                muted
+                preload="metadata"
+                aria-label={`${customer}’s video`}
+                className="w-64 max-w-full rounded-[12px] bg-black"
+              />
+            </CustomerMessage>
           );
         if (message.from === 'customer')
           return (

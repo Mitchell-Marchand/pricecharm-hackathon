@@ -213,9 +213,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             <p>
               PriceCharm uses AI models from Meta, OpenAI and Anthropic. To reply to a customer,
               read a document or draft a quote, we send the model the parts of the conversation, the
-              business’s pricing information and any photos it needs, and use its answer. We also
-              use Meta or OpenAI to create the photos that come with practice requests. Those photos
-              are made up and don’t show anyone’s real property.
+              business’s pricing information and any photos or videos it needs, and use its answer.
+              We also use Meta or OpenAI to create the photos that come with practice requests.
+              Those photos are made up and don’t show anyone’s real property.
             </p>
             <p>
               We use these providers’ business services. Under their terms, they don’t use what we
@@ -256,7 +256,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 [
                   'Meta, OpenAI and Anthropic',
                   'AI replies, reading documents and, at Meta and OpenAI, practice photos',
-                  'The conversation, pricing details, documents and photos each task needs',
+                  'The conversation, pricing details, documents, photos and videos each task needs',
                 ],
                 [
                   'Stripe',

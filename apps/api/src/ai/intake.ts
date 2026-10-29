@@ -34,6 +34,8 @@ export type IntakeInput = {
   photosAllowed?: boolean;
   /** What the customer's photos show, where they come as descriptions, like the demo's samples. */
   photoNotes?: string[];
+  /** What PriceCharm measured in the customer's walk-around video: counts, sizes, what they said. */
+  videoNotes?: string[];
   /** The public demo: wrap up once the checklist is covered, instead of asking more. */
   shortChat?: boolean;
 };
@@ -92,6 +94,10 @@ ${
 }${
       input.photoNotes?.length
         ? "\n- photoNotes say what the customer's photos show. Treat them as photos you can see: don't ask about anything they show or answer, like the size, the material or the condition. When you thank the customer for the photos, mention in a few words what you noticed that matters for the job."
+        : ''
+    }${
+      input.videoNotes?.length
+        ? '\n- videoNotes say what was measured in the customer\'s walk-around video. Treat those counts and sizes as known and never ask for photos. In your next reply, say in a few words what you found (like "I counted 19 windows in your video") and ask them once to confirm or correct it. Use their correction if they give one. Don\'t ask about anything else the video already answers.'
         : ''
     }
 - chips: up to four short answers the customer could tap, when the question has obvious ones (like "Concrete", "Pavers", "Not sure"). Otherwise none.

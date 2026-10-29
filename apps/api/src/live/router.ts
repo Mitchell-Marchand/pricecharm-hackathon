@@ -5,6 +5,7 @@ import { verifyHuman } from '../human-check.js';
 import { imageUpload, saveImage, uploadSlot } from '../uploads.js';
 import { workspaceFromRequest } from '../workspace.js';
 import { lossReasons } from './outcomes.js';
+import { kickVideos, saveVideo, videoFile, videoUpload } from './videos.js';
 import {
   afterPhoto,
   businessBySlug,
@@ -95,6 +96,8 @@ chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => 
 
 chatRouter.get('/chat/:slug/:chatId', async (req, res) => {
   const { business, chat } = await chatAccess(req);
+  // A video whose measuring stopped with the server starts again when the chat checks in.
+  await kickVideos(String(chat.id));
   res.json(ok(await chatView(business, chat)));
 });
 
@@ -123,6 +126,37 @@ chatRouter.post(
     res.status(201).json(ok(reply));
   },
 );
+
+/** A walk-around video, with stills the customer's browser took from it. It's measured afterwards. */
+chatRouter.post(
+  '/chat/:slug/:chatId/videos',
+  rateLimit(4, 10 * 60_000),
+  uploadSlot,
+  videoUpload,
+  async (req, res) => {
+    const { business, chat } = await chatAccess(req);
+    if (String(chat.status) !== 'chatting')
+      throw new ApiError(409, 'CHAT_DONE', 'Videos can’t be added to this request anymore.');
+    const view = await chatView(business, chat);
+    if (!view.videosAllowed)
+      throw new ApiError(422, 'VIDEO_UNAVAILABLE', 'Send a photo or two instead.');
+    await saveVideo(req, business, chat);
+    await kickVideos(String(chat.id));
+    const files = req.files as Record<string, Express.Multer.File[]> | undefined;
+    await customerEvent(req, 'customer_video', {
+      mb: Math.round((files?.video?.[0]?.size ?? 0) / 1024 / 1024),
+    });
+    const fresh = await chatAccess(req);
+    res.status(201).json(ok(await chatView(fresh.business, fresh.chat)));
+  },
+);
+
+chatRouter.get('/chat/:slug/:chatId/videos/:videoId', async (req, res) => {
+  const { business, chat } = await chatAccess(req);
+  const video = await videoFile(String(business.id), String(req.params.videoId), String(chat.id));
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type(video.mimeType).send(video.bytes);
+});
 
 chatRouter.get('/chat/:slug/:chatId/photos/:photoId', async (req, res) => {
   const photo = await chatPhoto(req);

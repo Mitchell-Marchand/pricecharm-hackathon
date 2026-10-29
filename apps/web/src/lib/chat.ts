@@ -20,6 +20,8 @@ export interface BusinessProfile {
   taking: boolean;
   /** Missing from an API older than this page. */
   logo?: Logo | null;
+  /** Takes walk-around videos. Missing from older APIs, which don't. */
+  videos?: boolean;
 }
 
 export interface ChatMessage {
@@ -28,6 +30,8 @@ export interface ChatMessage {
   kind: 'text' | 'status';
   text: string;
   photos: { id: string; url: string }[];
+  /** A walk-around video, and what was counted in it once it's measured. Missing from older APIs. */
+  video?: { id: string; status: 'measuring' | 'measured' | 'failed'; found: string[] } | null;
   chips: string[];
   createdAt: string;
 }
@@ -51,6 +55,10 @@ export interface ChatView {
   waitingForOwner: boolean;
   /** In an owner's test, why this quote would wait for them. Missing from older APIs. */
   wouldWait?: { id: string; detail: string }[];
+  /** Whether this chat takes walk-around videos. Missing from older APIs, which don't. */
+  videosAllowed?: boolean;
+  /** A video is being measured; the assistant carries on once it's done. */
+  measuring?: boolean;
 }
 
 export type ChatAccess = { chatId: string; token: string };
@@ -126,6 +134,35 @@ export function sendPhoto(slug: string, access: ChatAccess, blob: Blob) {
     body,
   });
 }
+
+/** A walk-around video, with stills taken from it in the browser and where in it each was taken. */
+export function sendVideo(
+  slug: string,
+  access: ChatAccess,
+  video: File,
+  stills: { blob: Blob; ms: number }[],
+  durationMs: number | null,
+) {
+  const body = new FormData();
+  if (durationMs !== null) body.append('durationMs', String(durationMs));
+  body.append('stillTimes', JSON.stringify(stills.map((still) => still.ms)));
+  for (const [index, still] of stills.entries())
+    body.append('stills', still.blob, `still-${index}.jpg`);
+  // Phones label the same files differently; the server checks what's inside.
+  const type = video.type === 'video/quicktime' ? 'video/quicktime' : 'video/mp4';
+  body.append(
+    'video',
+    new File([video], type === 'video/quicktime' ? 'walkaround.mov' : 'walkaround.mp4', { type }),
+  );
+  return api<ChatView>(`${base(slug, access)}/videos`, {
+    method: 'POST',
+    headers: auth(access),
+    body,
+  });
+}
+
+export const videoPath = (slug: string, access: ChatAccess, videoId: string) =>
+  `/api/v1${base(slug, access)}/videos/${videoId}`;
 
 /** A name and a way to reach them: an email, a phone number, or both. */
 export type Contact = { name: string; email: string; phone: string };

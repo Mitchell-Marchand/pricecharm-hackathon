@@ -14,12 +14,22 @@ let client: S3Client | undefined;
 function storageClient() {
   return (client ??= new S3Client({ region: process.env.AWS_REGION || 'us-east-1' }));
 }
-/** Photos are JPEGs and logos PNGs. Old quotes and invoices waiting to be read can be PDFs. */
+/**
+ * Photos are JPEGs and logos PNGs. Old quotes and invoices waiting to be read can be PDFs, and
+ * customers' walk-around videos MP4s or MOVs.
+ */
 function safeKey(key: string) {
-  if (!/^[0-9a-f-]{36}\.(jpg|png|pdf)$/.test(key)) throw new Error('Invalid private storage key.');
+  if (!/^[0-9a-f-]{36}\.(jpg|png|pdf|mp4|mov)$/.test(key))
+    throw new Error('Invalid private storage key.');
   return key;
 }
-const CONTENT_TYPES = { jpg: 'image/jpeg', png: 'image/png', pdf: 'application/pdf' } as const;
+const CONTENT_TYPES = {
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  pdf: 'application/pdf',
+  mp4: 'video/mp4',
+  mov: 'video/quicktime',
+} as const;
 export async function putPhoto(key: string, photo: Buffer): Promise<void> {
   const name = safeKey(key);
   if (bucket) {

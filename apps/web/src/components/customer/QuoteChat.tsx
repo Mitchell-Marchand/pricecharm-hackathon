@@ -9,7 +9,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Camera, Check, X } from 'lucide-react';
+import { ArrowUp, Camera, Check, Video, X } from 'lucide-react';
 import { BusinessMark, CustomerMessage, Typing } from '@/components/Chat';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
 import { Button, TextInput } from '@/components/ui';
@@ -27,7 +27,9 @@ import {
   savedAccess,
   sendMessage,
   sendPhoto,
+  sendVideo,
   startChat,
+  videoPath,
   type BusinessProfile,
   type ChatAccess,
   type ChatMessage,
@@ -40,6 +42,7 @@ import { quoteFootnote } from '@/lib/quote';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { useVisualViewport } from '@/lib/use-visual-viewport';
 import { cx, readPhoto } from '@/lib/util';
+import { MAX_VIDEO_BYTES, MAX_VIDEO_SECONDS, readVideo } from '@/lib/video';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ASKS_FOR_PHOTO = /\b(photo|picture|pic)s?\b/i;
@@ -48,7 +51,7 @@ const ASKS_FOR_PHOTO = /\b(photo|picture|pic)s?\b/i;
 const isPhone = (value: string) =>
   /^\+?[\d\s().-]+$/.test(value) && /^\d{7,15}$/.test(value.replace(/\D/g, ''));
 
-type Pending = { text?: string; photo?: string };
+type Pending = { text?: string; photo?: string; video?: string };
 /** Why the customer is leaving their details, on a quote they can see. */
 type Form = 'yes' | 'visit' | 'copy' | 'question';
 
@@ -86,8 +89,10 @@ export function QuoteChat({
   const scroller = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLInputElement>(null);
   const filePicker = useRef<HTMLInputElement>(null);
-  // Photos the customer just sent, shown from the browser instead of downloaded again.
+  const videoPicker = useRef<HTMLInputElement>(null);
+  // Photos and videos the customer just sent, shown from the browser instead of downloaded again.
   const localPhotos = useRef(new Map<string, string>());
+  const localVideos = useRef(new Map<string, string>());
 
   // Reopen this browser's chat, or the one from the customer's quote email.
   useEffect(() => {
@@ -133,9 +138,12 @@ export function QuoteChat({
     });
   }, []);
 
-  // Once the chat is with the owner, check in now and then for their quote or reply.
+  // Once the chat is with the owner, check in now and then for their quote or reply. A video
+  // being measured is checked on more often, since the assistant carries on as soon as it's done.
+  const measuring = !!chat?.measuring;
   const waiting =
-    !!chat && ['quoting', 'review', 'sent', 'accepted', 'visit'].includes(chat.status);
+    !!chat &&
+    (measuring || ['quoting', 'review', 'sent', 'accepted', 'visit'].includes(chat.status));
   useEffect(() => {
     if (!access || !waiting) return;
     const refresh = () => {
@@ -144,13 +152,13 @@ export function QuoteChat({
           .then(update)
           .catch(() => {});
     };
-    const timer = window.setInterval(refresh, 15_000);
+    const timer = window.setInterval(refresh, measuring ? 4_000 : 15_000);
     document.addEventListener('visibilitychange', refresh);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [access, waiting, slug, update]);
+  }, [access, waiting, measuring, slug, update]);
 
   async function ensureChat(): Promise<ChatAccess> {
     if (access) return access;
@@ -200,6 +208,35 @@ export function QuoteChat({
       update(view);
     } catch (photoError) {
       setError(errorMessage(photoError));
+    } finally {
+      setPending(null);
+      setBusy(false);
+    }
+  }
+
+  async function addVideo(file: File) {
+    setError('');
+    if (file.size > MAX_VIDEO_BYTES) {
+      setError('That video is too big. Send one under a minute or so.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const { durationMs, stills, poster } = await readVideo(file);
+      if (durationMs && durationMs > MAX_VIDEO_SECONDS * 1000) {
+        setError('That video is a bit long. Send one under a minute and a half.');
+        return;
+      }
+      setPending({ video: poster || 'loading' });
+      stickToBottom();
+      const current = await ensureChat();
+      const known = new Set(chat?.messages.flatMap((message) => message.video?.id ?? []));
+      const view = await sendVideo(slug, current, file, stills, durationMs);
+      const added = view.messages.find((message) => message.video && !known.has(message.video.id));
+      if (added?.video) localVideos.current.set(added.video.id, URL.createObjectURL(file));
+      update(view);
+    } catch (videoError) {
+      setError(errorMessage(videoError));
     } finally {
       setPending(null);
       setBusy(false);
@@ -298,7 +335,9 @@ export function QuoteChat({
   const canType =
     ['chatting', 'review', 'sent', 'accepted', 'visit'].includes(status) &&
     !form &&
+    !measuring &&
     (status !== 'sent' || reachable);
+  const videos = chat?.videosAllowed ?? profile.videos ?? false;
 
   // The quote card sits right after the message that announced it.
   const messages = chat?.messages ?? [];
@@ -376,10 +415,12 @@ export function QuoteChat({
           {messages.map((message, index) => (
             <div key={message.id} className="contents">
               <Message
+                slug={slug}
                 message={message}
                 profile={profile}
                 access={access}
                 local={localPhotos.current}
+                localVideos={localVideos.current}
               />
               {index === cardAfter && chat?.quote && (
                 <div ref={card} className="pr-3 pb-3">
@@ -475,8 +516,19 @@ export function QuoteChat({
           ))}
           {pending && (
             <div className="fade-up flex justify-end">
-              <CustomerBubble photo={!!pending.photo}>
-                {pending.photo ? (
+              <CustomerBubble photo={!!pending.photo || !!pending.video}>
+                {pending.video ? (
+                  <div className="flex w-56 max-w-full flex-col gap-1.5">
+                    {pending.video !== 'loading' && (
+                      <img
+                        src={pending.video}
+                        alt="Your video"
+                        className="w-full rounded-[12px] opacity-70"
+                      />
+                    )}
+                    <p className="px-1 text-xs">Sending your video…</p>
+                  </div>
+                ) : pending.photo ? (
                   <img
                     src={pending.photo}
                     alt="Your photo"
@@ -617,6 +669,10 @@ export function QuoteChat({
           <p className="py-2 text-sm text-muted">Putting your quote together…</p>
         )}
 
+        {measuring && (
+          <p className="py-2 text-sm text-muted">Watching your video and counting what’s in it…</p>
+        )}
+
         {status === 'closed' && <p className="py-1 text-sm text-muted">This request is closed.</p>}
 
         {canType && !restoring && (
@@ -636,6 +692,18 @@ export function QuoteChat({
                 className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40"
               >
                 <Camera className="size-5" />
+              </button>
+            )}
+            {status === 'chatting' && videos && (
+              <button
+                type="button"
+                onClick={() => videoPicker.current?.click()}
+                disabled={busy}
+                aria-label="Send a video of the job"
+                title="Film a quick walk-around and we’ll count and measure from it"
+                className="inline-flex size-11 shrink-0 items-center justify-center rounded-full text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+              >
+                <Video className="size-5" />
               </button>
             )}
             <label htmlFor="chat-message" className="sr-only">
@@ -683,6 +751,17 @@ export function QuoteChat({
             const file = event.target.files?.[0];
             event.target.value = '';
             if (file) void addPhoto(file);
+          }}
+        />
+        <input
+          ref={videoPicker}
+          type="file"
+          accept="video/mp4,video/quicktime,video/*"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) void addVideo(file);
           }}
         />
       </footer>
@@ -740,18 +819,41 @@ function CustomerBubble({ photo, children }: { photo: boolean; children: ReactNo
 }
 
 function Message({
+  slug,
   message,
   profile,
   access,
   local,
+  localVideos,
 }: {
+  slug: string;
   message: ChatMessage;
   profile: BusinessProfile;
   access: ChatAccess | null;
   local: Map<string, string>;
+  localVideos: Map<string, string>;
 }) {
   if (message.from === 'customer' && message.kind === 'status')
     return <p className="fade-up py-1 text-center text-sm text-muted">{message.text}</p>;
+  if (message.from === 'customer' && message.video)
+    return (
+      <div className="fade-up flex justify-end">
+        <CustomerBubble photo>
+          <div className="flex w-56 max-w-full flex-col gap-1.5">
+            {access && (
+              <ChatVideo
+                url={videoPath(slug, access, message.video.id)}
+                access={access}
+                local={localVideos.get(message.video.id)}
+              />
+            )}
+            {message.video.status === 'measured' && message.video.found.length > 0 && (
+              <p className="px-1 text-xs">Counted: {message.video.found.join(' · ')}</p>
+            )}
+          </div>
+        </CustomerBubble>
+      </div>
+    );
   if (message.from === 'customer')
     return (
       <div className="fade-up flex justify-end">
@@ -788,6 +890,43 @@ function Message({
       </div>
     );
   return <AssistantBubble profile={profile}>{message.text}</AssistantBubble>;
+}
+
+/** Like photos, chat videos need the chat's token, so they're fetched rather than linked. */
+function ChatVideo({ url, access, local }: { url: string; access: ChatAccess; local?: string }) {
+  const [src, setSrc] = useState(local ?? '');
+  useEffect(() => {
+    if (local) return;
+    let objectUrl = '',
+      live = true;
+    photoUrl(access, url)
+      .then((loaded) => {
+        objectUrl = loaded;
+        if (live) setSrc(loaded);
+        else URL.revokeObjectURL(loaded);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url, access, local]);
+  return src ? (
+    <video
+      src={src}
+      controls
+      playsInline
+      muted
+      preload="metadata"
+      aria-label="Your video"
+      className="w-full rounded-[12px] bg-black"
+    />
+  ) : (
+    <div
+      className="aspect-[9/16] w-full rounded-[12px] bg-on-accent/15"
+      aria-label="Loading video"
+    />
+  );
 }
 
 /** Chat photos need the chat's token, so they're fetched rather than linked. */

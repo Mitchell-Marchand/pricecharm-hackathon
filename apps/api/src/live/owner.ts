@@ -17,6 +17,7 @@ import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
+import { overlayFile, ownerVideos, videoFile } from './videos.js';
 import {
   recordActivity,
   recordEvent,
@@ -168,9 +169,25 @@ async function quoteDetail(businessId: string, quoteId: string) {
         id,
         url: `/api/v1/uploads/${id}`,
       })),
+      videoId: message.video_id ? String(message.video_id) : null,
     })),
+    /** Walk-around videos the customer sent, with what was counted and measured in them. */
+    videos: await ownerVideos(businessId, String(quote.chat_id)),
   };
 }
+
+ownerQuotesRouter.get('/app/videos/:id', async (req, res) => {
+  const video = await videoFile(owner(req).businessId, String(req.params.id));
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type(video.mimeType).send(video.bytes);
+});
+
+ownerQuotesRouter.get('/app/videos/:id/overlays/:index', async (req, res) => {
+  const index = z.coerce.number().int().min(0).max(10).parse(req.params.index);
+  const image = await overlayFile(owner(req).businessId, String(req.params.id), index);
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type('image/jpeg').send(image);
+});
 
 ownerQuotesRouter.get('/app/quotes/:id', async (req, res) => {
   const quoteId = z.uuid().parse(req.params.id);

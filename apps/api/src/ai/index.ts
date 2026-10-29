@@ -32,6 +32,8 @@ export type AiRequestOptions = {
   model?: string;
   /** Photos this request may carry. Three unless the operation needs more. */
   maxImages?: number;
+  /** A video already uploaded to Meta's Files API. Only Meta's models watch video. */
+  metaVideoFileId?: string;
 };
 export type AiImage = { mimeType: string; dataBase64: string };
 export type AiDocument = { filename: string; mimeType: 'application/pdf'; dataBase64: string };
@@ -52,6 +54,9 @@ const defaultModel = { openai: 'gpt-4.1-mini', anthropic: undefined, meta: 'muse
  */
 export function modelFor(operation: string): string | undefined {
   if (aiProvider === 'demo') return undefined;
+  // Muse Spark 1.3 doesn't hear audio well yet, and customers talk over their videos.
+  if (aiProvider === 'meta' && operation === 'read_walkaround')
+    return process.env.META_VIDEO_MODEL?.trim() || 'muse-spark-1.2';
   const prefix = envPrefix[aiProvider];
   const drafting = operation === 'draft_quote' ? process.env[`${prefix}_DRAFT_MODEL`]?.trim() : '';
   return drafting || (process.env[`${prefix}_MODEL`] ?? defaultModel[aiProvider]) || undefined;
@@ -122,6 +127,8 @@ export async function requestJson<T>(
   // Contributor-mode models let Meta train on what we send: customers' photos and owners' prices.
   if (aiProvider === 'meta' && /-contributor$/.test(model))
     throw new AiError('Use a Standard-mode Meta model, never a -contributor one.');
+  if (options.metaVideoFileId && aiProvider !== 'meta')
+    throw new AiError('Videos can only be read on Meta’s models.');
   const maxOutput = boundedEnv('AI_MAX_OUTPUT_TOKENS', 1800, 256, 8000);
   const maxAttempts = options.maxAttempts === 1 ? 1 : 2;
   if (
@@ -181,6 +188,9 @@ export async function requestJson<T>(
                     image_url: `data:${image.mimeType};base64,${image.dataBase64}`,
                     ...(aiProvider === 'openai' ? { detail: 'low' } : {}),
                   })),
+                  ...(options.metaVideoFileId
+                    ? [{ type: 'input_video', file_id: options.metaVideoFileId }]
+                    : []),
                 ],
               },
             ],

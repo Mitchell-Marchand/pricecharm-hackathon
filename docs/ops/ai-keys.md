@@ -15,6 +15,8 @@ PriceCharm runs on Meta's models with `AI_PROVIDER=meta`: Muse Spark 1.3 for cha
 
 `META_DRAFT_MODEL` can name a different model just for drafting quotes, such as `muse-wonder-1.0`. Compare candidates with `npm run replay`.
 
+Customers' walk-around videos only work on Meta. Muse Spark 1.2 watches them (`META_VIDEO_MODEL`), because 1.3 doesn't hear audio well yet, and SAM 3.1 counts what's in them (`META_SAM_MODEL`). SAM bills per frame, so a one-minute video costs up to about $1. Videos go up to 100 MB, so production's nginx needs the larger upload limit in `deploy/nginx-site.conf.example` for that one route.
+
 OpenAI and Anthropic still work by setting `AI_PROVIDER` to `openai` or `anthropic`.
 
 ## What to create

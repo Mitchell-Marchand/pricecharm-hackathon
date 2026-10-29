@@ -59,7 +59,23 @@ export interface ThreadMessage {
   kind: 'text' | 'status';
   text: string;
   photos: { id: string; url: string }[];
+  /** A walk-around video the customer sent. Missing from older APIs. */
+  videoId?: string | null;
   createdAt?: string;
+}
+
+/** A customer's walk-around video, and what was counted and measured in it. */
+export interface QuoteVideo {
+  id: string;
+  status: 'measuring' | 'measured' | 'failed';
+  url: string;
+  failure: string;
+  summary: string;
+  narration: string;
+  counts: { label: string; unit: string; count: number; sparkCount: number | null }[];
+  area: { surface: string; low: number; high: number; unit: string; basis: string } | null;
+  /** Stills from the video with what was counted outlined. */
+  overlays: { label: string; url: string }[];
 }
 
 export interface QuoteDetail extends QuoteListItem {
@@ -80,6 +96,8 @@ export interface QuoteDetail extends QuoteListItem {
   confidence: string;
   checks: QuoteCheck[];
   messages: ThreadMessage[];
+  /** Missing from older APIs. */
+  videos?: QuoteVideo[];
 }
 
 export type QuoteFilter = 'review' | 'sent' | 'accepted' | 'all';

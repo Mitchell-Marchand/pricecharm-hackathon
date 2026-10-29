@@ -30,6 +30,19 @@ server {
     # Restrict and rotate these logs; never enable debug request/body logging.
     error_log /var/log/nginx/quotient-error.log crit;
     client_max_body_size 10m;
+    # Customers' walk-around videos, which the API takes up to 100 MB.
+    location ~ ^/api/v1/chat/[^/]+/[^/]+/videos$ {
+        client_max_body_size 110m;
+        proxy_pass http://127.0.0.1:4100;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 120s;
+        proxy_buffering off;
+        proxy_cache off;
+    }
     location /api/v1/ {
         proxy_pass http://127.0.0.1:4100;
         proxy_http_version 1.1;

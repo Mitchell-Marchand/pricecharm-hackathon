@@ -5,6 +5,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { createBusiness, expectQuoteFromTop } from './helpers';
 
 const photo = path.resolve('public/photos/patio-stains.jpg');
+// Three seconds of a test pattern: demo mode measures any video the same way.
+const walkaround = path.resolve('tests/e2e/fixtures/walkaround.mp4');
 
 /** Describes the job. The quote, or the owner's hold on it, follows the last answer. */
 async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
@@ -15,7 +17,7 @@ async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
   await page.getByLabel('Message').press('Enter');
   await expect(page.getByRole('button', { name: 'Skip photos' })).toBeVisible();
   if (withPhoto) {
-    await page.locator('input[type=file]').setInputFiles(photo);
+    await page.locator('input[type=file][accept="image/*"]').setInputFiles(photo);
     await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
   } else await page.getByRole('button', { name: 'Skip photos' }).click();
 }
@@ -124,6 +126,32 @@ test('a quote that needs the owner’s OK appears once they send it', async ({
   });
   await page.getByRole('button', { name: 'Request a site visit' }).click();
   await expect(page.getByText(/Maya will get in touch to set up a visit/)).toBeVisible();
+
+  // Another customer films the job instead. It's measured after the upload, the assistant carries
+  // on from what was found, and the owner sees the count and the video with the quote.
+  const filming = await browser.newPage({ baseURL });
+  await filming.goto(`/q/${shop.slug}`);
+  await filming.getByRole('button', { name: 'House wash' }).click();
+  await expect(filming.getByText(/\[Demo\] Thanks!/)).toBeVisible();
+  await filming.locator('input[type=file][accept^="video"]').setInputFiles(walkaround);
+  await expect(filming.getByText('Counted: 12 windows')).toBeVisible({ timeout: 20_000 });
+  await expect(filming.getByText(/Watching your video/)).toHaveCount(0);
+  await expect(filming.getByText(/wants to look this one over/)).toBeVisible();
+  await filming.getByLabel('Your name').fill('Ana Ruiz');
+  await filming.getByLabel('Your email').fill('ana@example.test');
+  await filming.getByRole('button', { name: 'Send it to me' }).click();
+  await expect(filming.getByText(/We’ll email you as soon as Maya sends it/)).toBeVisible();
+  const waiting = await shop.context.request.get('/api/v1/app/quotes?filter=review');
+  const [filmed] = (await waiting.json()).data;
+  const owner = await shop.context.newPage();
+  await owner.goto(`/app/quotes/${filmed.id}`);
+  await expect(owner.getByRole('heading', { name: 'Measured from their video' })).toBeVisible();
+  await expect(owner.getByText('12 windows', { exact: true })).toBeVisible();
+  await expect(
+    owner.getByText(/each one followed through the video and counted once/),
+  ).toBeVisible();
+  await expect(owner.getByLabel('Ana Ruiz’s video')).toBeVisible();
+  await filming.close();
   await shop.context.close();
 });
 

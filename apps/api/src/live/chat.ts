@@ -2,8 +2,9 @@ import { createHmac, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
-import type { AiImage } from '../ai/index.js';
+import { aiMode, aiProvider, type AiImage } from '../ai/index.js';
 import { intakeTurn } from '../ai/intake.js';
+import type { Walkaround } from '../ai/walkaround.js';
 import { hashToken, newToken } from '../auth.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { isDisposableEmail } from '../email-domains.js';
@@ -138,10 +139,12 @@ export async function publicProfile(business: Row) {
     websiteDomain: String(business.website_domain ?? ''),
     /** Taking quote requests: the owner has deployed the agent and hasn't paused it. */
     taking: Boolean(business.link_on),
+    /** Takes walk-around videos, which need Meta's models to watch and measure. */
+    videos: aiProvider === 'meta' || aiMode === 'demo',
   };
 }
 
-async function addMessage(
+export async function addMessage(
   connection: Sql | undefined,
   input: {
     businessId: string;
@@ -150,13 +153,14 @@ async function addMessage(
     text: string;
     kind?: 'text' | 'status';
     photoIds?: string[];
+    videoId?: string;
     chips?: string[];
     /** A reply to a line added a moment before, stamped a millisecond later so it sorts after. */
     reply?: boolean;
   },
 ) {
   await mutate(
-    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,${input.reply ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
+    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${input.reply ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
     [
       randomUUID(),
       input.businessId,
@@ -165,6 +169,7 @@ async function addMessage(
       input.kind ?? 'text',
       input.text,
       JSON.stringify(input.photoIds ?? []),
+      input.videoId ?? null,
       JSON.stringify(input.chips ?? []),
     ],
     connection,
@@ -236,6 +241,11 @@ export async function chatView(business: Row, chat: Row) {
     [chat.id],
   );
   const quote = await liveQuoteFor(String(chat.id));
+  const videos = new Map(
+    (await rows('SELECT id,status,result_json FROM lead_videos WHERE chat_id=?', [chat.id])).map(
+      (video) => [String(video.id), video],
+    ),
+  );
   const test = chat.source === 'test';
   // Customers only ever see a quote the business sent; a held or declined one stays private. The
   // owner testing their own link sees a held one too, with why it would wait.
@@ -277,9 +287,13 @@ export async function chatView(business: Row, chat: Row) {
         id,
         url: photoPath(String(business.slug), String(chat.id), id),
       })),
+      video: message.video_id ? videoView(videos.get(String(message.video_id))) : null,
       chips: json<string[]>(message.chips_json, []),
       createdAt: new Date(message.created_at).toISOString(),
     })),
+    /** Walk-around videos need Meta's models to watch and measure them. */
+    videosAllowed: aiProvider === 'meta' || aiMode === 'demo',
+    measuring: [...videos.values()].some((video) => video.status === 'measuring'),
     contact: {
       name: String(chat.customer_name),
       email: chat.customer_email ? String(chat.customer_email) : null,
@@ -314,15 +328,40 @@ async function chatImages(businessId: string, chatId: string): Promise<AiImage[]
   );
 }
 
+/** Who AI work is for: a request, or the address saved with a video that's measured later. */
+export type Asker = { ip?: string; socket?: { remoteAddress?: string } };
+
+/** A video in the chat: whether it's measured yet, and what was found, in a few words each. */
+function videoView(video: Row | undefined) {
+  if (!video) return null;
+  const result = json<Walkaround | null>(video.result_json, null);
+  return {
+    id: String(video.id),
+    status: String(video.status) as 'measuring' | 'measured' | 'failed',
+    found: result
+      ? [
+          ...result.counts
+            .filter((item) => item.count > 0)
+            .map((item) => formatQuantity(item.count, item.unit)),
+          ...(result.area
+            ? [
+                `${result.area.surface} about ${result.area.low}–${formatQuantity(result.area.high, result.area.unit)}`,
+              ]
+            : []),
+        ]
+      : [],
+  };
+}
+
 /** Runs AI work against the right allowance: the owner's for their own tests, else the customers'. */
-function withChatUsage<T>(req: Request, business: Row, chat: Row, task: () => Promise<T>) {
+function withChatUsage<T>(req: Asker, business: Row, chat: Row, task: () => Promise<T>) {
   return chat.source === 'test'
     ? withAiUsage(String(business.id), String(chat.id), task)
     : withCustomerAiUsage(
         {
           businessId: String(business.id),
           sessionId: String(chat.id),
-          ip: req.ip || req.socket.remoteAddress || 'unknown',
+          ip: req.ip || req.socket?.remoteAddress || 'unknown',
         },
         task,
       );
@@ -332,7 +371,16 @@ function withChatUsage<T>(req: Request, business: Row, chat: Row, task: () => Pr
  * The assistant's next message while it's still gathering details. Once it has enough, the quote
  * is drafted straight away, unless the owner asks for contact details before the price shows.
  */
-async function runIntake(req: Request, business: Row, chat: Row) {
+async function runIntake(req: Asker, business: Row, chat: Row) {
+  const measured = (
+    await rows(
+      "SELECT result_json FROM lead_videos WHERE chat_id=? AND status='measured' ORDER BY created_at",
+      [chat.id],
+    )
+  ).flatMap((video) => {
+    const result = json<Walkaround | null>(video.result_json, null);
+    return result ? [result] : [];
+  });
   const messages = await rows(
     "SELECT sender,text FROM lead_messages WHERE chat_id=? AND kind='text' AND sender IN ('customer','assistant') ORDER BY created_at,id",
     [chat.id],
@@ -358,11 +406,19 @@ async function runIntake(req: Request, business: Row, chat: Row) {
           from: message.sender as 'customer' | 'assistant',
           text: String(message.text),
         })),
-        photosReceived: Number(photos.count),
+        photosReceived: Number(photos.count) + measured.length,
+        videoNotes: measured.flatMap((result) => result.notes),
       },
       await chatImages(String(business.id), String(chat.id)),
     ),
   );
+  // The size measured in a video holds until the customer says otherwise.
+  const sized = measured.findLast((result) => result.quantity);
+  const spec =
+    turn.spec.quantity || !sized
+      ? turn.spec
+      : { ...turn.spec, quantity: sized.quantity, unit: sized.unit };
+  const serviceName = turn.serviceName || (sized?.serviceName ?? '');
   const next = !turn.ready
     ? 'chatting'
     : business.contact_first && !hasContact(chat)
@@ -378,15 +434,7 @@ async function runIntake(req: Request, business: Row, chat: Row) {
     });
     await mutate(
       'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=? WHERE id=?',
-      [
-        turn.serviceName,
-        turn.ready,
-        turn.summary,
-        turn.outOfScope,
-        JSON.stringify(turn.spec),
-        next,
-        chat.id,
-      ],
+      [serviceName, turn.ready, turn.summary, turn.outOfScope, JSON.stringify(spec), next, chat.id],
       connection,
     );
   });
@@ -426,6 +474,14 @@ export async function afterPhoto(req: Request, photoId: string) {
   if (chat.status === 'chatting' && !chat.human_handoff) await runIntake(req, business, chat);
   const fresh = await chatAccess(req);
   return chatView(fresh.business, fresh.chat);
+}
+
+/** Once a customer's video is measured, or couldn't be, the assistant carries on from it. */
+export async function continueAfterVideo(asker: Asker, chatId: string) {
+  const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
+  if (!chat || chat.status !== 'chatting' || chat.human_handoff) return;
+  const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
+  if (business) await runIntake(asker, business, chat);
 }
 
 const emailSchema = z
@@ -726,7 +782,7 @@ async function usualTerms(businessId: string, serviceName: string) {
 }
 
 /** Drafts the quote, checks it, and either sends it or puts it in front of the owner. */
-export async function prepareLiveQuote(req: Request, businessId: string, chatId: string) {
+export async function prepareLiveQuote(req: Asker, businessId: string, chatId: string) {
   if (await liveQuoteFor(chatId)) return;
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
