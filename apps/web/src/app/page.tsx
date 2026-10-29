@@ -103,7 +103,7 @@ export default async function LandingPage() {
                 </div>
                 <div>
                   <p className="font-mono text-sm text-muted">Step 3</p>
-                  <h3 className="t-h2 mt-1">Practice with a customer</h3>
+                  <h3 className="t-h2 mt-1">Practice quotes</h3>
                   <p className="mt-2 text-ink-2">
                     A pretend customer sends a real-looking request with photos. You ask questions
                     and send a quote. Train it as much as you want.
