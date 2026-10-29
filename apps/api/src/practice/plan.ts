@@ -1,13 +1,18 @@
 import { median, SOLID_POINTS, type PricePoint } from '../pricing/rates.js';
 import { formatQuantity, roundSize } from '../pricing/units.js';
 
-/** Setup's customers cover a different kind of job each, so the AI sees the range. */
+/**
+ * Setup's customers each show the AI something different that moves this owner's price: each
+ * service, the extras they charge for, a job in bad shape or hard to reach, the low end where a
+ * minimum shows, and two services together. The simulated-owner benchmark (src/bench.ts) found
+ * extras and the second service were where the AI missed most, so those come first.
+ */
 export const SITUATIONS = [
-  'A typical, clear job for one of their main services, sized like their usual past jobs. Nothing unusual.',
-  'A bigger job that combines two of their services or adds an extra, where the customer also asks about a discount, for example because a neighbor wants the same work.',
-  'A trickier job: the photos and messages show something that could change the price a lot, like damage, hard access or unclear scope. The customer is getting a few quotes and hopes for a price from the photos.',
+  'A typical, clear job for their main service, sized like their usual past jobs, plus one extra that businesses in their trade usually price separately, like screens with windows or sealing after a wash.',
+  'A usual job for a different one of their services than the main one, plus a different extra that’s usually priced separately.',
+  'A trickier job: the photos and messages show it’s in bad shape or harder to reach, like heavy buildup or a second story, so it could cost more. The customer is getting a few quotes and hopes for a price from the photos.',
   'A small job at the low end of what they do, from a customer in a hurry.',
-  'A job near the edge of their service area, for a customer who wants it done soon.',
+  'A bigger job that combines two of their services and adds an extra, where the customer also asks about a discount, for example because a neighbor wants the same work.',
 ];
 
 /** How the AI's private guess did on one finished practice customer. */
