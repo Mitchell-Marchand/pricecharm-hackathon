@@ -621,6 +621,7 @@ export async function computeShadow(businessId: string, runId: string): Promise<
 }
 
 async function insightsFor(
+  businessId: string,
   runId: string,
   scenario: PracticeScenario,
   asked: string[],
@@ -651,14 +652,17 @@ async function insightsFor(
           ? demoRateLine(scenario, main.amountCents)
           : spec.quantity && spec.unit
             ? `${chargesLine(main.amountCents, spec.quantity, spec.unit)} for ${lowerFirst(scenario.serviceName)}`
-            : await describeRate({
-                trade,
-                serviceName: scenario.serviceName,
-                mainLine: { label: main.label, amountCents: main.amountCents },
-                sizeAnswer: scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
-              });
+            : await withAiUsage(businessId, `practice:${runId}`, () =>
+                describeRate({
+                  trade,
+                  serviceName: scenario.serviceName,
+                  mainLine: { label: main.label, amountCents: main.amountCents },
+                  sizeAnswer: scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
+                }),
+              );
     } catch (error) {
-      reportError(error, { event: 'practice_rate' });
+      // Out of AI allowance is expected; the plain line below covers it.
+      if (!(error instanceof ApiError)) reportError(error, { event: 'practice_rate' });
     }
     items.push(rate || `Prices ${lowerFirst(main.label)} at ${money(main.amountCents)}`);
     for (const line of quote.lines.slice(1))
@@ -744,6 +748,7 @@ async function finishRun(
   });
   const [run] = await rows('SELECT asked_json FROM practice_runs WHERE id=?', [runId]);
   const insights = await insightsFor(
+    businessId,
     runId,
     scenario,
     json<string[]>(run.asked_json, []),

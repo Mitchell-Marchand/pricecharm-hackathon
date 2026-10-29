@@ -124,6 +124,7 @@ test(
       slug: string,
       agent?: ReturnType<typeof request.agent>,
       job = { service: 'Driveways', size: 'About 600 sq ft, two cars.' },
+      email = `sam-${randomUUID()}@example.test`,
     ) {
       const customer = await chat(slug, agent);
       let view = (await customer.call('post', '/messages', { text: job.service })).body.data;
@@ -138,10 +139,10 @@ test(
       );
       const contact = await customer.call('post', '/contact', {
         name: 'Sam Kim',
-        email: `sam-${randomUUID()}@example.test`,
+        email,
       });
       assert.equal(contact.status, 200, JSON.stringify(contact.body));
-      return { customer, contact: contact.body.data };
+      return { customer, contact: contact.body.data, email };
     }
 
     // Going live the way an owner does: a plan, a card, then deploying. No email check first.
@@ -281,13 +282,14 @@ test(
       'A quote is accepted once',
     );
 
-    // 2. Automatic quotes off: the quote waits for the owner, who edits and sends it.
+    // 2. Automatic quotes off: the quote waits for the owner, who edits and sends it. It's from the
+    // email that just got a quote, which holds it too, so one address can't run up their bill.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
       .send({ autoSend: false })
       .expect(200);
-    const held = await reachQuote(shop.slug);
+    const held = await reachQuote(shop.slug, undefined, undefined, automatic.email);
     const waiting = await held.customer.call('post', '/verify', {
       verificationId: held.contact.verificationId,
       code: held.contact.devCode,
@@ -304,10 +306,17 @@ test(
     const [listed] = (await shop.owner.get('/api/v1/app/quotes?filter=review')).body.data;
     const detail = (await shop.owner.get(`/api/v1/app/quotes/${listed.id}`)).body.data;
     assert.equal(detail.customer, 'Sam Kim');
-    assert.ok(
-      detail.checks.some(
-        (check: { id: string; passed: boolean }) => check.id === 'auto' && !check.passed,
-      ),
+    assert.deepEqual(
+      detail.checks
+        .filter((check: { passed: boolean }) => !check.passed)
+        .map((check: { id: string }) => check.id),
+      ['auto', 'repeat'],
+    );
+    assert.match(home.waiting[0].reviewReason, /already got a quote from you in the last week/);
+    assert.equal(
+      (await rows('SELECT id FROM quote_usage WHERE quote_id=?', [listed.id])).length,
+      0,
+      'Nothing is billed while it waits',
     );
     assert.equal((await rival.owner.get(`/api/v1/app/quotes/${listed.id}`)).status, 404);
     const approved = await shop.owner

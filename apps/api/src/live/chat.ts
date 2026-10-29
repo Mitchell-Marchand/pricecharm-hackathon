@@ -664,6 +664,25 @@ async function checkDraft(
   return checks;
 }
 
+/**
+ * One email getting quote after quote could run up the owner's bill, so a repeat within a week
+ * waits for them. Run it behind the quote counter's lock, so two chats can't both slip through.
+ */
+async function repeatCheck(connection: Sql, business: Row, chat: Row): Promise<Check> {
+  const [earlier] = await rows(
+    `SELECT COUNT(*) AS count FROM lead_chats c JOIN live_quotes q ON q.chat_id=c.id
+    WHERE c.business_id=? AND c.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 7 DAY)
+    AND c.customer_email=? AND c.source<>'test' AND c.id<>?`,
+    [business.id, chat.customer_email, chat.id],
+    connection,
+  );
+  return {
+    id: 'repeat',
+    passed: Number(earlier.count) === 0,
+    detail: 'This email already got a quote from you in the last week.',
+  };
+}
+
 /** Card details the owner usually includes, taken from their practice quotes for this service. */
 async function usualTerms(businessId: string, serviceName: string) {
   const runs = await rows(
@@ -752,6 +771,7 @@ export async function prepareLiveQuote(req: Request, businessId: string, chatId:
       [number + 1, businessId],
       connection,
     );
+    if (!test) checks.push(await repeatCheck(connection, business, chat));
     const name = String(chat.customer_name).trim();
     const parts = name.split(/\s+/);
     const card: Quote = {
