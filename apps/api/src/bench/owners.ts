@@ -336,20 +336,29 @@ export const ownerTotal = (owner: SimOwner, job: SimJob) => quoteTotal(ownerQuot
 export function drawJob(
   rng: Rng,
   owner: SimOwner,
-  shape: 'typical' | 'bigger' | 'tricky' | 'small' | 'other' | 'any',
+  shape: 'typical' | 'plain' | 'bigger' | 'tricky' | 'heavy' | 'tall' | 'small' | 'other' | 'any',
   extra?: number,
 ): SimJob {
   const [first, second] = owner.rules.services;
-  const rule = shape === 'other' ? second : shape === 'any' && rng() < 0.3 ? second : first;
+  const rule =
+    shape === 'other'
+      ? second
+      : shape === 'tall'
+        ? (owner.rules.services.find((item) => item.height) ?? first)
+        : shape === 'any' && rng() < 0.3
+          ? second
+          : first;
   const [low, high] = rule.sizes;
   const quantity =
     shape === 'small'
       ? low
       : shape === 'bigger'
         ? Math.round(low + (high - low) * between(rng, 0.7, 0.95))
-        : shape === 'any'
-          ? Math.round(between(rng, low, high))
-          : Math.round(low + (high - low) * between(rng, 0.35, 0.55));
+        : shape === 'heavy'
+          ? Math.round(low + (high - low) * between(rng, 0.6, 0.85))
+          : shape === 'any'
+            ? Math.round(between(rng, low, high))
+            : Math.round(low + (high - low) * between(rng, 0.35, 0.55));
   const sized =
     rule.unit === 'windows' || rule.unit === 'ft' ? quantity : Math.round(quantity / 10) * 10;
   const addOns: SimJob['addOns'] = [];
@@ -370,10 +379,12 @@ export function drawJob(
   return {
     service: rule.name,
     quantity: sized,
-    heavy: shape === 'tricky' || (shape === 'any' && rng() < 0.35),
+    heavy: shape === 'tricky' || shape === 'heavy' || (shape === 'any' && rng() < 0.35),
     twoStory:
       rule.height &&
-      (shape === 'tricky' || ((shape === 'any' || shape === 'typical') && rng() < 0.45)),
+      (shape === 'tricky' ||
+        shape === 'tall' ||
+        ((shape === 'any' || shape === 'typical') && rng() < 0.45)),
     addOns,
     second:
       (shape === 'bigger' || (shape === 'any' && rng() < 0.25)) && rule === first

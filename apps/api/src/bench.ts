@@ -20,6 +20,7 @@ import {
 } from './bench/owners.js';
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
+import { draftWithFormula, learnedFormula } from './pricing/formula-draft.js';
 import { describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
@@ -32,8 +33,11 @@ import { accuracy, closer, share } from './proof.js';
  * owner's rules say. With --curve it also prices them from the past jobs alone, to show what
  * practice adds.
  *
- *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--practice original]
- *     [--concurrency 4] [--json <file>]
+ *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula]
+ *     [--practice original] [--concurrency 4] [--json <file>]
+ *
+ * With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
+ * falling back to the usual draft where the formula doesn't fit or doesn't cover the job.
  *
  * Each owner's past jobs, practice customers and test jobs come from their own random sequences,
  * so changing the practice plan leaves the test jobs the same and two runs can be compared.
@@ -58,6 +62,16 @@ const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
     { shape: 'typical', extra: 0 },
     { shape: 'other', extra: 1 },
     { shape: 'tricky' },
+    { shape: 'small' },
+    { shape: 'bigger', extra: 0 },
+  ],
+  // Each customer changes one thing from a plain job, so nothing hides anything else: a minimum
+  // can't pass for a surcharge, and bad shape and a second story are seen apart.
+  experiments: [
+    { shape: 'plain', extra: 0 },
+    { shape: 'other', extra: 1 },
+    { shape: 'heavy' },
+    { shape: 'tall' },
     { shape: 'small' },
     { shape: 'bigger', extra: 0 },
   ],
@@ -198,6 +212,8 @@ type Test = {
   /** The Charm's best price, by how much practice it had: 'full', or 0 with --curve. */
   charm: Record<string, { cents: number | null; visit: boolean } | undefined>;
   generic?: { cents: number | null };
+  /** Formula pricing's best price, and why it fell back to the usual draft when it did. */
+  formula?: { cents: number | null; used: boolean; reason?: string };
   failed?: string;
 };
 
@@ -236,7 +252,11 @@ async function pool(tasks: (() => Promise<void>)[], size: number) {
  * What the jobs it missed have in common: for each thing that changes an owner's price, the
  * Charm's typical miss on jobs with it against jobs without it, biggest difference first.
  */
-export function missBreakdown(tests: Test[], owners: SimOwner[]) {
+export function missBreakdown(
+  tests: Test[],
+  owners: SimOwner[],
+  priced: (test: Test) => number | null | undefined = (test) => test.charm.full?.cents,
+) {
   const factors: [string, (test: Test, owner: SimOwner) => boolean][] = [
     ['Add-ons', (test) => test.job.addOns.length > 0],
     [
@@ -267,7 +287,7 @@ export function missBreakdown(tests: Test[], owners: SimOwner[]) {
     ['It wanted to see the job first', (test) => Boolean(test.charm.full?.visit)],
   ];
   const miss = (subset: Test[]) =>
-    accuracy(subset.map((test) => ({ gap: gapOf(test.charm.full?.cents, test.ownerCents) })));
+    accuracy(subset.map((test) => ({ gap: gapOf(priced(test), test.ownerCents) })));
   return factors
     .map(([label, has]) => {
       const withIt = tests.filter((test) => has(test, owners[test.owner]));
@@ -299,6 +319,7 @@ async function main() {
   const concurrency = number('concurrency', 4, 12);
   const model = option('model');
   const curve = process.argv.includes('--curve');
+  const formula = process.argv.includes('--formula');
   const planName = option('practice') ?? PLAN;
   const plan = PLANS[planName];
   if (!plan)
@@ -379,6 +400,28 @@ async function main() {
           test.failed = error instanceof Error ? error.message : String(error);
         }
       });
+    if (formula)
+      tasks.push(async () => {
+        try {
+          const { drafted, use } = await counted(test.businessId, () =>
+            draftWithFormula({
+              businessId: test.businessId,
+              serviceName: test.job.service,
+              conversation,
+              spec,
+              images: [],
+              model,
+            }),
+          );
+          test.formula = {
+            cents: best(drafted),
+            used: use.used,
+            reason: use.used ? undefined : use.reason,
+          };
+        } catch (error) {
+          test.failed = error instanceof Error ? error.message : String(error);
+        }
+      });
     if (generic)
       tasks.push(async () => {
         try {
@@ -404,6 +447,20 @@ async function main() {
         }
       });
   }
+  if (formula) {
+    // Each owner's formula is worked out before any job is priced, a few at a time, so the long
+    // calls don't all hit the API at once.
+    console.info(`Working out ${owners.length} owners’ formulas.`);
+    const ids = [...new Set(tests.map((test) => test.businessId))];
+    await pool(
+      ids.map((id) => async () => {
+        await counted(id, () => learnedFormula(id, {}, model)).catch((error: unknown) =>
+          console.error(`  ${id}: ${error instanceof Error ? error.message : error}`),
+        );
+      }),
+      3,
+    );
+  }
   console.info(`Pricing ${tests.length} new jobs with ${engine}: ${tasks.length} drafts.`);
   await pool(tasks, concurrency);
 
@@ -411,7 +468,8 @@ async function main() {
   const report = (subset: Test[]) => {
     const charm = subset.map((test) => ({ gap: gapOf(test.charm.full?.cents, test.ownerCents) }));
     const others = subset.map((test) => ({ gap: gapOf(test.generic?.cents, test.ownerCents) }));
-    return { charm, others };
+    const formulas = subset.map((test) => ({ gap: gapOf(test.formula?.cents, test.ownerCents) }));
+    return { charm, others, formulas };
   };
   const out: string[] = [];
   const trades = [...new Set(owners.map((owner) => owner.trade))];
@@ -424,6 +482,7 @@ async function main() {
   );
   const all = report(scored);
   out.push(...lines('Charm', all.charm));
+  if (formula) out.push(...lines('Formula pricing', all.formulas));
   if (generic) {
     out.push(...lines('Generic AI', all.others));
     const wins = closer(all.charm.map((charm, index) => ({ charm, generic: all.others[index] })));
@@ -450,11 +509,55 @@ async function main() {
         `  ${row.label}: ${row.withIt.medianGap ?? '-'}% on ${row.withIt.jobs} jobs, against ${row.without.medianGap ?? '-'}%`,
     ),
   );
+  const learned: unknown[] = [];
+  if (formula) {
+    const used = scored.filter((test) => test.formula?.used);
+    const reasons = new Map<string, number>();
+    for (const test of scored)
+      if (test.formula && !test.formula.used) {
+        const reason = (test.formula.reason ?? '').replace(
+          /^the formula doesn’t cover .*/,
+          'the job asks for something the formula doesn’t cover',
+        );
+        reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+      }
+    let fitting = 0;
+    for (const [index, owner] of owners.entries()) {
+      const businessId = tests.find((test) => test.owner === index)?.businessId;
+      const result = businessId
+        ? await learnedFormula(businessId, {}, model).catch(() => null)
+        : null;
+      if (result?.fits) fitting++;
+      learned.push({
+        owner: owner.name,
+        fits: result?.fits ?? false,
+        gaps: result?.gaps ?? [],
+        formula: result?.formula ?? null,
+      });
+    }
+    out.push(
+      '',
+      'Formula pricing:',
+      `  The formula gave back the owner’s own prices for ${share(fitting, owners.length)} owners.`,
+      `  It priced ${share(used.length, scored.length)} jobs itself:`,
+      ...lines(
+        '  On those',
+        used.map((test) => ({ gap: gapOf(test.formula?.cents, test.ownerCents) })),
+      ),
+      ...[...reasons.entries()].map(([reason, n]) => `  The AI drafted ${n} because ${reason}.`),
+      'Where formula pricing misses (typical miss on jobs with each, then without):',
+      ...missBreakdown(scored, owners, (test) => test.formula?.cents).map(
+        (row) =>
+          `  ${row.label}: ${row.withIt.medianGap ?? '-'}% on ${row.withIt.jobs} jobs, against ${row.without.medianGap ?? '-'}%`,
+      ),
+    );
+  }
   out.push('', 'By trade:');
   for (const trade of trades) {
     const subset = scored.filter((test) => owners[test.owner].trade === trade);
-    const { charm, others } = report(subset);
+    const { charm, others, formulas } = report(subset);
     out.push(`${trade} (${subset.length} jobs)`, ...lines('Charm', charm));
+    if (formula) out.push(...lines('Formula pricing', formulas));
     if (generic) out.push(...lines('Generic AI', others));
   }
   if (curve) {
@@ -488,6 +591,7 @@ async function main() {
           practice: planName,
           tokens,
           owners,
+          learned,
           tests: tests.map((test) => ({
             ...test,
             business: owners[test.owner].name,

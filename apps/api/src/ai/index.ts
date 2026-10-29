@@ -34,6 +34,8 @@ export type AiRequestOptions = {
   maxImages?: number;
   /** A video already uploaded to Meta's Files API. Only Meta's models watch video. */
   metaVideoFileId?: string;
+  /** Longer than AI_TIMEOUT_MS, for work that reasons at length, like working out a formula. */
+  timeoutMs?: number;
 };
 export type AiImage = { mimeType: string; dataBase64: string };
 export type AiDocument = { filename: string; mimeType: 'application/pdf'; dataBase64: string };
@@ -63,10 +65,12 @@ export function modelFor(operation: string): string | undefined {
 }
 
 /**
- * Muse Spark reasons before it answers. Chat turns stay quick; drafting a price gets more thought.
+ * Muse Spark reasons before it answers. Chat turns stay quick; drafting a price, and working out an
+ * owner's formula, get more thought.
  * Reasoning counts toward max_output_tokens, so each level carries room for it.
  */
 function metaReasoning(operation: string) {
+  if (operation === 'learn_formula') return { effort: 'medium', allowance: 12000 };
   return operation === 'draft_quote'
     ? { effort: 'medium', allowance: 6000 }
     : { effort: 'low', allowance: 2500 };
@@ -153,7 +157,9 @@ export async function requestJson<T>(
   ) {
     throw new AiError(`Attach at most ${maxImages} supported photos, each no larger than 1 MB.`);
   }
-  const timeout = boundedEnv('AI_TIMEOUT_MS', 25000, 1000, 60000);
+  const timeout = options.timeoutMs
+    ? Math.min(Math.max(options.timeoutMs, 1000), 180000)
+    : boundedEnv('AI_TIMEOUT_MS', 25000, 1000, 60000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const started = Date.now();
