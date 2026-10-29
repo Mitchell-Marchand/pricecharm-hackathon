@@ -374,7 +374,7 @@ function withChatUsage<T>(req: Asker, business: Row, chat: Row, task: () => Prom
 async function runIntake(req: Asker, business: Row, chat: Row) {
   const measured = (
     await rows(
-      "SELECT result_json FROM lead_videos WHERE chat_id=? AND status='measured' ORDER BY created_at",
+      'SELECT result_json FROM lead_videos WHERE chat_id=? AND result_json IS NOT NULL ORDER BY created_at',
       [chat.id],
     )
   ).flatMap((video) => {
@@ -407,6 +407,7 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
           text: String(message.text),
         })),
         photosReceived: Number(photos.count) + measured.length,
+        videosAllowed: aiProvider === 'meta' || aiMode === 'demo',
         videoNotes: measured.flatMap((result) => result.notes),
       },
       await chatImages(String(business.id), String(chat.id)),

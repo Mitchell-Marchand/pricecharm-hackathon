@@ -179,7 +179,8 @@ test('a walk-around is watched by Muse Spark, counted by SAM and drawn on the cu
   assert.equal(drawn.width, 320);
   assert.equal(drawn.height, 334);
   assert.ok(result.notes.some((note) => note.includes('2 windows')));
-  assert.ok(result.notes.some((note) => note.includes('about 3')));
+  // Only SAM's count reaches the chat; Muse Spark's rough one is for the owner.
+  assert.ok(!result.notes.some((note) => note.includes('about 3')));
   assert.ok(result.notes.some((note) => note.includes('500 to 650 sq ft')));
   assert.ok(result.notes.some((note) => note.includes('screens done too')));
 });

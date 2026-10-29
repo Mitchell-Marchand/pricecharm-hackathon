@@ -167,96 +167,106 @@ export async function measureVideo(id: string): Promise<void> {
   const asker: Asker = { ip: String(video.requester_ip || 'unknown') };
   const businessId = String(business.id);
   let fileId = '';
-  try {
-    const stills = json<StoredStill[]>(video.frames_json, []);
-    const frames: { id: string; ms: number; image: AiImage }[] = [];
-    for (const still of stills)
-      frames.push({
-        id: still.key,
-        ms: still.ms,
-        image: {
-          mimeType: 'image/jpeg',
-          dataBase64: (await getPhoto(still.key)).toString('base64'),
-        },
-      });
-    const services = (
-      await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
-    ).map((row) => String(row.name));
-    const task = async () => {
-      if (aiMode !== 'demo')
-        fileId = await uploadMetaFile(
-          await getPhoto(String(video.storage_key)),
-          String(video.storage_key),
-          String(video.mime_type),
-        );
-      return measureWalkaround({
-        business: {
-          name: String(business.name),
-          trade: tradeName(business.trade_id, business.custom_trade),
-          services,
-        },
-        serviceName: String(chat.service_name),
-        priceUnits: await priceUnits(businessId),
-        videoFileId: fileId,
-        frames,
-        durationMs: video.duration_ms === null ? null : Number(video.duration_ms),
-        saveOverlay: async (jpeg) => {
-          const key = `${randomUUID()}.jpg`;
-          await putPhoto(key, jpeg);
-          return key;
-        },
-      });
-    };
-    const result: Walkaround =
-      chat.source === 'test'
-        ? await withAiUsage(businessId, String(chat.id), task)
-        : await withCustomerAiUsage(
-            { businessId, sessionId: String(chat.id), ip: asker.ip! },
-            task,
+  // Measured already by a run that stopped before the assistant answered: only the answer is left.
+  let outcome: { status: 'measured' | 'failed'; failure: string | null } | null = video.result_json
+    ? { status: 'measured', failure: null }
+    : null;
+  if (!outcome)
+    try {
+      const stills = json<StoredStill[]>(video.frames_json, []);
+      const frames: { id: string; ms: number; image: AiImage }[] = [];
+      for (const still of stills)
+        frames.push({
+          id: still.key,
+          ms: still.ms,
+          image: {
+            mimeType: 'image/jpeg',
+            dataBase64: (await getPhoto(still.key)).toString('base64'),
+          },
+        });
+      const services = (
+        await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
+      ).map((row) => String(row.name));
+      const task = async () => {
+        if (aiMode !== 'demo')
+          fileId = await uploadMetaFile(
+            await getPhoto(String(video.storage_key)),
+            String(video.storage_key),
+            String(video.mime_type),
           );
-    const done = await mutate(
-      "UPDATE lead_videos SET status='measured',result_json=?,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?",
-      [JSON.stringify(result), id, token],
-    );
-    if (!done.affectedRows) return;
-    await recordEvent(
-      undefined,
-      businessId,
-      'video_measured',
-      {
-        counts: result.counts.length,
-        counted: result.counts.reduce((sum, item) => sum + item.count, 0),
-        area: Boolean(result.area),
-        overlays: result.overlays.length,
-      },
-      { ref: id },
-    );
-  } catch (error) {
-    if (!(error instanceof ApiError)) reportError(error, { event: 'video_measure' });
-    // An allowance running out won't fix itself on a retry; anything else gets one more go.
-    if (!(error instanceof ApiError) && Number(video.read_attempts) < MEASURE_ATTEMPTS) {
-      await mutate(
-        'UPDATE lead_videos SET read_token=NULL,read_until=NULL WHERE id=? AND read_token=?',
-        [id, token],
+        return measureWalkaround({
+          business: {
+            name: String(business.name),
+            trade: tradeName(business.trade_id, business.custom_trade),
+            services,
+          },
+          serviceName: String(chat.service_name),
+          priceUnits: await priceUnits(businessId),
+          videoFileId: fileId,
+          frames,
+          durationMs: video.duration_ms === null ? null : Number(video.duration_ms),
+          saveOverlay: async (jpeg) => {
+            const key = `${randomUUID()}.jpg`;
+            await putPhoto(key, jpeg);
+            return key;
+          },
+        });
+      };
+      const result: Walkaround =
+        chat.source === 'test'
+          ? await withAiUsage(businessId, String(chat.id), task)
+          : await withCustomerAiUsage(
+              { businessId, sessionId: String(chat.id), ip: asker.ip! },
+              task,
+            );
+      // It stays "measuring" until the assistant has answered, so the chat keeps waiting for that.
+      const done = await mutate(
+        'UPDATE lead_videos SET result_json=? WHERE id=? AND read_token=?',
+        [JSON.stringify(result), id, token],
       );
-      void measureVideo(id).catch((retry) => reportError(retry, { event: 'video_measure' }));
-      return;
+      if (!done.affectedRows) return;
+      outcome = { status: 'measured', failure: null };
+      await recordEvent(
+        undefined,
+        businessId,
+        'video_measured',
+        {
+          counts: result.counts.length,
+          counted: result.counts.reduce((sum, item) => sum + item.count, 0),
+          area: Boolean(result.area),
+          overlays: result.overlays.length,
+        },
+        { ref: id },
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError)) reportError(error, { event: 'video_measure' });
+      // An allowance running out won't fix itself on a retry; anything else gets one more go.
+      if (!(error instanceof ApiError) && Number(video.read_attempts) < MEASURE_ATTEMPTS) {
+        await mutate(
+          'UPDATE lead_videos SET read_token=NULL,read_until=NULL WHERE id=? AND read_token=?',
+          [id, token],
+        );
+        void measureVideo(id).catch((retry) => reportError(retry, { event: 'video_measure' }));
+        return;
+      }
+      outcome = {
+        status: 'failed',
+        failure:
+          error instanceof ApiError
+            ? error.message.slice(0, 300)
+            : 'We couldn’t measure this video.',
+      };
+      await recordEvent(undefined, businessId, 'video_failed', {}, { ref: id });
+    } finally {
+      if (fileId) await deleteMetaFile(fileId).catch(() => {});
     }
-    await mutate(
-      "UPDATE lead_videos SET status='failed',failure=?,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?",
-      [
-        error instanceof ApiError ? error.message.slice(0, 300) : 'We couldn’t measure this video.',
-        id,
-        token,
-      ],
-    );
-    await recordEvent(undefined, businessId, 'video_failed', {}, { ref: id });
-  } finally {
-    if (fileId) await deleteMetaFile(fileId).catch(() => {});
-  }
-  // Measured or not, the assistant picks the chat back up.
+  // Measured or not, the assistant picks the chat back up. Only then does the chat stop waiting.
   await continueAfterVideo(asker, String(chat.id)).catch((error) =>
     reportError(error, { event: 'video_continue' }),
+  );
+  await mutate(
+    'UPDATE lead_videos SET status=?,failure=?,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?',
+    [outcome.status, outcome.failure, id, token],
   );
 }
 

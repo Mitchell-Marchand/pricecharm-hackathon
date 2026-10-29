@@ -575,6 +575,15 @@ export function QuoteChat({
                 <Camera className="size-4" aria-hidden /> Add a photo
               </button>
             )}
+            {asksForPhoto && videos && (
+              <button
+                type="button"
+                onClick={() => videoPicker.current?.click()}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-accent px-3.5 text-[15px] font-medium text-accent hover:bg-accent/10"
+              >
+                <Video className="size-4" aria-hidden /> Send a video
+              </button>
+            )}
             {chips.map((chip) => (
               <button
                 key={chip}
