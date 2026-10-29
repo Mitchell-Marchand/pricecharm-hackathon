@@ -23,6 +23,7 @@ import {
   saveSpendingCap,
   setLinkOn,
   startCheckout,
+  syncBilling,
   type Billing,
 } from '@/lib/owner';
 import { planDetail, planName, type Plan } from '@/lib/plans';
@@ -90,14 +91,15 @@ export default function SettingsPage() {
         setLimit(moneyInput(settings.limitCents));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
-    loadBilling()
+    // Back from Stripe, billing is read from Stripe now instead of waiting for its webhook.
+    const fromCheckout = new URLSearchParams(window.location.search).get('billing') === 'active';
+    (fromCheckout ? syncBilling() : loadBilling())
       .then((loaded) => {
         setBilling(loaded);
         setCap(moneyInput(loaded.spendingCapCents));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('billing') === 'active') {
+    if (fromCheckout) {
       notify('Billing is set up. Quotes can go out to customers now.');
       window.history.replaceState(null, '', window.location.pathname);
     }

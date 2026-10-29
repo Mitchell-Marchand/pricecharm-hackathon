@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { owner, verifyPassword } from './auth.js';
-import { billingProvider, dispatchMeterEvent, stripeClient } from './billing.js';
+import { billingProvider, dispatchFee, stripeClient } from './billing.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok } from './http.js';
 import { localOutbox } from './integrations/email.js';
@@ -136,7 +136,7 @@ export async function deleteBusinessAccount(businessId: string, deletionId: stri
     'SELECT id FROM quote_usage WHERE business_id=? AND fee_cents>0 AND stripe_reported_at IS NULL',
     [businessId],
   ))
-    await dispatchMeterEvent(String(item.id));
+    await dispatchFee(String(item.id));
   if (billingProvider() === 'stripe' && billing?.stripe_subscription_id) {
     const stripe = stripeClient(),
       subscription = await stripe.subscriptions.retrieve(String(billing.stripe_subscription_id));

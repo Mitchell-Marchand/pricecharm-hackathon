@@ -90,17 +90,24 @@ export function billingProvider(): 'local' | 'stripe' {
   return value;
 }
 /**
- * Stripe is set up for every plan: the usage price that carries per-quote fees on all of them,
- * and the monthly and yearly subscription prices.
+ * Each plan has its own Stripe prices, priced the way the pricing page says it. Three are on the
+ * meter that counts billed quotes: $2 a quote, $1 a quote past the subscription's allowance, and
+ * $0 a quote on the accepted-quote plan, whose fees go on the invoice one accepted job at a time.
+ * The other two are the subscription's monthly and yearly prices.
  */
+const STRIPE_PRICES = [
+  'STRIPE_PRICE_PER_QUOTE',
+  'STRIPE_PRICE_PER_ACCEPTED',
+  'STRIPE_PRICE_EXTRA_QUOTES',
+  'STRIPE_PRICE_MONTHLY',
+  'STRIPE_PRICE_YEARLY',
+] as const;
 export function stripeConfigured(): boolean {
   return Boolean(
     process.env.STRIPE_SECRET_KEY &&
     process.env.STRIPE_WEBHOOK_SECRET &&
-    process.env.STRIPE_PRICE_ID &&
     process.env.STRIPE_METER_EVENT_NAME &&
-    process.env.STRIPE_PRICE_MONTHLY &&
-    process.env.STRIPE_PRICE_YEARLY,
+    STRIPE_PRICES.every((name) => process.env[name]),
   );
 }
 export function validateBillingConfiguration(): void {
@@ -110,7 +117,7 @@ export function validateBillingConfiguration(): void {
     throw new Error('The maximum accepted-quote fee must be at least its minimum.');
   if (process.env.NODE_ENV === 'production' && !stripeConfigured())
     throw new Error(
-      'Production requires Stripe secret, webhook signing secret, metered price ID, meter event name, and the monthly and yearly price IDs.',
+      `Production requires the Stripe secret, webhook signing secret, meter event name and ${STRIPE_PRICES.join(', ')}.`,
     );
 }
 let stripeInstance: Stripe | undefined;
@@ -285,35 +292,6 @@ function appOrigin(): string {
     throw new Error('Invalid application origin.');
   return value;
 }
-async function validateMeteredPrice(): Promise<void> {
-  if (!stripeConfigured())
-    throw new ApiError(503, 'BILLING_NOT_CONFIGURED', 'Payment setup is unavailable.');
-  const stripe = stripeClient(),
-    price = await stripe.prices.retrieve(process.env.STRIPE_PRICE_ID!);
-  if (
-    !price.active ||
-    price.currency !== 'usd' ||
-    price.unit_amount !== 1 ||
-    price.recurring?.usage_type !== 'metered' ||
-    !price.recurring.meter
-  )
-    throw new ApiError(
-      503,
-      'BILLING_PRICE_INVALID',
-      'The configured billing price must be an active USD metered price of one cent per fee-cent unit.',
-    );
-  const meter = await stripe.billing.meters.retrieve(price.recurring.meter);
-  if (
-    meter.event_name !== process.env.STRIPE_METER_EVENT_NAME ||
-    meter.default_aggregation.formula !== 'sum'
-  )
-    throw new ApiError(
-      503,
-      'BILLING_METER_INVALID',
-      'The configured price must use the correct sum meter.',
-    );
-}
-
 export const pricingHandler: RequestHandler = (_req, res) => {
   res.json(ok(publicPricing()));
 };
@@ -336,10 +314,18 @@ billingRouter.patch('/billing', async (req, res) => {
   });
   res.json(ok(await getBilling(owner(req).businessId)));
 });
-/** The Stripe prices behind a plan: the usage price for fees on every plan, plus its own. */
-function planPrices(plan: Plan): { usage: string; fixed: string | null } {
+/**
+ * The Stripe prices behind a plan: its price on the quote meter, which every subscription has one
+ * of, and the monthly or yearly price on the subscription plans.
+ */
+function planPrices(plan: Plan): { metered: string; fixed: string | null } {
   return {
-    usage: process.env.STRIPE_PRICE_ID!,
+    metered:
+      plan === 'per_quote'
+        ? process.env.STRIPE_PRICE_PER_QUOTE!
+        : plan === 'per_accepted'
+          ? process.env.STRIPE_PRICE_PER_ACCEPTED!
+          : process.env.STRIPE_PRICE_EXTRA_QUOTES!,
     fixed:
       plan === 'monthly'
         ? process.env.STRIPE_PRICE_MONTHLY!
@@ -353,31 +339,93 @@ function planItem(subscription: Stripe.Subscription) {
   const fixedPrices = [process.env.STRIPE_PRICE_MONTHLY, process.env.STRIPE_PRICE_YEARLY];
   return subscription.items.data.find((item) => fixedPrices.includes(item.price.id));
 }
+/** The subscription's item on the quote meter, whichever plan's price it has now. */
+function meteredItem(subscription: Stripe.Subscription) {
+  const meteredPrices = [
+    process.env.STRIPE_PRICE_PER_QUOTE,
+    process.env.STRIPE_PRICE_PER_ACCEPTED,
+    process.env.STRIPE_PRICE_EXTRA_QUOTES,
+  ];
+  return subscription.items.data.find((item) => meteredPrices.includes(item.price.id));
+}
 /**
- * When the period they paid for ends. The usage price bills monthly even on the yearly plan, so
+ * When the period they paid for ends. The quote meter bills monthly even on the yearly plan, so
  * it's the plan's own price that counts, not whichever item Stripe lists first.
  */
 function paidPeriodEnd(subscription: Stripe.Subscription): number | undefined {
   return (planItem(subscription) ?? subscription.items.data[0])?.current_period_end;
 }
 
-/** The subscription prices must match what the pricing page says. */
-async function validatePlanPrice(plan: 'monthly' | 'yearly'): Promise<void> {
-  const price = await stripeClient().prices.retrieve(planPrices(plan).fixed!);
-  const expected =
-    publicPricing().subscription[plan === 'monthly' ? 'monthlyCents' : 'yearlyCents'];
+/**
+ * A plan's Stripe prices must match what the pricing page says, so a mistyped price fails closed
+ * instead of charging something else.
+ */
+async function validatePlanPrices(plan: Plan): Promise<void> {
+  if (!stripeConfigured())
+    throw new ApiError(503, 'BILLING_NOT_CONFIGURED', 'Payment setup is unavailable.');
+  const stripe = stripeClient(),
+    pricing = publicPricing(),
+    prices = planPrices(plan);
+  const perQuote =
+    plan === 'per_quote'
+      ? pricing.perQuoteCents
+      : plan === 'per_accepted'
+        ? 0
+        : pricing.subscription.overageCents;
+  const metered = await stripe.prices.retrieve(prices.metered);
   if (
-    !price.active ||
-    price.currency !== 'usd' ||
-    price.unit_amount !== expected ||
-    price.recurring?.usage_type !== 'licensed' ||
-    price.recurring.interval !== (plan === 'monthly' ? 'month' : 'year')
+    !metered.active ||
+    metered.currency !== 'usd' ||
+    metered.unit_amount !== perQuote ||
+    metered.recurring?.usage_type !== 'metered' ||
+    metered.recurring.interval !== 'month' ||
+    !metered.recurring.meter
+  )
+    throw new ApiError(
+      503,
+      'BILLING_PRICE_INVALID',
+      `The ${plan} quote price must be an active USD monthly metered price of ${perQuote} cents a quote.`,
+    );
+  const meter = await stripe.billing.meters.retrieve(metered.recurring.meter);
+  if (
+    meter.event_name !== process.env.STRIPE_METER_EVENT_NAME ||
+    meter.default_aggregation.formula !== 'sum'
+  )
+    throw new ApiError(
+      503,
+      'BILLING_METER_INVALID',
+      'The quote prices must use the sum meter for the configured event name.',
+    );
+  if (!prices.fixed) return;
+  const fixed = await stripe.prices.retrieve(prices.fixed);
+  const expected = pricing.subscription[plan === 'monthly' ? 'monthlyCents' : 'yearlyCents'];
+  if (
+    !fixed.active ||
+    fixed.currency !== 'usd' ||
+    fixed.unit_amount !== expected ||
+    fixed.recurring?.usage_type !== 'licensed' ||
+    fixed.recurring.interval !== (plan === 'monthly' ? 'month' : 'year')
   )
     throw new ApiError(
       503,
       'BILLING_PRICE_INVALID',
       `The configured ${plan} price must be an active USD ${plan === 'monthly' ? 'monthly' : 'yearly'} price of ${expected} cents.`,
     );
+}
+
+const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+export function dollars(cents: number): string {
+  return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
+}
+/** What the plan costs, in a line above Checkout's button. Stripe can't show 1% as a price. */
+function checkoutTerms(plan: Plan): string {
+  const pricing = publicPricing(),
+    { accepted, subscription } = pricing;
+  if (plan === 'per_quote')
+    return `${dollars(pricing.perQuoteCents)} for each quote a customer gets from you, billed monthly. Nothing today.`;
+  if (plan === 'per_accepted')
+    return `${accepted.basisPoints / 100}% of each quote a customer accepts, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)}, billed monthly. Nothing if they say no, and nothing today.`;
+  return `Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.`;
 }
 
 billingRouter.post('/billing/checkout', async (req, res) => {
@@ -415,16 +463,11 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     res.json(ok({ url: `${appOrigin()}${back}?billing=active` }));
     return;
   }
-  // Which plan comes first, before anything is asked of Stripe.
-  chosenPlan(
-    await transaction((connection) => ensureBillingAccount(context.businessId, connection)),
-  );
-  await validateMeteredPrice();
   const url = await transaction(async (connection) => {
     const account = await ensureBillingAccount(context.businessId, connection),
       stripe = stripeClient();
     const plan = chosenPlan(account);
-    if (isSubscription(plan)) await validatePlanPrice(plan);
+    await validatePlanPrices(plan);
     let customerId: string = account.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create(
@@ -457,25 +500,42 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     }
     const prices = planPrices(plan);
     const freeWeek = isSubscription(plan) && !account.trial_used_at;
+    const shared = {
+      customer: customerId,
+      client_reference_id: context.businessId,
+      metadata: { plan },
+      // A monthly bill for a business: no buy-now-pay-later or app wallets.
+      allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
+      custom_text: { submit: { message: checkoutTerms(plan) } },
+      success_url: `${appOrigin()}${back}?billing=active`,
+      cancel_url: `${appOrigin()}${back}`,
+    } satisfies Stripe.Checkout.SessionCreateParams;
     const checkout = await stripe.checkout.sessions.create(
-      {
-        mode: 'subscription',
-        customer: customerId,
-        // Checkout can't mix billing intervals, so the yearly plan starts on its own price and
-        // reconciliation adds the monthly usage price before any quote goes out.
-        line_items: [
-          ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-          ...(plan === 'yearly' ? [] : [{ price: prices.usage }]),
-        ],
-        client_reference_id: context.businessId,
-        metadata: { plan },
-        subscription_data: {
-          metadata: { businessId: context.businessId, plan },
-          ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
-        },
-        success_url: `${appOrigin()}${back}?billing=active`,
-        cancel_url: `${appOrigin()}${back}`,
-      },
+      plan === 'per_accepted'
+        ? // Stripe would show this plan as $0 a quote, so Checkout only saves the card, under the
+          // plan's terms, and reconciliation starts the subscription.
+          {
+            ...shared,
+            mode: 'setup',
+            currency: 'usd',
+            setup_intent_data: { metadata: { businessId: context.businessId, plan } },
+          }
+        : {
+            ...shared,
+            mode: 'subscription',
+            // Checkout can't mix billing intervals, so the yearly plan starts on its own price
+            // and reconciliation adds the monthly quote price before any quote goes out.
+            line_items: [
+              ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
+              ...(plan === 'yearly' ? [] : [{ price: prices.metered }]),
+            ],
+            subscription_data: {
+              // Usage from before a plan switch is billed at the old price, not dropped.
+              billing_mode: { type: 'flexible' },
+              metadata: { businessId: context.businessId, plan },
+              ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
+            },
+          },
       {
         idempotencyKey: `quotient-checkout:${context.businessId}:${plan}:${Math.floor(Date.now() / 3600000)}`,
       },
@@ -501,18 +561,24 @@ function chosenPlan(account: RowDataPacket): Plan {
 
 /**
  * Moves a paying Stripe subscription onto a plan's prices now: adds, swaps or drops the
- * subscription price. The usage price stays on every plan.
+ * subscription price, and swaps the price on the quote meter. That item is swapped, never
+ * deleted, because Stripe drops a deleted item's usage; quotes from before the switch are billed
+ * at the old price.
  */
 async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: boolean) {
   const stripe = stripeClient();
   const subscription = await stripe.subscriptions.retrieve(String(account.stripe_subscription_id));
-  const current = planItem(subscription);
-  const target = planPrices(plan).fixed;
+  const current = planItem(subscription),
+    currentMetered = meteredItem(subscription);
+  const target = planPrices(plan);
   const items: Stripe.SubscriptionUpdateParams.Item[] = [];
-  if (current && !target) items.push({ id: current.id, deleted: true });
-  else if (current && target && current.price.id !== target)
-    items.push({ id: current.id, price: target });
-  else if (!current && target) items.push({ price: target, quantity: 1 });
+  if (current && !target.fixed) items.push({ id: current.id, deleted: true });
+  else if (current && target.fixed && current.price.id !== target.fixed)
+    items.push({ id: current.id, price: target.fixed });
+  else if (!current && target.fixed) items.push({ price: target.fixed, quantity: 1 });
+  if (!currentMetered) items.push({ price: target.metered });
+  else if (currentMetered.price.id !== target.metered)
+    items.push({ id: currentMetered.id, price: target.metered });
   if (!items.length && !freeWeek) return;
   await stripe.subscriptions.update(
     subscription.id,
@@ -551,13 +617,13 @@ async function scheduleSubscription(account: RowDataPacket, plan: Plan): Promise
           ...(item.quantity ? { quantity: item.quantity } : {}),
         })),
         start_date: phase.start_date,
-        // Stripe ends the first phase with the usage price's month; a yearly plan runs to its year.
+        // Stripe ends the first phase with the quote meter's month; a yearly plan runs to its year.
         end_date: paidPeriodEnd(subscription) ?? phase.end_date,
       },
       {
         items: [
           ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-          { price: prices.usage },
+          { price: prices.metered },
         ],
         proration_behavior: 'none',
       },
@@ -612,6 +678,7 @@ export async function changePlan(businessId: string, plan: Plan): Promise<void> 
         connection,
       );
     if (current === plan) return;
+    if (onStripe) await validatePlanPrices(plan);
     const periodEnd = account.period_end ? new Date(account.period_end) : null;
     const waits =
       isSubscription(current) &&
@@ -720,36 +787,77 @@ export const stripeWebhook: RequestHandler = async (req, res) => {
   res.json(ok({ received: true }));
 };
 
+/**
+ * Starts the subscription for a card saved in Checkout without one (the accepted-quote plan). Only
+ * once, and only on the plan the card was saved for: if the owner has moved on, nothing starts.
+ */
+async function startSavedCardSubscription(
+  account: RowDataPacket,
+  customerId: string,
+  subscriptions: Stripe.Subscription[],
+): Promise<Stripe.Subscription | null> {
+  if (!account.checkout_session_id || subscriptions.some((item) => isPaying(item.status)))
+    return null;
+  const stripe = stripeClient();
+  const session = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id), {
+    expand: ['setup_intent'],
+  });
+  const plan = session.metadata?.plan ?? '',
+    setupIntent = session.setup_intent as Stripe.SetupIntent | null,
+    card = setupIntent?.payment_method;
+  if (
+    session.mode !== 'setup' ||
+    session.status !== 'complete' ||
+    plan !== account.plan ||
+    !card ||
+    subscriptions.some((item) => item.created >= session.created)
+  )
+    return null;
+  const paymentMethod = typeof card === 'string' ? card : card.id;
+  await stripe.customers.update(customerId, {
+    invoice_settings: { default_payment_method: paymentMethod },
+  });
+  const prices = planPrices(plan as Plan);
+  return stripe.subscriptions.create(
+    {
+      customer: customerId,
+      items: [
+        ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
+        { price: prices.metered },
+      ],
+      default_payment_method: paymentMethod,
+      billing_mode: { type: 'flexible' },
+      metadata: { businessId: String(account.business_id), plan },
+    },
+    { idempotencyKey: `quotient-subscription:${session.id}` },
+  );
+}
+
 export async function reconcileStripeCustomer(customerId: string): Promise<void> {
   if (billingProvider() !== 'stripe') return;
   const [account] = await rows(
-    'SELECT business_id FROM billing_accounts WHERE stripe_customer_id=?',
+    'SELECT business_id,plan,checkout_session_id FROM billing_accounts WHERE stripe_customer_id=?',
     [customerId],
   );
   if (!account) return;
+  const stripe = stripeClient();
   // Read current provider state instead of applying event snapshots; event delivery order is not authoritative.
-  const subscriptions = await stripeClient().subscriptions.list({
-    customer: customerId,
-    status: 'all',
-    limit: 100,
-  });
-  const current = [...subscriptions.data].sort((a, b) => {
+  const subscriptions = (
+    await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
+  ).data;
+  const started = await startSavedCardSubscription(account, customerId, subscriptions);
+  if (started) subscriptions.push(started);
+  const current = [...subscriptions].sort((a, b) => {
     const score = (status: string) =>
       status === 'active' ? 3 : status === 'trialing' ? 2 : status === 'past_due' ? 1 : 0;
     return score(b.status) - score(a.status) || b.created - a.created;
   })[0];
-  // Every paying subscription carries the usage price. A yearly checkout starts without it, so it's
-  // added here, before the account is marked paying and quotes can go out.
-  const usagePrice = process.env.STRIPE_PRICE_ID;
-  if (
-    current &&
-    usagePrice &&
-    isPaying(current.status) &&
-    !current.items.data.some((item) => item.price.id === usagePrice)
-  )
-    await stripeClient().subscriptions.update(
+  // Every paying subscription has a price on the quote meter. A yearly checkout starts without
+  // one, so it's added here, before the account is marked paying and quotes can go out.
+  if (current && isPaying(current.status) && PLANS.includes(account.plan) && !meteredItem(current))
+    await stripe.subscriptions.update(
       current.id,
-      { items: [{ price: usagePrice }], proration_behavior: 'none' },
+      { items: [{ price: planPrices(account.plan as Plan).metered }], proration_behavior: 'none' },
       { idempotencyKey: `quotient-usage-price:${current.id}` },
     );
   await transaction(async (connection) => {
@@ -775,7 +883,12 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
   });
 }
 
-export async function dispatchMeterEvent(usageId: string): Promise<void> {
+/**
+ * Sends one fee to Stripe, once. A delivered quote counts one on the quote meter, and the price on
+ * the subscription makes it $2 or $1. An accepted quote's fee goes on the next invoice as a line of
+ * its own, since 1% of a job isn't a price per quote.
+ */
+export async function dispatchFee(usageId: string): Promise<void> {
   const item = await transaction(async (connection) => {
     const [usage] = await rows(
       'SELECT q.*,b.stripe_customer_id FROM quote_usage q JOIN billing_accounts b ON b.business_id=q.business_id WHERE q.id=? FOR UPDATE',
@@ -787,7 +900,7 @@ export async function dispatchMeterEvent(usageId: string): Promise<void> {
       usage.dispatch_started_at &&
       new Date(usage.dispatch_started_at).getTime() < Date.now() - 23 * 3600000
     )
-      throw new Error('Meter event requires manual reconciliation before another attempt.');
+      throw new Error('Fee dispatch requires manual reconciliation before another attempt.');
     await mutate(
       'UPDATE quote_usage SET dispatch_started_at=COALESCE(dispatch_started_at,UTC_TIMESTAMP(3)) WHERE id=?',
       [usageId],
@@ -797,16 +910,28 @@ export async function dispatchMeterEvent(usageId: string): Promise<void> {
   });
   if (!item) return;
   if (billingProvider() === 'stripe') {
-    if (!item.stripe_customer_id) throw new Error('A metered event has no billing customer.');
-    await stripeClient().billing.meterEvents.create(
-      {
-        event_name: process.env.STRIPE_METER_EVENT_NAME!,
-        identifier: `quotient:${usageId}`,
-        payload: { stripe_customer_id: item.stripe_customer_id, value: String(item.fee_cents) },
-        timestamp: Math.floor(new Date(item.created_at).getTime() / 1000),
-      },
-      { idempotencyKey: `quotient-meter:${usageId}` },
-    );
+    if (!item.stripe_customer_id) throw new Error('A fee has no billing customer.');
+    if (item.charge === 'accepted')
+      await stripeClient().invoiceItems.create(
+        {
+          customer: item.stripe_customer_id,
+          amount: Number(item.fee_cents),
+          currency: 'usd',
+          description: `Accepted quote for ${usd.format(Number(item.quote_value_cents) / 100)}`,
+          metadata: { usageId, quoteId: String(item.quote_id) },
+        },
+        { idempotencyKey: `quotient-fee:${usageId}` },
+      );
+    else
+      await stripeClient().billing.meterEvents.create(
+        {
+          event_name: process.env.STRIPE_METER_EVENT_NAME!,
+          identifier: `quotient:${usageId}`,
+          payload: { stripe_customer_id: item.stripe_customer_id, value: '1' },
+          timestamp: Math.floor(new Date(item.created_at).getTime() / 1000),
+        },
+        { idempotencyKey: `quotient-meter:${usageId}` },
+      );
   }
   await mutate(
     'UPDATE quote_usage SET stripe_reported_at=UTC_TIMESTAMP(3) WHERE id=? AND stripe_reported_at IS NULL',

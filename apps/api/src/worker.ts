@@ -11,7 +11,7 @@ import { deleteBusinessAccount } from './accounts.js';
 import {
   applyDuePlanChanges,
   billingProvider,
-  dispatchMeterEvent,
+  dispatchFee,
   reconcileStripeCustomer,
   validateBillingConfiguration,
 } from './billing.js';
@@ -135,7 +135,7 @@ async function processJob(job: Job): Promise<void> {
       await deliverEmail(z.string().uuid().parse(payload.emailId));
       break;
     case 'billing_dispatch':
-      await dispatchMeterEvent(z.string().uuid().parse(payload.usageId));
+      await dispatchFee(z.string().uuid().parse(payload.usageId));
       break;
     case 'stripe_reconcile': {
       if (payload.customerId)

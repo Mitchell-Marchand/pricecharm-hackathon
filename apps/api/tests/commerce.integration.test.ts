@@ -8,7 +8,7 @@ import { closeDatabase, mutate, rows, transaction } from '../src/db.js';
 import { hashToken } from '../src/auth.js';
 import {
   applyDuePlanChanges,
-  dispatchMeterEvent,
+  dispatchFee,
   ensureBillingAccount,
   reconcileStripeCustomer,
   stripeClient,
@@ -32,6 +32,19 @@ import { runOneJob } from '../src/worker.js';
 import { getPhoto, putPhoto } from '../src/storage.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
+/** Mocked Stripe settings: a price for each plan, and the meter that counts billed quotes. */
+const stripeSettings = {
+  STRIPE_PRICE_PER_QUOTE: 'price_per_quote_mock',
+  STRIPE_PRICE_PER_ACCEPTED: 'price_per_accepted_mock',
+  STRIPE_PRICE_EXTRA_QUOTES: 'price_extra_quotes_mock',
+  STRIPE_PRICE_MONTHLY: 'price_monthly_mock',
+  STRIPE_PRICE_YEARLY: 'price_yearly_mock',
+  STRIPE_METER_EVENT_NAME: 'pricecharm_quotes',
+};
+const setStripePrices = () => Object.assign(process.env, stripeSettings);
+const clearStripePrices = () => {
+  for (const name of Object.keys(stripeSettings)) delete process.env[name];
+};
 test(
   'identity, customer email codes, durable mail, the fee ledger, signed Stripe events and tenant deletion',
   { skip: !enabled },
@@ -492,26 +505,48 @@ test(
       process.env.BILLING_PROVIDER = 'stripe';
       process.env.STRIPE_SECRET_KEY = 'sk_test_mock_commerce';
       process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_commerce';
-      process.env.STRIPE_PRICE_ID = 'price_mock';
-      process.env.STRIPE_PRICE_MONTHLY = 'price_monthly_mock';
-      process.env.STRIPE_PRICE_YEARLY = 'price_yearly_mock';
-      process.env.STRIPE_METER_EVENT_NAME = 'quotient_fee_cents';
+      setStripePrices();
       await mutate(
         "UPDATE billing_accounts SET stripe_customer_id='cus_mock_commerce',subscription_status='active',last_reconciled_at=UTC_TIMESTAMP(3) WHERE business_id=?",
         [businessId],
       );
       const stripe = stripeClient();
+      // A delivered quote counts one on the meter; the subscription's price makes it $2 or $1.
       let meterCalls = 0;
       stripe.billing.meterEvents.create = (async (params: any, options: any) => {
         meterCalls++;
+        assert.equal(params.event_name, 'pricecharm_quotes');
         assert.equal(params.identifier, `quotient:${fee.id}`);
-        assert.equal(params.payload.value, '200');
+        assert.equal(params.payload.value, '1');
         assert.equal(options.idempotencyKey, `quotient-meter:${fee.id}`);
         return { identifier: params.identifier };
       }) as any;
-      await dispatchMeterEvent(fee.id);
-      await dispatchMeterEvent(fee.id);
+      await dispatchFee(fee.id);
+      await dispatchFee(fee.id);
       assert.equal(meterCalls, 1);
+      // An accepted quote's fee is a line of its own on the next invoice.
+      const [acceptedFee] = await rows(
+        "SELECT id FROM quote_usage WHERE quote_id=? AND charge='accepted'",
+        [usual],
+      );
+      const invoiceLines: any[] = [];
+      stripe.invoiceItems.create = (async (params: any, options: any) => {
+        invoiceLines.push({ ...params, key: options.idempotencyKey });
+        return { id: 'ii_mock' };
+      }) as any;
+      await dispatchFee(acceptedFee.id);
+      await dispatchFee(acceptedFee.id);
+      assert.deepEqual(invoiceLines, [
+        {
+          customer: 'cus_mock_commerce',
+          amount: 320,
+          currency: 'usd',
+          description: 'Accepted quote for $320.00',
+          metadata: { usageId: acceptedFee.id, quoteId: usual },
+          key: `quotient-fee:${acceptedFee.id}`,
+        },
+      ]);
+      assert.equal(meterCalls, 1, 'Accepted fees never go on the meter');
       stripe.subscriptions.list = (async () => ({
         data: [
           {
@@ -522,7 +557,7 @@ test(
             items: {
               data: [
                 {
-                  price: { id: 'price_mock' },
+                  price: { id: 'price_per_quote_mock' },
                   current_period_end: Math.floor(Date.now() / 1000) + 86400,
                 },
               ],
@@ -618,8 +653,7 @@ test(
     } finally {
       process.env.MAIL_PROVIDER = 'local';
       process.env.BILLING_PROVIDER = 'local';
-      delete process.env.STRIPE_PRICE_MONTHLY;
-      delete process.env.STRIPE_PRICE_YEARLY;
+      clearStripePrices();
       for (const id of businesses) {
         if (!(await rows('SELECT id FROM businesses WHERE id=?', [id])).length) continue;
         const deletionId = randomUUID();
@@ -645,10 +679,7 @@ test(
     process.env.BILLING_PROVIDER = 'stripe';
     process.env.STRIPE_SECRET_KEY = 'sk_test_mock_checkout';
     process.env.STRIPE_WEBHOOK_SECRET = 'whsec_mock_checkout';
-    process.env.STRIPE_PRICE_ID = 'price_checkout_mock';
-    process.env.STRIPE_PRICE_MONTHLY = 'price_monthly_mock';
-    process.env.STRIPE_PRICE_YEARLY = 'price_yearly_mock';
-    process.env.STRIPE_METER_EVENT_NAME = 'quotient_fee_cents';
+    setStripePrices();
     process.env.TRUST_PROXY = '1';
     const app = createApp(),
       agent = request.agent(app),
@@ -685,29 +716,24 @@ test(
       let customers = 0,
         checkouts = 0,
         portals = 0;
-      stripe.prices.retrieve = (async (id: string) =>
-        id === 'price_monthly_mock'
-          ? {
-              active: true,
-              currency: 'usd',
-              unit_amount: 4900,
-              recurring: { usage_type: 'licensed', interval: 'month' },
-            }
-          : id === 'price_yearly_mock'
-            ? {
-                active: true,
-                currency: 'usd',
-                unit_amount: 49900,
-                recurring: { usage_type: 'licensed', interval: 'year' },
-              }
-            : {
-                active: true,
-                currency: 'usd',
-                unit_amount: 1,
-                recurring: { usage_type: 'metered', meter: 'meter_checkout' },
-              }) as any;
+      const price = (unit_amount: number, recurring: object) => ({
+        active: true,
+        currency: 'usd',
+        unit_amount,
+        recurring,
+      });
+      const perQuote = (cents: number) =>
+        price(cents, { usage_type: 'metered', interval: 'month', meter: 'meter_quotes' });
+      const prices: Record<string, unknown> = {
+        price_per_quote_mock: perQuote(200),
+        price_per_accepted_mock: perQuote(0),
+        price_extra_quotes_mock: perQuote(100),
+        price_monthly_mock: price(4900, { usage_type: 'licensed', interval: 'month' }),
+        price_yearly_mock: price(49900, { usage_type: 'licensed', interval: 'year' }),
+      };
+      stripe.prices.retrieve = (async (id: string) => prices[id]) as any;
       stripe.billing.meters.retrieve = (async () => ({
-        event_name: 'quotient_fee_cents',
+        event_name: 'pricecharm_quotes',
         default_aggregation: { formula: 'sum' },
       })) as any;
       stripe.customers.create = (async (params: any, options: any) => {
@@ -717,12 +743,11 @@ test(
         return { id: `cus_${suffix}` };
       }) as any;
       stripe.subscriptions.list = (async () => ({ data: [] })) as any;
-      const checkoutItems: Record<string, unknown> = {};
+      const sessions: Record<string, any> = {};
       stripe.checkout.sessions.create = (async (params: any) => {
         checkouts++;
-        checkoutItems[params.metadata.plan] = params.line_items;
-        assert.equal(params.mode, 'subscription');
-        assert.equal(params.subscription_data.trial_period_days, 7, 'The free week');
+        sessions[params.metadata.plan] = params;
+        assert.deepEqual(params.allowed_payment_method_types, ['card', 'link', 'us_bank_account']);
         assert.match(params.success_url, /^http:\/\/localhost:3100\/app\/settings/);
         return {
           id: `cs_${suffix}_${params.metadata.plan}`,
@@ -753,16 +778,47 @@ test(
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
       assert.equal(customers, 1);
       assert.equal(checkouts, 1);
-      assert.deepEqual(checkoutItems.monthly, [
+      // Checkout shows the plan's own prices: $49 a month with its free week, and $1 a quote past
+      // the allowance.
+      assert.equal(sessions.monthly.mode, 'subscription');
+      assert.deepEqual(sessions.monthly.line_items, [
         { price: 'price_monthly_mock', quantity: 1 },
-        { price: 'price_checkout_mock' },
+        { price: 'price_extra_quotes_mock' },
       ]);
-      // Checkout can't mix a yearly price with the monthly usage price, so yearly starts alone.
+      assert.equal(sessions.monthly.subscription_data.trial_period_days, 7, 'The free week');
+      assert.deepEqual(sessions.monthly.subscription_data.billing_mode, { type: 'flexible' });
+      assert.equal(
+        sessions.monthly.custom_text.submit.message,
+        'Includes 100 quotes a month. Each one past that is $1, billed monthly.',
+      );
+      // Checkout can't mix a yearly price with the monthly quote price, so yearly starts alone.
       const pick = (plan: string) =>
         agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan }).expect(200);
       await pick('yearly');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
-      assert.deepEqual(checkoutItems.yearly, [{ price: 'price_yearly_mock', quantity: 1 }]);
+      assert.deepEqual(sessions.yearly.line_items, [{ price: 'price_yearly_mock', quantity: 1 }]);
+      // $2 a quote, with nothing up front.
+      await mutate('DELETE FROM auth_rate_limits WHERE bucket_key=?', [
+        hashToken(`billing-checkout:${businessId}`),
+      ]);
+      await pick('per_quote');
+      await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+      assert.equal(sessions.per_quote.mode, 'subscription');
+      assert.deepEqual(sessions.per_quote.line_items, [{ price: 'price_per_quote_mock' }]);
+      assert.equal(sessions.per_quote.subscription_data.trial_period_days, undefined);
+      // Stripe can't show 1% of a job as a price, so that plan's Checkout only saves the card,
+      // under the plan's terms in our words.
+      await pick('per_accepted');
+      await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
+      assert.deepEqual(
+        [sessions.per_accepted.mode, sessions.per_accepted.currency],
+        ['setup', 'usd'],
+      );
+      assert.equal(sessions.per_accepted.line_items, undefined);
+      assert.equal(
+        sessions.per_accepted.custom_text.submit.message,
+        '1% of each quote a customer accepts, at least $1 and at most $25, billed monthly. Nothing if they say no, and nothing today.',
+      );
       await pick('monthly');
       assert.equal(
         (await agent.post('/api/v1/billing/portal').set('Origin', origin).send({}).expect(200)).body
@@ -782,7 +838,7 @@ test(
         items: {
           data: [
             { id: 'si_fixed', price: { id: 'price_monthly_mock' } },
-            { id: 'si_usage', price: { id: 'price_checkout_mock' } },
+            { id: 'si_usage', price: { id: 'price_extra_quotes_mock' } },
           ],
         },
       })) as any;
@@ -805,7 +861,10 @@ test(
         id: 'sub_sched_mock',
         phases: [
           {
-            items: [{ price: 'price_yearly_mock', quantity: 1 }, { price: 'price_checkout_mock' }],
+            items: [
+              { price: 'price_yearly_mock', quantity: 1 },
+              { price: 'price_extra_quotes_mock' },
+            ],
             start_date: 1,
             end_date: 2,
           },
@@ -825,7 +884,7 @@ test(
         yearEnd = now + 300 * 86400;
       const usageItem = {
           id: 'si_usage',
-          price: { id: 'price_checkout_mock' },
+          price: { id: 'price_extra_quotes_mock' },
           current_period_end: monthEnd,
         },
         yearlyItem = {
@@ -840,11 +899,37 @@ test(
       const booked = (await choose('per_accepted')).body.data;
       assert.deepEqual([booked.plan, booked.nextPlan], ['yearly', 'per_accepted']);
       assert.equal(scheduled[0].phases[0].end_date, yearEnd);
-      assert.deepEqual(scheduled[0].phases[1].items, [{ price: 'price_checkout_mock' }]);
+      assert.deepEqual(scheduled[0].phases[1].items, [{ price: 'price_per_accepted_mock' }]);
       assert.equal(scheduled[0].phases[1].proration_behavior, 'none');
       assert.equal(updates.length, 1, 'Nothing changes on the subscription until then');
       const kept = (await choose('yearly')).body.data;
       assert.deepEqual([kept.plan, kept.nextPlan, released], ['yearly', null, 'sub_sched_mock']);
+
+      // Between the per-quote plans the quote meter's price is swapped, never removed, so quotes
+      // from before the switch are still billed at the price they went out at.
+      stripe.subscriptions.retrieve = (async () => ({
+        id: `sub_${suffix}`,
+        items: { data: [{ id: 'si_usage', price: { id: 'price_per_quote_mock' } }] },
+      })) as any;
+      const fromPerQuote = async (plan: string) => {
+        await mutate("UPDATE billing_accounts SET plan='per_quote' WHERE business_id=?", [
+          businessId,
+        ]);
+        assert.equal((await choose(plan)).body.data.plan, plan);
+        return updates.at(-1);
+      };
+      assert.deepEqual(await fromPerQuote('per_accepted'), {
+        items: [{ id: 'si_usage', price: 'price_per_accepted_mock' }],
+        proration_behavior: 'create_prorations',
+      });
+      assert.deepEqual(await fromPerQuote('monthly'), {
+        items: [
+          { price: 'price_monthly_mock', quantity: 1 },
+          { id: 'si_usage', price: 'price_extra_quotes_mock' },
+        ],
+        proration_behavior: 'create_prorations',
+      });
+      await mutate("UPDATE billing_accounts SET plan='yearly' WHERE business_id=?", [businessId]);
 
       // A yearly checkout leaves the subscription with its own price alone. Reconciling adds the
       // usage price once, and the paid period it saves is the year.
@@ -870,7 +955,7 @@ test(
       assert.deepEqual(added, [
         {
           id: `sub_${suffix}`,
-          params: { items: [{ price: 'price_checkout_mock' }], proration_behavior: 'none' },
+          params: { items: [{ price: 'price_extra_quotes_mock' }], proration_behavior: 'none' },
           key: `quotient-usage-price:sub_${suffix}`,
         },
       ]);
@@ -881,6 +966,89 @@ test(
         businessId,
       ]);
       assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), yearEnd);
+
+      // A card saved for the accepted-quote plan starts its subscription once, on that plan only.
+      await mutate(
+        "UPDATE billing_accounts SET plan='per_accepted',checkout_session_id='cs_setup_mock',stripe_subscription_id=NULL,subscription_status='cancelled' WHERE business_id=?",
+        [businessId],
+      );
+      stripe.checkout.sessions.retrieve = (async (id: string, params: any) => {
+        assert.deepEqual([id, params], ['cs_setup_mock', { expand: ['setup_intent'] }]);
+        return {
+          id,
+          mode: 'setup',
+          status: 'complete',
+          created: 1000,
+          metadata: { plan: 'per_accepted' },
+          setup_intent: { payment_method: 'pm_mock' },
+        };
+      }) as any;
+      const defaults: any[] = [],
+        starts: any[] = [];
+      stripe.customers.update = (async (id: string, params: any) => {
+        defaults.push([id, params]);
+        return {};
+      }) as any;
+      const winSubscription = {
+        id: 'sub_win_mock',
+        status: 'active',
+        created: 2000,
+        cancel_at_period_end: false,
+        items: {
+          data: [
+            {
+              id: 'si_win',
+              price: { id: 'price_per_accepted_mock' },
+              current_period_end: monthEnd,
+            },
+          ],
+        },
+      };
+      stripe.subscriptions.create = (async (params: any, options: any) => {
+        starts.push({ params, key: options.idempotencyKey });
+        return winSubscription;
+      }) as any;
+      stripe.subscriptions.list = (async () => ({ data: [] })) as any;
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual(starts, [
+        {
+          params: {
+            customer: `cus_${suffix}`,
+            items: [{ price: 'price_per_accepted_mock' }],
+            default_payment_method: 'pm_mock',
+            billing_mode: { type: 'flexible' },
+            metadata: { businessId, plan: 'per_accepted' },
+          },
+          key: 'quotient-subscription:cs_setup_mock',
+        },
+      ]);
+      assert.deepEqual(defaults, [
+        [`cus_${suffix}`, { invoice_settings: { default_payment_method: 'pm_mock' } }],
+      ]);
+      const [win] = await rows(
+        'SELECT stripe_subscription_id,subscription_status FROM billing_accounts WHERE business_id=?',
+        [businessId],
+      );
+      assert.deepEqual(
+        [win.stripe_subscription_id, win.subscription_status],
+        ['sub_win_mock', 'active'],
+      );
+      assert.equal(added.length, 1, 'It starts with its quote price; nothing is added');
+      // Cancelled later, it isn't started again; and a card saved for another plan starts nothing.
+      stripe.subscriptions.list = (async () => ({
+        data: [{ ...winSubscription, status: 'canceled' }],
+      })) as any;
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      await mutate("UPDATE billing_accounts SET plan='per_quote' WHERE business_id=?", [
+        businessId,
+      ]);
+      stripe.subscriptions.list = (async () => ({ data: [] })) as any;
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.equal(starts.length, 1);
+      await mutate(
+        "UPDATE billing_accounts SET plan='yearly',checkout_session_id=NULL WHERE business_id=?",
+        [businessId],
+      );
 
       const eventId = `evt_${suffix}`,
         event = {
@@ -937,17 +1105,15 @@ test(
         false,
         'A past-due subscription stops quotes once the free ones are used',
       );
-      stripe.prices.retrieve = (async () => ({
-        active: true,
-        currency: 'usd',
-        unit_amount: 100,
-        recurring: { usage_type: 'metered', meter: 'meter_checkout' },
-      })) as any;
+      // A Stripe price that doesn't match the pricing page fails closed.
+      stripe.prices.retrieve = (async (id: string) =>
+        id === 'price_yearly_mock'
+          ? price(4900, { usage_type: 'licensed', interval: 'year' })
+          : prices[id]) as any;
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(503);
     } finally {
       process.env.BILLING_PROVIDER = 'local';
-      delete process.env.STRIPE_PRICE_MONTHLY;
-      delete process.env.STRIPE_PRICE_YEARLY;
+      clearStripePrices();
       if (businessId) {
         const id = randomUUID();
         await mutate('UPDATE businesses SET deletion_requested_at=UTC_TIMESTAMP(3) WHERE id=?', [
