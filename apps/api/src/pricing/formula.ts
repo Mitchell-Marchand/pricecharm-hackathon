@@ -209,9 +209,10 @@ export function fitGaps(
 }
 
 /**
- * Settles what the AI can't always tell from one example: whether a surcharge is a percent of the
- * main work or a flat amount. Each is tried against the owner's own quotes, and the reading that
- * gives them back better is kept. On a tie it's a percent, the usual way.
+ * Settles what the AI can't always tell from a few rounded prices: whether a surcharge is a
+ * percent of the main work or a flat amount, how big it is, and whether there's one at all. Each
+ * reading is tried against the owner's own quotes, and the one that gives them back best is kept.
+ * On a tie, the simpler reading wins.
  */
 export function refineFormula(
   formula: PriceFormula,
@@ -229,20 +230,34 @@ export function refineFormula(
       })
       .filter((cents): cents is number => cents !== null && cents > 0);
     if (!mains.length) continue;
-    // Each job that had it gives one way to turn the amount into the other kind.
-    const others: FormulaSurcharge[] = [...new Set(mains)].map((main) =>
-      surcharge.percent !== null
-        ? { ...surcharge, percent: null, flatCents: Math.round((main * surcharge.percent) / 100) }
-        : { ...surcharge, percent: ((surcharge.flatCents ?? 0) / main) * 100, flatCents: null },
-    );
+    // Each job that had it gives one way to turn the amount into the other kind, and a percent is
+    // also searched from none to 80% in half points, since rounding can hide the right one.
+    const others: FormulaSurcharge[] = [
+      ...[...new Set(mains)].map((main) =>
+        surcharge.percent !== null
+          ? { ...surcharge, percent: null, flatCents: Math.round((main * surcharge.percent) / 100) }
+          : { ...surcharge, percent: ((surcharge.flatCents ?? 0) / main) * 100, flatCents: null },
+      ),
+      ...Array.from({ length: 161 }, (_, step) => ({
+        ...surcharge,
+        percent: step / 2,
+        flatCents: null,
+      })),
+    ];
+    let current = miss(best);
     for (const other of others) {
       const alternative = {
         ...best,
         surcharges: best.surcharges.map((item, at) => (at === index ? other : item)),
       };
-      const [current, candidate] = [miss(best), miss(alternative)];
-      if (candidate < current || (candidate === current && other.percent !== null))
+      const candidate = miss(alternative);
+      // On a tie, no surcharge beats one, and a percent beats a flat amount.
+      const simpler =
+        other.percent === 0 || (other.percent !== null && best.surcharges[index].percent === null);
+      if (candidate < current || (candidate === current && simpler)) {
         best = alternative;
+        current = candidate;
+      }
     }
   }
   return best;
