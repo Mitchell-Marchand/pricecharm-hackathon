@@ -45,10 +45,11 @@ export default async function LandingPage() {
         <section id="how" className="border-y border-line bg-surface">
           <div className="gutter mx-auto max-w-6xl py-20">
             <h2 className="t-h1 max-w-xl">Three steps. Then it's quoting.</h2>
+            {/* On phones each step reads first, then shows; side by side, the pictures line up on top. */}
             <ol className="mt-12 grid gap-10 md:grid-cols-3 md:gap-8">
               <li className="flex min-w-0 flex-col gap-5">
                 <TradeMarquee />
-                <div>
+                <div className="order-first md:order-none">
                   <p className="font-mono text-sm text-muted">Step 1</p>
                   <h3 className="t-h2 mt-1">Pick your trade</h3>
                   <p className="mt-2 text-ink-2">
@@ -72,7 +73,7 @@ export default async function LandingPage() {
                     <p className="font-mono text-sm font-semibold">$275</p>
                   </div>
                 </div>
-                <div>
+                <div className="order-first md:order-none">
                   <p className="font-mono text-sm text-muted">Step 2</p>
                   <h3 className="t-h2 mt-1">Add jobs you've done</h3>
                   <p className="mt-2 text-ink-2">
@@ -101,7 +102,7 @@ export default async function LandingPage() {
                     <Receipt className="size-4" /> I have enough to quote
                   </span>
                 </div>
-                <div>
+                <div className="order-first md:order-none">
                   <p className="font-mono text-sm text-muted">Step 3</p>
                   <h3 className="t-h2 mt-1">Practice quotes</h3>
                   <p className="mt-2 text-ink-2">
