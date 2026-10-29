@@ -25,7 +25,8 @@ function linkToken(quoteId: string): string | null {
 
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-dvh">
+    // The tilted copies behind the quote reach past the edge on a phone. The page doesn't slide.
+    <div className="min-h-dvh overflow-x-clip">
       <header className="gutter mx-auto flex h-18 max-w-5xl items-center gap-3">
         <Logo href="/app" />
       </header>

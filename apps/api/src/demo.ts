@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { TRADES_BY_ID } from '@pricecharm/trades';
 import { DEMOS_BY_TRADE, type Demo } from '@pricecharm/trades/demos';
 import { aiMode } from './ai/index.js';
-import { intakeTurn } from './ai/intake.js';
+import { fitsReady, intakeTurn, readyLine } from './ai/intake.js';
 import { draftQuote, type PricingHistory } from './ai/quote-engine.js';
 import { hashingSecret } from './config.js';
 import { ApiError, ok, rateLimit } from './http.js';
@@ -254,10 +254,15 @@ demoRouter.post('/demo/turn', async (req, res) => {
   // question, plus one to spare, it quotes what it has rather than think up more questions.
   const enough = 1 + Number(chat.photosAllowed) + checklist.length + 1;
   const ready = turn.ready || customerCount >= Math.min(enough, MAX_CUSTOMER_MESSAGES - 2);
-  const reply = clean(
-    turn.reply,
-    'Thanks! Tell me a little more about the job and I’ll put your quote together.',
-  );
+  // Once it has enough, the last word says the quote is on its way, not another question.
+  const reply = ready
+    ? turn.ready && fitsReady(turn.reply) && !hasContactDetails(turn.reply)
+      ? turn.reply
+      : readyLine()
+    : clean(
+        turn.reply,
+        'Thanks! Tell me a little more about the job and I’ll put your quote together.',
+      );
   await recordRequestEvent(req, null, 'demo_turn', {
     trade: String(req.body.tradeId),
     service: chat.serviceName,
@@ -266,11 +271,7 @@ demoRouter.post('/demo/turn', async (req, res) => {
   });
   res.json(
     ok({
-      // Once it has enough, the last word shouldn't be another question.
-      reply:
-        ready && reply.trim().endsWith('?')
-          ? 'Thanks, that’s everything I need to put your quote together.'
-          : reply,
+      reply,
       // The page adds its own photo answers: send the sample photos, or skip them.
       chips: turn.chips
         .filter((chip) => !hasContactDetails(chip) && !/photo|pic|skip/i.test(chip))

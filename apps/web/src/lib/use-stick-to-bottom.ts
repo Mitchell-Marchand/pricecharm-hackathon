@@ -28,14 +28,20 @@ export function useStickToBottom(scroller: RefObject<HTMLElement | null>) {
       if (held.current?.isConnected) alignTop(element, held.current);
       else if (pinned.current) element.scrollTop = element.scrollHeight;
     };
+    let lastTop = element.scrollTop;
     const onScroll = () => {
       // The browser moves the chat on its own sometimes, like keeping its place as a photo above
       // finishes loading. While something is held, any scroll the reader didn't make goes back.
       if (held.current) {
         if (held.current.isConnected) alignTop(element, held.current);
-        return;
+      } else {
+        // Only the reader moves the chat up. A scroll event can arrive after the next message is
+        // already in, so being far from the end alone doesn't mean they scrolled away from it.
+        const top = element.scrollTop;
+        if (element.scrollHeight - top - element.clientHeight < 40) pinned.current = true;
+        else if (top < lastTop) pinned.current = false;
       }
-      pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
+      lastTop = element.scrollTop;
     };
     // Only the reader's own scrolling, tapping or moving focus lets go of something held in view.
     const letGo = () => {

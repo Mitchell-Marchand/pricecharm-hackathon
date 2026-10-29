@@ -183,7 +183,10 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       options.find((option) => option.label.toLowerCase() === text.toLowerCase());
     const toContact = () =>
       later(() => {
-        add({ from: 'bot', text: 'Thanks, that’s everything I need.' });
+        add({
+          from: 'bot',
+          text: 'Thanks, that’s everything I need. Putting your quote together now.',
+        });
         setStep('contact');
         setChips([]);
         setReady(true);
@@ -359,7 +362,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       </p>
 
       {/* No overscroll containment: past the end of the chat, the page keeps scrolling. */}
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-3 py-4" aria-live="polite">
+      <div ref={scroller} className="chat-scroll min-h-0 flex-1 px-3 py-4" aria-live="polite">
         {/* What visitors type in the demo isn't kept, so recordings mask it too. */}
         <div className="flex flex-col gap-3" data-private>
           {lines.map((line) => {

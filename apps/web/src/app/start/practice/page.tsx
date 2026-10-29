@@ -105,7 +105,8 @@ export default function PracticeStep() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    // The tilted copies behind a quote reach past the edge on a phone. The page doesn't slide.
+    <div className="flex min-h-dvh flex-col overflow-x-clip">
       <WizardHeader step={3} charm={finishedCount}>
         {!extra && <PracticeProgress index={index ?? 0} finished={finishedCount} count={count} />}
       </WizardHeader>

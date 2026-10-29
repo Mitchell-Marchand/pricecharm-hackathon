@@ -83,7 +83,8 @@ function SignedIn({ children }: { children: ReactNode }) {
 
   return (
     <OwnerContext.Provider value={{ me, reload }}>
-      <div className="min-h-dvh">
+      {/* The tilted copies behind a quote reach past the edge on a phone. The page doesn't slide. */}
+      <div className="min-h-dvh overflow-x-clip">
         <header className="sticky top-0 z-40 border-b border-line bg-bg/92 backdrop-blur-md">
           <div className="gutter mx-auto flex h-16 max-w-6xl items-center gap-6">
             <Logo href="/app" />

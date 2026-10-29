@@ -168,6 +168,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A chat's messages scroll up and down only. The tilted copies behind a tall quote reach past the
+   right edge, and on an iPhone any width past the edge lets the whole chat slide sideways. */
+@utility chat-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;

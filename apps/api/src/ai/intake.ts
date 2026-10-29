@@ -40,7 +40,20 @@ export type IntakeInput = {
   videoNotes?: string[];
   /** The public demo: wrap up once the checklist is covered, instead of asking more. */
   shortChat?: boolean;
+  /** The customer is asked where to send the quote before it's drafted, instead of seeing it now. */
+  contactFirst?: boolean;
 };
+
+/** The last word before the quote, when the assistant's own doesn't fit. */
+export const readyLine = (contactFirst = false) =>
+  contactFirst
+    ? 'Thanks, that’s everything I need for your quote.'
+    : 'Thanks, that’s everything I need. Putting your quote together now.';
+
+const LATER =
+  /\b(?:be in touch|get back to|reach out|follow up|contact you|call you|text you|email you|shortly|soon)\b/i;
+/** A last word can't ask for more or promise a reply later: the quote comes next, in the chat. */
+export const fitsReady = (reply: string) => !reply.trim().endsWith('?') && !LATER.test(reply);
 
 const intakeJson = {
   type: 'object',
@@ -107,7 +120,11 @@ ${
 - chips: up to four short answers the customer could tap, when the question has obvious ones (like "Concrete", "Pavers", "Not sure"). Otherwise none.
 - serviceName: the business's service this is for, exactly as listed, once it's clear. Otherwise empty.
 - Never mention a price, a range, a rate or a discount, even if asked. Say you'll put the quote together once you have the details.
-- ready: true once you have enough for the owner to price it, or the customer can't answer more. Then reply with a short thanks and say you'll put their quote together. Don't keep asking once you're ready.${
+- ready: true once you have enough for the owner to price it, or the customer can't answer more. Then thank them in a few words and ${
+      input.contactFirst
+        ? "say that's everything you need for their quote. The app asks where to send it next."
+        : "say you're putting their quote together now. The app says what happens next, so don't say when or where it shows up."
+    } Never say anyone will be in touch, get back to them or follow up. Don't keep asking once you're ready.${
       input.shortChat
         ? "\n- Keep this chat short: once the checklist is covered, by the customer's answers or the photos, you have enough, so set ready. Don't add questions of your own."
         : ''
@@ -124,7 +141,12 @@ ${
     input.business.services.find(
       (name) => name.toLowerCase() === result.serviceName.toLowerCase(),
     ) ?? input.serviceName;
-  return { ...result, serviceName, spec: cleanSpec(result.spec) };
+  // A job they don't do keeps its own polite words.
+  const reply =
+    result.ready && !result.outOfScope && !fitsReady(result.reply)
+      ? readyLine(input.contactFirst)
+      : result.reply;
+  return { ...result, reply, serviceName, spec: cleanSpec(result.spec) };
 }
 
 /** Demo mode: a short fixed script, so local runs and tests work without a model. */
@@ -167,7 +189,7 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       spec,
     };
   return {
-    reply: "[Demo] Thanks, that's what we need. Let's get your quote together.",
+    reply: `[Demo] ${readyLine(input.contactFirst)}`,
     chips: [],
     askPhoto: false,
     serviceName: input.serviceName,

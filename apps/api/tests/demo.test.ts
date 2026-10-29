@@ -2,7 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { DEMOS } from '@pricecharm/trades/demos';
+import { fitsReady, readyLine } from '../src/ai/intake.js';
 import { hasContactDetails } from '../src/demo.js';
+
+test('the last word before a quote says it’s coming now, not that someone will be in touch', () => {
+  for (const text of [readyLine(), readyLine(true), 'Thanks! Putting your quote together now.'])
+    assert.equal(fitsReady(text), true, text);
+  for (const text of [
+    'Thanks! I’ll put your quote together and be in touch shortly.',
+    'Great, we’ll get back to you with a price soon.',
+    'Perfect. Someone will reach out to confirm.',
+    'Thanks! Anything else I should know?',
+  ])
+    assert.equal(fitsReady(text), false, text);
+});
 
 test('demo replies and quote lines can’t carry links, emails or phone numbers', () => {
   for (const text of [

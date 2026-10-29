@@ -50,6 +50,11 @@ test(
       if (turn.body.data.ready) break;
     }
     assert.equal(serviceName, 'Driveways');
+    assert.match(
+      messages.at(-1)!.text,
+      /Putting your quote together now\.$/,
+      'The quote comes now',
+    );
     messages.pop();
     const quoted = await sam.post('quote', {
       tradeId: 'pressure-washing',

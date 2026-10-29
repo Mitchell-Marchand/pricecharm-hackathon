@@ -395,6 +395,7 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
     [business.id, chat.id],
   );
   const checklist = await questionChecklist(String(business.id));
+  const contactFirst = Boolean(business.contact_first) && !hasContact(chat);
   const turn = await withChatUsage(req, business, chat, async () =>
     intakeTurn(
       {
@@ -414,6 +415,7 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
         photosReceived: Number(photos.count) + measured.length,
         videosAllowed: aiProvider === 'meta' || aiMode === 'demo',
         videoNotes: measured.flatMap((result) => result.notes),
+        contactFirst,
       },
       await chatImages(String(business.id), String(chat.id)),
     ),
@@ -425,11 +427,7 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
       ? turn.spec
       : { ...turn.spec, quantity: sized.quantity, unit: sized.unit };
   const serviceName = turn.serviceName || (sized?.serviceName ?? '');
-  const next = !turn.ready
-    ? 'chatting'
-    : business.contact_first && !hasContact(chat)
-      ? 'contact'
-      : 'quoting';
+  const next = !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
   await transaction(async (connection) => {
     await addMessage(connection, {
       businessId: String(business.id),
