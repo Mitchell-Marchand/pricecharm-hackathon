@@ -116,7 +116,7 @@ export function mainWork(service: FormulaService, size: number): number | null {
 }
 
 const rounded = (cents: number, to: number) =>
-  to > 0 ? Math.max(to, Math.round(cents / to) * to) : Math.round(cents);
+  cents <= 0 ? 0 : to > 0 ? Math.max(to, Math.round(cents / to) * to) : Math.round(cents);
 
 /** The quote the formula gives for a job, or null when the formula can't price it. */
 export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote | null {
@@ -170,7 +170,18 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
     });
   }
   for (const line of lines) line.amountCents = rounded(line.amountCents, formula.roundToCents);
-  const minimum = service.minimumCents ?? formula.minimumCents;
+  // Nothing goes on a quote for $0, but the main work always has its line.
+  for (let index = lines.length - 1; index > 0; index--)
+    if (lines[index].amountCents <= 0) lines.splice(index, 1);
+  // A minimum the owner showed on one service applies to the others unless they set their own.
+  const minimum =
+    service.minimumCents ??
+    formula.minimumCents ??
+    (formula.services
+      .map((item) => item.minimumCents)
+      .filter((cents): cents is number => Boolean(cents))
+      .sort((a, b) => a - b)[0] ||
+      null);
   const subtotal = lines.reduce((sum, line) => sum + line.amountCents, 0);
   if (minimum && subtotal < minimum) lines[0].amountCents += minimum - subtotal;
   const discount: Discount | null =
@@ -210,9 +221,9 @@ export function fitGaps(
 
 /**
  * Settles what the AI can't always tell from a few rounded prices: whether a surcharge is a
- * percent of the main work or a flat amount, how big it is, and whether there's one at all. Each
- * reading is tried against the owner's own quotes, and the one that gives them back best is kept.
- * On a tie, the simpler reading wins.
+ * percent of the main work or a flat amount, how big it is, and whether there's one at all, and
+ * what each add-on costs and how it's charged. Each reading is tried against the owner's own
+ * quotes, and the one that gives them back best is kept. On a tie, the simpler reading wins.
  */
 export function refineFormula(
   formula: PriceFormula,
@@ -255,6 +266,41 @@ export function refineFormula(
       const simpler =
         other.percent === 0 || (other.percent !== null && best.surcharges[index].percent === null);
       if (candidate < current || (candidate === current && simpler)) {
+        best = alternative;
+        current = candidate;
+      }
+    }
+  }
+  // Add-ons the same way: each job that had one says what it must have cost, given the rest of
+  // the formula, per unit, per item or per job.
+  for (const [index, addOn] of best.addOns.entries()) {
+    const without = {
+      ...best,
+      addOns: best.addOns.map((item, at) => (at === index ? { ...item, cents: 0 } : item)),
+    };
+    const candidates: FormulaAddOn[] = [];
+    for (const example of examples) {
+      const wanted = example.parts.addOns.find((item) => same(item.name, addOn.name));
+      const rest = wanted ? priceJob(without, example.parts) : null;
+      if (!wanted || !rest || !example.parts.size) continue;
+      const cost = example.totalCents - rest.totalCents;
+      if (cost <= 0) continue;
+      candidates.push(
+        { ...addOn, per: 'unit', cents: Math.round(cost / example.parts.size) },
+        { ...addOn, per: 'job', cents: cost },
+        ...(wanted.count
+          ? [{ ...addOn, per: 'item' as const, cents: Math.round(cost / wanted.count) }]
+          : []),
+      );
+    }
+    let current = miss(best);
+    for (const other of candidates) {
+      const alternative = {
+        ...best,
+        addOns: best.addOns.map((item, at) => (at === index ? other : item)),
+      };
+      const candidate = miss(alternative);
+      if (candidate < current) {
         best = alternative;
         current = candidate;
       }

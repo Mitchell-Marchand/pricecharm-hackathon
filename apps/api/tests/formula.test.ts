@@ -138,3 +138,45 @@ test('a surcharge is read as a percent or a flat amount, whichever gives back th
   assert.equal(refined.surcharges[0].flatCents, null);
   assert.equal(Math.round(refined.surcharges[0].percent ?? 0), 30);
 });
+
+test('a minimum on one service holds for the others', async () => {
+  const { priceJob } = await import('../src/pricing/formula.js');
+  const perService = {
+    ...formula,
+    minimumCents: null,
+    services: formula.services.map((item, index) =>
+      index === 0 ? { ...item, minimumCents: 15000 } : item,
+    ),
+  };
+  const small = {
+    service: 'Interior windows',
+    size: 8,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  };
+  assert.equal(priceJob(perService, small)?.totalCents, 15000);
+});
+
+test('an add-on’s price is corrected to what the owner’s quotes say it cost', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  const wrong = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    addOns: [{ name: 'Screens', per: 'job' as const, cents: 5000 }],
+  };
+  // The owner charges $2 a window for screens: $40 on 20 windows, $60 on 30.
+  const job = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: [],
+    addOns: [{ name: 'Screens', count: null }],
+    otherServices: [],
+  });
+  const refined = refineFormula(wrong, [
+    { parts: job(20), totalCents: 20000 },
+    { parts: job(30), totalCents: 30000 },
+  ]);
+  assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
+});
