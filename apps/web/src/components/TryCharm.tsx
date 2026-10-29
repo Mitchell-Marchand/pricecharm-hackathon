@@ -53,7 +53,7 @@ export function TryCharm({
         }}
       >
         {open && (
-          <div className="flex h-[92dvh] w-full flex-col md:h-full">
+          <div className="flex h-[calc(var(--vv-height,100dvh)*0.92)] w-full flex-col md:h-full">
             <LoadedChat slug={slug} profile={undefined} source="link" onClose={close} owner />
           </div>
         )}

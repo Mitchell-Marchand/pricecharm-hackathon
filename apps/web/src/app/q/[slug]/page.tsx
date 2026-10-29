@@ -21,13 +21,16 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-/** The quote link an owner shares: their quote chat, full screen on a phone. */
+/**
+ * The quote link an owner shares: their quote chat, full screen on a phone. While the keyboard is
+ * up it fits the part of the screen above it (see useVisualViewport).
+ */
 export default async function QuoteLinkPage({ params }: Props) {
   const { slug } = await params;
   const business = await publicBusiness(slug);
   if (business === null) notFound();
   return (
-    <div className="flex h-dvh flex-col sm:items-center sm:justify-center sm:gap-4 sm:py-6">
+    <div className="fixed inset-x-0 top-[var(--vv-top,0px)] flex h-[var(--vv-height,100dvh)] flex-col sm:items-center sm:justify-center sm:gap-4 sm:py-6">
       <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-surface sm:max-h-[820px] sm:max-w-[460px] sm:rounded-lg sm:border sm:border-line sm:shadow-2">
         <LoadedChat slug={slug} profile={business} source="link" />
       </main>

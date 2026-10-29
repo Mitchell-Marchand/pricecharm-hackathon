@@ -130,7 +130,12 @@ export function QuoteForm({
           <tbody>
             {quote.lines.map((line) => (
               <tr key={line.id} className="qf-rule">
-                <td className={cx('py-2.5 pr-3 align-top', compact ? 'pl-4' : 'pl-5 sm:pl-6')}>
+                <td
+                  className={cx(
+                    'py-2.5 pr-3 align-top wrap-anywhere',
+                    compact ? 'pl-4' : 'pl-5 sm:pl-6',
+                  )}
+                >
                   {line.label}
                 </td>
                 <td
@@ -162,23 +167,21 @@ export function QuoteForm({
           </tbody>
         </table>
 
-        <div className={cx('flex items-center justify-between gap-3 pt-4', pad)}>
+        {/* On a phone, a big total or a stamp drops to its own line, still on the right. */}
+        <div
+          className={cx('flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-4', pad)}
+        >
           <span className="t-label shrink-0 text-paper-muted">
             {range ? 'Price range' : 'Total'}
           </span>
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-3">
             {stamp && (
               <span className={cx('qf-stamp', `is-${stamp}`, animate && 'is-animated')}>
                 {STAMP_TEXT[stamp]}
               </span>
             )}
             {range ? (
-              <span
-                className={cx(
-                  'qf-total whitespace-nowrap',
-                  compact ? 'text-[22px]' : 'text-[30px]',
-                )}
-              >
+              <span className={cx('qf-total text-right', compact ? 'text-[22px]' : 'text-[30px]')}>
                 <span className="hl">
                   {money(low)}–{money(high)}
                 </span>
@@ -205,7 +208,7 @@ export function QuoteForm({
                     <p className="t-label text-[10px]! text-paper-muted">Included</p>
                     <ul className="mt-1.5 flex flex-col gap-1 text-sm">
                       {quote.included.map((item) => (
-                        <li key={item} className="flex gap-2">
+                        <li key={item} className="flex gap-2 wrap-anywhere">
                           <Check
                             className="mt-0.5 size-4 shrink-0 text-[var(--stamp-green)]"
                             aria-hidden
@@ -221,7 +224,7 @@ export function QuoteForm({
                     <p className="t-label text-[10px]! text-paper-muted">Not included</p>
                     <ul className="mt-1.5 flex flex-col gap-1 text-sm">
                       {quote.excluded.map((item) => (
-                        <li key={item} className="flex gap-2">
+                        <li key={item} className="flex gap-2 wrap-anywhere">
                           <X className="mt-0.5 size-4 shrink-0 text-paper-muted" aria-hidden />
                           {item}
                         </li>
@@ -234,8 +237,11 @@ export function QuoteForm({
           </>
         )}
 
-        {footnote && <p className={cx('mt-5 text-[13px] text-paper-muted', pad)}>{footnote}</p>}
-        {actions && <div className={cx('mt-5 flex flex-wrap gap-2', pad)}>{actions}</div>}
+        {footnote && (
+          <p className={cx('mt-5 text-[13px] text-paper-muted wrap-anywhere', pad)}>{footnote}</p>
+        )}
+        {/* Buttons fill each row, so on a phone they stack full width instead of ragged. */}
+        {actions && <div className={cx('mt-5 flex flex-wrap gap-2 *:grow', pad)}>{actions}</div>}
         <div className={compact ? 'h-5' : 'h-6'} />
       </article>
     </div>
@@ -262,7 +268,7 @@ export function PaperButton({
     <Element
       {...(sample ? {} : { type: 'button' as const, onClick, disabled })}
       className={cx(
-        'inline-flex h-11 items-center justify-center gap-2 rounded-sm px-4 text-[15px] font-semibold transition-[filter,background-color] disabled:opacity-50 [&_svg]:size-4',
+        'inline-flex min-h-11 items-center justify-center gap-2 rounded-sm px-4 py-2 text-center text-[15px] font-semibold transition-[filter,background-color] disabled:opacity-50 [&_svg]:size-4',
         primary
           ? 'bg-[var(--canary)] text-[var(--paper-ink)] shadow-[inset_0_-2px_0_rgb(16_22_51/0.18)] hover:brightness-[1.03]'
           : 'border border-[var(--paper-rule)] bg-[var(--paper)] text-[var(--paper-ink)] hover:bg-[var(--paper-hover)]',

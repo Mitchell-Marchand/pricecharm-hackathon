@@ -37,6 +37,7 @@ import {
 import { useHumanCheck } from '@/lib/human-check';
 import { quoteFootnote } from '@/lib/quote';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
+import { useVisualViewport } from '@/lib/use-visual-viewport';
 import { cx, readPhoto } from '@/lib/util';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -105,6 +106,7 @@ export function QuoteChat({
   }, [slug]);
 
   const { toBottom: stickToBottom, showTop } = useStickToBottom(scroller);
+  useVisualViewport();
   const card = useRef<HTMLDivElement>(null);
   const shownQuote = useRef<string | null>(null);
 
@@ -321,7 +323,7 @@ export function QuoteChat({
 
       <div
         ref={scroller}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4"
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4"
         aria-live="polite"
       >
         <div className="flex flex-col gap-3">
@@ -441,7 +443,9 @@ export function QuoteChat({
 
       <footer
         className="flex flex-col gap-2 border-t border-line bg-surface px-3 py-3"
-        style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))' }}
+        style={{
+          paddingBottom: 'max(12px, var(--safe-bottom, env(safe-area-inset-bottom, 0px)))',
+        }}
       >
         {error && (
           <p className="text-sm text-stop" role="alert">
@@ -605,6 +609,8 @@ export function QuoteChat({
             <button
               type="submit"
               disabled={busy || !draft.trim()}
+              // Keeps the typing box focused, so the keyboard stays up between messages.
+              onMouseDown={(event) => event.preventDefault()}
               aria-label="Send"
               className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-ink text-on-ink hover:opacity-90 disabled:opacity-30"
             >

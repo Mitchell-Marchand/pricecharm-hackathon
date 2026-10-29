@@ -77,6 +77,33 @@
     panel.appendChild(fallback);
   }
 
+  // Phones slide the whole page up under the keyboard instead of shrinking it, which pushes the
+  // chat's header off the top. While the keyboard is up, the full-screen panel fits what's still
+  // in view, so the chat's typing box sits just above the keyboard. The keyboard is up when the
+  // view is well short of the tallest it's been at this width; a toolbar sliding away is far less.
+  var view = window.visualViewport;
+  var viewWidth = 0;
+  var tallest = 0;
+  function fit() {
+    if (!view || Math.abs(view.scale - 1) > 0.01) return;
+    if (view.width !== viewWidth) {
+      viewWidth = view.width;
+      tallest = 0;
+    }
+    tallest = Math.max(tallest, view.height);
+    var fitting =
+      tallest - view.height >= 150 &&
+      panel.className.indexOf('open') > -1 &&
+      window.innerWidth <= 520;
+    panel.style.top = fitting ? view.offsetTop + 'px' : '';
+    panel.style.height = fitting ? view.height + 'px' : '';
+  }
+  if (view) {
+    view.addEventListener('resize', fit);
+    view.addEventListener('scroll', fit);
+    fit();
+  }
+
   function open(from) {
     opener = from || null;
     if (!frame) {
@@ -88,6 +115,7 @@
       setTimeout(showFallback, 6000);
     }
     panel.className = panelClass + ' open';
+    fit();
     if (launch) launch.setAttribute('aria-expanded', 'true');
     setTimeout(function () {
       frame.focus();
@@ -95,6 +123,7 @@
   }
   function close() {
     panel.className = panelClass;
+    fit();
     if (launch) launch.setAttribute('aria-expanded', 'false');
     if (opener) opener.focus();
   }
