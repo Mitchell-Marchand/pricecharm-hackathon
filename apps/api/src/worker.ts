@@ -246,7 +246,9 @@ export async function startWorker(): Promise<void> {
   await closeDatabase();
   await flushErrorReports();
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// PM2 runs scripts through its own loader, so argv[1] is PM2's file; pm_exec_path names this one.
+const entry = process.env.pm_exec_path || process.argv[1];
+if (entry && path.resolve(entry) === fileURLToPath(import.meta.url)) {
   startErrorReporting('worker');
   startWorker().catch(async (error: unknown) => {
     console.error(

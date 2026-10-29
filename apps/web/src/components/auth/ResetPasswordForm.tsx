@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button, ButtonLink, Field } from '@/components/ui';
 import { resetPassword, tokenFromLink } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
@@ -18,7 +18,14 @@ export function ResetPasswordForm() {
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
 
-  useEffect(() => setToken(tokenFromLink()), []);
+  const started = useRef(false);
+
+  // Dev runs effects twice, and the first run takes the token out of the address.
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    setToken(tokenFromLink());
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
