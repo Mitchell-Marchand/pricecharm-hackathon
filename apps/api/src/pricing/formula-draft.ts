@@ -1,11 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AiImage } from '../ai/index.js';
-import {
-  learnFormula,
-  readJobParts,
-  type FormulaExample,
-  type LearnedFormula,
-} from '../ai/formula.js';
+import { learnFormula, readJobParts, type FormulaExample } from '../ai/formula.js';
 import type { PricingHistory } from '../ai/quote-engine.js';
 import { quoteTotal, type DraftedQuote } from '../practice/types.js';
 import { draftForBusiness } from './draft.js';
@@ -15,6 +10,7 @@ import {
   ownerRounding,
   priceJob,
   refineFormula,
+  type JobParts,
   type PriceFormula,
 } from './formula.js';
 import { loadPricingData, type HistoryOptions } from './history.js';
@@ -79,11 +75,28 @@ export function formulaExamples(history: PricingHistory): FormulaExample[] {
   return examples.map((example, index) => ({ ...example, index }));
 }
 
-export type Learned = LearnedFormula & {
+export type Learned = {
+  formula: PriceFormula;
+  /** Each example as the AI reads it at quote time, by its index, or null if it couldn't. */
+  examples: (JobParts | null)[];
   /** How far the formula's price is from each example's total, in percent. */
   gaps: (number | null)[];
   fits: boolean;
 };
+
+/** Runs tasks a few at a time, in order. */
+async function inTurns<T, R>(items: T[], at: number, task: (item: T) => Promise<R>) {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(at, items.length) }, worker));
+  return results;
+}
 
 const learning = new Map<string, Promise<Learned | null>>();
 let failedHoldMs: number | null = 10 * 60_000;
@@ -134,36 +147,48 @@ export function learnedFormula(
           return attempt(tries - 1);
         }
       };
-      pending = attempt(3).then((answer) => {
+      pending = attempt(3).then(async (answer) => {
         // Rounding is counted from what they wrote: every line, and every total with no discount.
         const learned = {
           ...answer,
-          formula: {
-            ...answer.formula,
-            roundToCents: ownerRounding(
-              examples.flatMap((example) =>
-                example.lines
-                  ? example.lines.map((line) => line.amountCents)
-                  : example.discount
-                    ? []
-                    : [example.totalCents],
-              ),
+          roundToCents: ownerRounding(
+            examples.flatMap((example) =>
+              example.lines
+                ? example.lines.map((line) => line.amountCents)
+                : example.discount
+                  ? []
+                  : [example.totalCents],
             ),
-          },
+          ),
         };
-        const parts = new Map(learned.examples.map((example) => [example.index, example]));
-        const checked = examples.flatMap((example) => {
-          const found = parts.get(example.index);
+        // Each example is read the way a new request will be, so the formula is checked and tuned
+        // on what it will actually be given, not on the AI's own account of its examples.
+        const read = (example: FormulaExample) =>
+          readJobParts({
+            formula: learned,
+            request: {
+              serviceName: example.service,
+              conversation: [{ from: 'customer', text: example.request }],
+            },
+            model,
+          }).then(({ uncovered: _uncovered, ...parts }) => parts);
+        const parts = await inTurns(examples, 3, (example) =>
+          read(example)
+            .catch(() => read(example))
+            .catch(() => null),
+        );
+        const checked = examples.flatMap((example, index) => {
+          const found = parts[index];
           return found ? [{ parts: found, totalCents: example.totalCents }] : [];
         });
-        const formula = refineFormula(learned.formula, checked);
-        const gaps = examples.map((example) => {
-          const found = parts.get(example.index);
+        const formula = refineFormula(learned, checked);
+        const gaps = examples.map((example, index) => {
+          const found = parts[index];
           return found
             ? fitGaps(formula, [{ parts: found, totalCents: example.totalCents }])[0]
             : null;
         });
-        return { ...learned, formula, gaps, fits: formulaFits(gaps) };
+        return { formula, examples: parts, gaps, fits: formulaFits(gaps) };
       });
       // After a failure, quotes go the usual way for ten minutes before it's tried again, so a
       // run of quotes doesn't retry the same long call one after another.

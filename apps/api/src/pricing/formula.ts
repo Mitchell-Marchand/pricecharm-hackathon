@@ -16,9 +16,17 @@ export type FormulaService = {
   rateCents: number | null;
   /** The main work's price at sizes the owner charged, when it doesn't scale evenly with size. */
   points: { size: number; cents: number }[];
+  /**
+   * How price follows size between those sizes: a straight line from one to the next, a set
+   * price for each size band, or one straight line through all of them, for an owner who prices
+   * by eye. Worked out from the points (priceShape); a line when it hasn't been.
+   */
+  shape?: PriceShape;
   /** No job of this service for less, when the owner has a minimum for it. */
   minimumCents: number | null;
 };
+
+export type PriceShape = 'line' | 'bands' | 'fit';
 
 export type FormulaSurcharge = {
   name: string;
@@ -67,52 +75,84 @@ export type FormulaQuote = {
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/**
- * Whether the owner prices by size bands: some neighbouring sizes they priced came to the same
- * price, like 23, 27 and 31 windows all at $290.
- */
-export function pricesByBands(points: { size: number; cents: number }[]) {
-  return points.some(
-    (point, index) =>
-      index > 0 &&
-      point.size !== points[index - 1].size &&
-      Math.abs(point.cents - points[index - 1].cents) <= point.cents * 0.01,
-  );
+type Point = { size: number; cents: number };
+
+const sortedPoints = (points: Point[]) =>
+  points.filter((point) => point.size > 0 && point.cents > 0).sort((a, b) => a.size - b.size);
+
+/** The straight line closest to all the points (least squares). */
+function straightLine(points: Point[]) {
+  const meanSize = points.reduce((sum, point) => sum + point.size, 0) / points.length;
+  const meanCents = points.reduce((sum, point) => sum + point.cents, 0) / points.length;
+  const spread = points.reduce((sum, point) => sum + (point.size - meanSize) ** 2, 0);
+  const slope = spread
+    ? points.reduce((sum, point) => sum + (point.size - meanSize) * (point.cents - meanCents), 0) /
+      spread
+    : 0;
+  return { slope, intercept: meanCents - slope * meanSize };
 }
 
 /**
  * The main work at a size, from the prices the owner charged at the sizes they've priced:
  * - between two of them, on a straight line, or at the nearer one's price when they price by
- *   size bands;
+ *   size bands, or on the one line closest to all of them when they price by eye;
  * - past the biggest, carrying on at their rate across everything they've priced;
  * - below the smallest, scaled down from the smallest (a minimum still applies on top).
  * With no prices at sizes, it's the rate.
  */
 export function mainWork(service: FormulaService, size: number): number | null {
-  const points = [...service.points]
-    .filter((point) => point.size > 0 && point.cents > 0)
-    .sort((a, b) => a.size - b.size);
+  const points = sortedPoints(service.points);
   const first = points[0],
     last = points.at(-1);
+  if (first && last && points.length >= 2 && service.shape === 'fit') {
+    const { slope, intercept } = straightLine(points);
+    const at = (value: number) => intercept + slope * value;
+    if (slope > 0 && at(first.size) > 0)
+      return size >= first.size ? at(size) : (at(first.size) * size) / first.size;
+  }
   if (first && last && points.length >= 2 && size >= first.size && size <= last.size) {
     const upper = points.findIndex((point) => point.size >= size);
     const high = points[upper],
       low = points[Math.max(0, upper - 1)];
     if (high.size === low.size) return high.cents;
-    if (pricesByBands(points)) return size - low.size <= high.size - size ? low.cents : high.cents;
+    if (service.shape === 'bands')
+      return size - low.size <= high.size - size ? low.cents : high.cents;
     return low.cents + ((high.cents - low.cents) * (size - low.size)) / (high.size - low.size);
   }
   if (first && last && points.length >= 2 && size > last.size) {
     // The rate across everything they've priced, not the last step: two close sizes, each
-    // rounded, can make one step look far steeper than the owner's prices really are.
-    const slope = (last.cents - first.cents) / (last.size - first.size);
-    const rate = slope > 0 ? slope : (service.rateCents ?? last.cents / last.size);
+    // rounded, can make one step look far steeper than the owner's prices really are. Kept
+    // near their price per unit at the biggest size, so a few odd points can't run away.
+    const perUnit = last.cents / last.size;
+    const { slope } = straightLine(points);
+    const rate = slope >= perUnit * 0.4 && slope <= perUnit * 1.5 ? slope : perUnit;
     return last.cents + rate * (size - last.size);
   }
   if (first && size < first.size) return (first.cents * size) / first.size;
   if (service.rateCents) return service.rateCents * size;
   if (first) return (first.cents * size) / first.size;
   return null;
+}
+
+/**
+ * How the owner's prices follow size: each reading predicts every price they charged between
+ * two others from the rest, and the one that comes closest is kept. On a tie, the plainer one.
+ * Rounding can make two sizes come to the same price without the owner pricing by bands, and an
+ * owner who prices by eye is better followed by one line than from each price to the next.
+ */
+export function priceShape(points: Point[]): PriceShape {
+  const sorted = sortedPoints(points);
+  if (sorted.length < 3) return 'line';
+  const shapes: PriceShape[] = ['line', 'fit', 'bands'];
+  const misses = shapes.map((shape) =>
+    sorted.slice(1, -1).reduce((sum, point, index) => {
+      const others = sorted.filter((_, at) => at !== index + 1);
+      const service = { name: '', unit: '', rateCents: null, minimumCents: null, shape };
+      const predicted = mainWork({ ...service, points: others }, point.size) ?? 0;
+      return sum + Math.abs(predicted - point.cents) / point.cents;
+    }, 0),
+  );
+  return shapes[misses.indexOf(Math.min(...misses))];
 }
 
 const rounded = (cents: number, to: number) =>
@@ -148,10 +188,12 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
       ];
   for (const other of parts.otherServices) {
     const rule = formula.services.find((item) => same(item.name, other.name));
-    const amount = rule && other.size ? mainWork(rule, other.size) : null;
-    if (!rule || !other.size || amount === null) return null;
+    // "The inside too" with no size of its own is the same windows, or the same gutters.
+    const otherSize = other.size ?? (rule && same(rule.unit, service.unit) ? parts.size : null);
+    const amount = rule && otherSize ? mainWork(rule, otherSize) : null;
+    if (!rule || !otherSize || amount === null) return null;
     lines.push({
-      label: `${rule.name}, ${formatQuantity(other.size, rule.unit)}`,
+      label: `${rule.name}, ${formatQuantity(otherSize, rule.unit)}`,
       amountCents: amount,
     });
   }
@@ -173,11 +215,13 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   // Nothing goes on a quote for $0, but the main work always has its line.
   for (let index = lines.length - 1; index > 0; index--)
     if (lines[index].amountCents <= 0) lines.splice(index, 1);
-  // A minimum the owner showed on one service applies to the others unless they set their own.
+  // A minimum the owner showed on one service applies to the others unless they set their own,
+  // but not the smallest band's price on a service priced by bands: that's just its price.
   const minimum =
     service.minimumCents ??
     formula.minimumCents ??
     (formula.services
+      .filter((item) => item.shape !== 'bands')
       .map((item) => item.minimumCents)
       .filter((cents): cents is number => Boolean(cents))
       .sort((a, b) => a - b)[0] ||
@@ -220,9 +264,9 @@ export function fitGaps(
 }
 
 /**
- * Settles what the AI can't always tell from a few rounded prices: whether a surcharge is a
- * percent of the main work or a flat amount, how big it is, and whether there's one at all, and
- * what each add-on costs and how it's charged. Each reading is tried against the owner's own
+ * Settles what the AI can't always tell from a few rounded prices: how price follows size,
+ * whether a surcharge is a percent of the main work or a flat amount, how big it is, and whether
+ * there's one at all, and what each add-on costs and how it's charged. Each reading is tried against the owner's own
  * quotes, and the one that gives them back best is kept. On a tie, the simpler reading wins.
  */
 export function refineFormula(
@@ -231,7 +275,13 @@ export function refineFormula(
 ): PriceFormula {
   const miss = (candidate: PriceFormula) =>
     fitGaps(candidate, examples).reduce<number>((sum, gap) => sum + (gap ?? 100), 0);
-  let best = formula;
+  let best: PriceFormula = {
+    ...formula,
+    services: formula.services.map((service) => ({
+      ...service,
+      shape: priceShape(service.points),
+    })),
+  };
   for (const [index, surcharge] of formula.surcharges.entries()) {
     const mains = examples
       .filter((example) => example.parts.surcharges.some((name) => same(name, surcharge.name)))

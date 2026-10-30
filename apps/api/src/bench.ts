@@ -546,6 +546,7 @@ async function main() {
         fits: result?.fits ?? false,
         gaps: result?.gaps ?? [],
         formula: result?.formula ?? null,
+        examples: result?.examples ?? [],
       });
     }
     out.push(

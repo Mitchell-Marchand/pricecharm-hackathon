@@ -98,16 +98,20 @@ test('rounding is what every amount the owner wrote shares', async () => {
 });
 
 test('an owner who prices by size bands is priced at the nearer size they charged', async () => {
-  const { mainWork } = await import('../src/pricing/formula.js');
+  const { mainWork, priceShape } = await import('../src/pricing/formula.js');
+  const points = [
+    { size: 23, cents: 22000 },
+    { size: 27, cents: 22000 },
+    { size: 40, cents: 35000 },
+    { size: 41, cents: 35000 },
+  ];
+  assert.equal(priceShape(points), 'bands');
   const bands = {
     name: 'Interior windows',
     unit: 'windows',
     rateCents: null,
-    points: [
-      { size: 23, cents: 22000 },
-      { size: 27, cents: 22000 },
-      { size: 40, cents: 35000 },
-    ],
+    points,
+    shape: 'bands' as const,
     minimumCents: null,
   };
   assert.equal(mainWork(bands, 31), 22000, 'Nearer 27 than 40');
@@ -179,4 +183,58 @@ test('an add-on’s price is corrected to what the owner’s quotes say it cost'
     { parts: job(30), totalCents: 30000 },
   ]);
   assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
+});
+
+test('two sizes that round to the same price aren’t taken for size bands', async () => {
+  const { priceShape } = await import('../src/pricing/formula.js');
+  // $2.11 a foot, to the dollar: 190 and 192 feet come within a dollar of each other.
+  const points = [80, 124, 184, 190, 192, 225, 267].map((size) => ({
+    size,
+    cents: Math.round((size * 211) / 100) * 100,
+  }));
+  assert.notEqual(priceShape(points), 'bands');
+});
+
+test('an owner who prices by eye is followed by one line through all their prices', async () => {
+  const { mainWork, priceShape } = await import('../src/pricing/formula.js');
+  const strays = [0.06, -0.05, 0.04, -0.06, 0.05, -0.04];
+  const points = [10, 16, 22, 28, 34, 40].map((size, index) => ({
+    size,
+    cents: Math.round(size * 800 * (1 + strays[index])),
+  }));
+  assert.equal(priceShape(points), 'fit');
+  const service = { name: 'Windows', unit: 'windows', rateCents: null, points, minimumCents: null };
+  const priced = mainWork({ ...service, shape: 'fit' }, 25) ?? 0;
+  assert.ok(Math.abs(priced - 20000) / 20000 < 0.03, `${priced} is near $8 a window`);
+});
+
+test('past the biggest size, a few odd prices can’t send the rate running away', async () => {
+  const { mainWork } = await import('../src/pricing/formula.js');
+  const service = {
+    name: 'Patios',
+    unit: 'sq ft',
+    rateCents: null,
+    points: [
+      { size: 410, cents: 11000 },
+      { size: 430, cents: 15200 },
+    ],
+    minimumCents: null,
+  };
+  // $2.10 a foot between those two; their price per foot at the biggest is about 35 cents.
+  assert.equal(Math.round(mainWork(service, 680) ?? 0), Math.round(15200 + (250 * 15200) / 430));
+});
+
+test('“the inside too” with no size of its own is priced at the same size', async () => {
+  const { priceJob } = await import('../src/pricing/formula.js');
+  const quote = priceJob(formula, {
+    service: 'Exterior windows',
+    size: 20,
+    surcharges: [],
+    addOns: [],
+    otherServices: [{ name: 'Interior windows', size: null }],
+  });
+  assert.deepEqual(
+    quote?.lines.map((line) => line.amountCents),
+    [16000, 12000],
+  );
 });
