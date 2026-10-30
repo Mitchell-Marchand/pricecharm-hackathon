@@ -49,6 +49,8 @@ export interface PracticeState {
   current: number;
   finished: number;
   results: PracticeResult[];
+  /** How close a guess has to come to count, in percent. Missing from older APIs. */
+  closePercent?: number;
 }
 
 export type QuoteDraft = {

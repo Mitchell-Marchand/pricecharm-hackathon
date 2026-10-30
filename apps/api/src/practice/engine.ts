@@ -8,6 +8,7 @@ import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
+import { AGREE_PERCENT, closePercentFor } from '../pricing/accuracy.js';
 import { draftForBusiness } from '../pricing/draft.js';
 import { refreshFormula } from '../pricing/formula-draft.js';
 import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
@@ -374,8 +375,8 @@ export type PracticeResult = {
   aiFlagged: boolean;
 };
 
-/** How close the AI's private guesses were to the owner's real answers. */
-export function practiceResults(views: RunView[]): PracticeResult[] {
+/** How close the AI's private guesses were to the owner's real answers, within the owner's percent. */
+export function practiceResults(views: RunView[], closePercent = AGREE_PERCENT): PracticeResult[] {
   return views
     .filter((run) => run.finished)
     .map((run) => {
@@ -400,7 +401,7 @@ export function practiceResults(views: RunView[]): PracticeResult[] {
         guessCents,
         ownerCents,
         gap,
-        agree: gap !== null && gap <= 15,
+        agree: gap !== null && gap <= closePercent,
         siteVisit: false,
         aiFlagged,
       };
@@ -422,13 +423,15 @@ export async function practiceState(businessId: string) {
     ),
   );
   const firstOpen = views.findIndex((run) => !run.finished);
-  const results = practiceResults(views);
+  const closePercent = await closePercentFor(businessId);
+  const results = practiceResults(views, closePercent);
   return {
     count: PRACTICE_COUNT,
     runs: views,
     current: firstOpen === -1 ? Math.max(0, views.length - 1) : firstOpen,
     finished: views.filter((run) => run.finished).length,
     results,
+    closePercent,
   };
 }
 

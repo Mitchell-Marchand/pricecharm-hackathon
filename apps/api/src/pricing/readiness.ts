@@ -1,7 +1,7 @@
 import { rows } from '../db.js';
 import { iso, json } from '../models.js';
 import { quoteTotal, type PracticeScenario, type Quote, type Shadow } from '../practice/types.js';
-import { AGREE_PERCENT, compareDraft, liveRecord } from './accuracy.js';
+import { AGREE_PERCENT, closePercentFor, compareDraft, liveRecord } from './accuracy.js';
 import { businessContext, loadPricingData } from './history.js';
 import { fitRates, sizeRange, SOLID_POINTS, type Rate } from './rates.js';
 import { formatNumber, formatQuantity, roundSize } from './units.js';
@@ -58,12 +58,14 @@ function covers(rate: Rate) {
 
 /**
  * Each service is ready once it has enough sized prices to hold a draft to a rate, and enough of
- * its latest drafts came within 15% of the owner. A run of misses takes it back to the owner.
+ * its latest drafts came as close to the owner's price as they asked for (15% unless they set
+ * another). A run of misses takes it back to learning.
  */
 export function serviceReadiness(
   services: string[],
   rates: Rate[],
   comparisons: Comparison[],
+  closePercent = AGREE_PERCENT,
 ): ServiceReadiness[] {
   const newestFirst = [...comparisons].sort((a, b) => b.at.localeCompare(a.at));
   return services.map((service) => {
@@ -86,7 +88,7 @@ export function serviceReadiness(
     else if (!ready) {
       const off =
         recent.length - matched >= 2 ? `Its recent ${service} prices were off from yours. ` : '';
-      reason = `${off}It needs to come within ${AGREE_PERCENT}% of your price on ${plural(toGo, `more ${service} job`)}.`;
+      reason = `${off}It needs to come within ${closePercent}% of your price on ${plural(toGo, `more ${service} job`)}.`;
     }
     const progress = ready
       ? 1
@@ -178,7 +180,7 @@ export async function serviceWorkload(businessId: string): Promise<Record<string
  * Every draft the owner priced next to it. A practice customer the owner wanted to see first
  * says nothing about price, unless the AI would have priced it anyway.
  */
-async function comparisons(businessId: string): Promise<Comparison[]> {
+async function comparisons(businessId: string, closePercent: number): Promise<Comparison[]> {
   const runs = await rows(
     "SELECT scenario_json,outcome,quote_json,shadow_json,finished_at FROM practice_runs WHERE business_id=? AND status='finished' AND shadow_json IS NOT NULL",
     [businessId],
@@ -193,9 +195,9 @@ async function comparisons(businessId: string): Promise<Comparison[]> {
         ? [{ service, agree: false, at }]
         : [];
     if (!shadow || !quote) return [];
-    return [{ service, agree: compareDraft(shadow, quoteTotal(quote)).agree, at }];
+    return [{ service, agree: compareDraft(shadow, quoteTotal(quote), closePercent).agree, at }];
   });
-  const live = (await liveRecord(businessId)).map((item) => ({
+  const live = (await liveRecord(businessId, closePercent)).map((item) => ({
     service: item.service,
     agree: item.agree,
     at: item.sentAt,
@@ -208,16 +210,19 @@ export async function businessReadiness(
   businessId: string,
   rates?: Rate[],
 ): Promise<ServiceReadiness[]> {
+  const close = await closePercentFor(businessId);
   if (rates)
     return serviceReadiness(
       (await businessContext(businessId)).services,
       rates,
-      await comparisons(businessId),
+      await comparisons(businessId, close),
+      close,
     );
   const data = await loadPricingData(businessId);
   return serviceReadiness(
     data.history.business.services,
     fitRates(data.points),
-    await comparisons(businessId),
+    await comparisons(businessId, close),
+    close,
   );
 }

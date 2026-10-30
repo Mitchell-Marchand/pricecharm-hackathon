@@ -92,7 +92,9 @@ export default function TrainPage() {
         />
       )}
 
-      {profile && profile.live.reviewed > 0 && <LiveRecord live={profile.live} />}
+      {profile && profile.live.reviewed > 0 && (
+        <LiveRecord live={profile.live} closePercent={profile.settings?.closePercent ?? 15} />
+      )}
 
       <section className="mt-14 border-t border-line pt-10" aria-labelledby="practice-title">
         <h2 id="practice-title" className="t-h2">
@@ -162,7 +164,7 @@ function knowsSummary({ questions, rates, notes }: Knows) {
 }
 
 /** How close its drafts came to what the owner sent real customers. */
-function LiveRecord({ live }: { live: Profile['live'] }) {
+function LiveRecord({ live, closePercent }: { live: Profile['live']; closePercent: number }) {
   return (
     <section className="mt-14 border-t border-line pt-10" aria-labelledby="record-title">
       <h2 id="record-title" className="t-h2">
@@ -170,8 +172,8 @@ function LiveRecord({ live }: { live: Profile['live'] }) {
       </h2>
       <p className="mt-2 max-w-xl text-ink-2">
         Of the last {live.considered} {live.considered === 1 ? 'quote' : 'quotes'} you checked
-        before sending, its draft was within 15% of what you sent on {live.agreed}. Every change you
-        make teaches it.
+        before sending, its draft was within {closePercent}% of what you sent on {live.agreed}.
+        Every change you make teaches it.
       </p>
       <ul className="mt-5 flex max-w-xl flex-col gap-2 text-[15px]">
         {live.recent.map((item) => (

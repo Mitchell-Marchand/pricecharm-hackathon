@@ -135,8 +135,8 @@ export default function PracticeStep() {
                       {run?.focus ? `Practice a ${run.focus} job` : 'One more practice customer'}
                     </h1>
                     <p className="mt-3 text-lg text-ink-2">
-                      Answer it like a real lead. If your price comes within 15% of its guess, your
-                      Charm&apos;s score goes up.
+                      Answer it like a real lead. If your price comes within{' '}
+                      {practice?.closePercent ?? 15}% of its guess, your Charm&apos;s score goes up.
                     </p>
                   </>
                 )}

@@ -21,7 +21,7 @@ export async function pricingProfile(businessId: string) {
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
   const settings = settingsFromRow(business ?? ({} as Row));
   const practice = await practiceState(businessId);
-  const record = await liveRecord(businessId);
+  const record = await liveRecord(businessId, settings.closePercent);
   const recent = record.slice(0, LIVE_WINDOW);
   const data = await loadPricingData(businessId);
   const services = await businessReadiness(businessId, fitRates(data.points));

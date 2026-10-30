@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { mutate, rows } from './db.js';
 import { ok } from './http.js';
 import type { Row } from './models.js';
+import { AGREE_PERCENT } from './pricing/accuracy.js';
 import { agentReadiness, businessReadiness, serviceWorkload } from './pricing/readiness.js';
 import { LEARNING_STYLES, TRAINED_PERCENT, type LearningStyle } from './pricing/style.js';
 import { requireWorkspace, workspace } from './workspace.js';
@@ -18,9 +19,12 @@ export type CharmSettings = {
   limitCents: number | null;
   trainedPercent: number;
   learningStyle: LearningStyle;
+  /** A draft this close to the owner's price, in percent, counts as a match while it learns. */
+  closePercent: number;
 };
 
-const SETTINGS_COLUMNS = 'auto_send,auto_send_limit_cents,trained_percent,learning_style';
+const SETTINGS_COLUMNS =
+  'auto_send,auto_send_limit_cents,trained_percent,learning_style,close_percent';
 
 /** The settings on a businesses row. Rows from before they existed get the defaults. */
 export function settingsFromRow(row: Row): CharmSettings {
@@ -36,6 +40,10 @@ export function settingsFromRow(row: Row): CharmSettings {
     learningStyle: (LEARNING_STYLES as readonly string[]).includes(style)
       ? (style as LearningStyle)
       : 'range',
+    closePercent:
+      row.close_percent === undefined || row.close_percent === null
+        ? AGREE_PERCENT
+        : Number(row.close_percent),
   };
 }
 
@@ -54,6 +62,7 @@ export const charmSettingsInput = z
     autoSendLimitCents: z.number().int().min(5000).max(10_000_000).nullable(),
     trainedPercent: z.number().int().min(10).max(100),
     learningStyle: z.enum(LEARNING_STYLES),
+    closePercent: z.number().int().min(5).max(30),
   })
   .partial()
   .strict();
@@ -68,6 +77,7 @@ export async function saveCharmSettings(
   if (limit !== undefined) changes.push(['auto_send_limit_cents', limit]);
   if (input.trainedPercent !== undefined) changes.push(['trained_percent', input.trainedPercent]);
   if (input.learningStyle !== undefined) changes.push(['learning_style', input.learningStyle]);
+  if (input.closePercent !== undefined) changes.push(['close_percent', input.closePercent]);
   if (changes.length)
     await mutate(
       `UPDATE businesses SET ${changes.map(([column]) => `${column}=?`).join(',')} WHERE id=?`,
@@ -104,6 +114,7 @@ charmRouter.patch('/onboarding/charm', requireWorkspace, async (req, res) => {
     limit_cents: limit,
     trained_percent: input.trainedPercent,
     learning_style: input.learningStyle,
+    close_percent: input.closePercent,
   });
   res.json(ok(await charmView(businessId)));
 });

@@ -66,6 +66,8 @@ export interface CharmSettings {
   /** A service gets firm prices from this score on. */
   trainedPercent: number;
   learningStyle: LearningStyle;
+  /** A draft this close to the owner's price, in percent, counts as a match while it learns. */
+  closePercent: number;
 }
 
 /** Settings from an API older than this page: what it did before there were any. */
@@ -74,6 +76,7 @@ export const OLD_SETTINGS: CharmSettings = {
   limitCents: null,
   trainedPercent: 100,
   learningStyle: 'firm',
+  closePercent: 15,
 };
 
 /** The Charm card's data. */
