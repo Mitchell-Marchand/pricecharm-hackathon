@@ -262,7 +262,7 @@ export async function sendWaitingQuote(
     );
   } else if (Number(quote.total_cents) <= 0)
     throw new ApiError(422, 'QUOTE_EMPTY', 'Add a price before sending this quote.');
-  const closed = await whatsAppClosed(String(quote.chat_id), connection);
+  const closed = await whatsAppClosed(String(quote.chat_id), connection, true);
   if (closed) throw new ApiError(409, 'WHATSAPP_CLOSED', closed);
   await markSent(connection, {
     businessId: String(quote.business_id),

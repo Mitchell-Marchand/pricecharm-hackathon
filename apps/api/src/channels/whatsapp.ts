@@ -240,7 +240,9 @@ export type Outbound =
   | { kind: 'text'; text: string }
   | { kind: 'buttons'; text: string; footer?: string; buttons: Choice[] }
   | { kind: 'list'; text: string; button: string; rows: Choice[] }
-  | { kind: 'image'; mediaId: string; caption: string };
+  | { kind: 'image'; mediaId: string; caption: string }
+  /** A message template Meta approved, the only kind a business may send after 24 hours. */
+  | { kind: 'template'; name: string; language: string; parameters: string[] };
 
 /** The part of a send request that's the message itself. */
 export function messageBody(message: Outbound) {
@@ -290,6 +292,20 @@ export function messageBody(message: Outbound) {
       };
     case 'image':
       return { type: 'image', image: { id: message.mediaId, caption: message.caption } };
+    case 'template':
+      return {
+        type: 'template',
+        template: {
+          name: message.name,
+          language: { code: message.language },
+          components: [
+            {
+              type: 'body',
+              parameters: message.parameters.map((text) => ({ type: 'text', text })),
+            },
+          ],
+        },
+      };
   }
 }
 
@@ -389,6 +405,97 @@ export async function upload(line: Line, bytes: Buffer, mimeType: string): Promi
   form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), 'picture.jpg');
   const body = await call(line, `${line.phoneNumberId}/media`, { method: 'POST', body: form });
   return z.object({ id: z.string() }).parse(body).id;
+}
+
+/**
+ * A business that connects its own number through Meta's sign-up comes back with a one-time code.
+ * It's swapped here for the key the business gave PriceCharm to its WhatsApp account, which
+ * doesn't expire.
+ */
+export async function keyFromSignup(code: string): Promise<string> {
+  const query = new URLSearchParams({
+    client_id: String(process.env.META_APP_ID),
+    client_secret: String(process.env.META_APP_SECRET),
+    code,
+  });
+  let response: Response;
+  try {
+    response = await fetch(`${graph()}/oauth/access_token?${query}`, {
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new WhatsAppError('WhatsApp couldn’t be reached.', null, 0);
+  }
+  const body = (await response.json().catch(() => ({}))) as {
+    access_token?: string;
+    error?: { message?: string; code?: number };
+  };
+  if (!response.ok || !body.access_token)
+    throw new WhatsAppError(
+      body.error?.message || 'Meta didn’t accept the sign-up.',
+      body.error?.code ?? null,
+      response.status,
+    );
+  return body.access_token;
+}
+
+/** The number as customers see it, which also checks the key reaches it. */
+export async function numberDetails(line: Line) {
+  return z
+    .object({ display_phone_number: z.string(), verified_name: z.string().optional() })
+    .parse(await call(line, `${line.phoneNumberId}?fields=display_phone_number,verified_name`));
+}
+
+/** The WhatsApp account sends its customers' messages to our webhook, or stops. */
+export async function subscribeApp(token: string, wabaId: string, on = true): Promise<void> {
+  await call({ phoneNumberId: '', token }, `${wabaId}/subscribed_apps`, {
+    method: on ? 'POST' : 'DELETE',
+  });
+}
+
+/** Turns the number on for the Cloud API, with the PIN that guards it from being taken over. */
+export async function registerNumber(line: Line, pin: string): Promise<void> {
+  await call(line, `${line.phoneNumberId}/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messaging_product: 'whatsapp', pin }),
+  });
+}
+
+/**
+ * The template a quote goes out on after the 24 hours WhatsApp allows for replies, created in each
+ * business's WhatsApp account when it connects. Meta reviews it, usually within minutes.
+ */
+export const QUOTE_TEMPLATE = {
+  name: 'pricecharm_quote_ready',
+  language: 'en_US',
+  body: 'Hi {{1}}, your quote from {{2}} is ready: {{3}} Reply here with any questions.',
+  example: ['Sam', 'Moss & Stone Exterior Care', 'https://pricecharm.com/q/moss-and-stone'],
+} as const;
+
+/** Creates the quote template in a WhatsApp account. One that's already there is left alone. */
+export async function createQuoteTemplate(token: string, wabaId: string): Promise<void> {
+  try {
+    await call({ phoneNumberId: '', token }, `${wabaId}/message_templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: QUOTE_TEMPLATE.name,
+        language: QUOTE_TEMPLATE.language,
+        category: 'UTILITY',
+        components: [
+          {
+            type: 'BODY',
+            text: QUOTE_TEMPLATE.body,
+            example: { body_text: [QUOTE_TEMPLATE.example] },
+          },
+        ],
+      }),
+    });
+  } catch (error) {
+    // Meta answers 100 / 2388023 when a template by that name and language exists already.
+    if (!(error instanceof WhatsAppError) || !/already exists/i.test(error.message)) throw error;
+  }
 }
 
 /** Shortens a label to fit, at a word where it can. */

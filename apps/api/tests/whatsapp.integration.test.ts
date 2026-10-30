@@ -35,9 +35,44 @@ test(
       .toBuffer();
     const sent: Record<string, any>[] = [];
     const typing: string[] = [];
+    // The business's own number, once it connects it in Settings.
+    const ownSent: Record<string, any>[] = [];
+    const accountCalls: string[] = [];
+    const templates: Record<string, any>[] = [];
     const realFetch = globalThis.fetch.bind(globalThis);
     mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.startsWith('https://graph.facebook.com/') && url.includes('/oauth/access_token')) {
+        const query = new URL(url).searchParams;
+        assert.deepEqual(
+          [query.get('client_id'), query.get('client_secret'), query.get('code')],
+          ['10001', 'app-secret', 'signup-code-123'],
+        );
+        return Response.json({ access_token: 'business-token', token_type: 'bearer' });
+      }
+      if (url.startsWith('https://graph.facebook.com/') && /\/(22222|20000)\b/.test(url)) {
+        assert.equal(
+          (init?.headers as Record<string, string>).Authorization,
+          'Bearer business-token',
+          'The business’s own number sends with its own key',
+        );
+        const method = init?.method ?? 'GET';
+        if (url.endsWith('/22222/register'))
+          accountCalls.push(`register ${JSON.parse(String(init?.body)).pin.length}`);
+        else if (url.endsWith('/20000/subscribed_apps'))
+          accountCalls.push(`${method} subscribed_apps`);
+        else if (url.endsWith('/20000/message_templates'))
+          templates.push(JSON.parse(String(init?.body)));
+        else if (url.includes('/22222?fields='))
+          return Response.json({ display_phone_number: '+1 555-000-2222', verified_name: 'Moss' });
+        else if (url.endsWith('/22222/messages')) {
+          const body = JSON.parse(String(init?.body));
+          if (body.status === 'read') return Response.json({ success: true });
+          ownSent.push(body);
+          return Response.json({ messages: [{ id: `wamid.own-${ownSent.length}` }] });
+        }
+        return Response.json({ success: true });
+      }
       if (url.startsWith('https://graph.facebook.com/')) {
         assert.equal(
           (init?.headers as Record<string, string>).Authorization,
@@ -454,6 +489,94 @@ test(
       ),
       [],
     );
+
+    // The owner connects the business's own number in Settings, through Meta's sign-up.
+    process.env.META_APP_ID = '10001';
+    process.env.WHATSAPP_SIGNUP_CONFIG_ID = 'config-1';
+    await mutate('UPDATE businesses SET link_on=TRUE,auto_send=FALSE WHERE id=?', [businessId]);
+    const settings = (await owner.get('/api/v1/app/whatsapp').expect(200)).body.data;
+    assert.deepEqual(settings.signup, {
+      appId: '10001',
+      configId: 'config-1',
+      graphVersion: 'v26.0',
+    });
+    const connected = await owner
+      .post('/api/v1/app/whatsapp')
+      .set('Origin', origin)
+      .send({ code: 'signup-code-123', wabaId: '20000', phoneNumberId: '22222' });
+    assert.equal(connected.status, 200, JSON.stringify(connected.body));
+    assert.deepEqual(connected.body.data.connected, { number: '+1 555-000-2222' });
+    assert.deepEqual(accountCalls, ['register 6', 'POST subscribed_apps']);
+    assert.equal(templates[0]?.name, 'pricecharm_quote_ready');
+    assert.equal(templates[0]?.category, 'UTILITY');
+    const [own] = await rows(
+      "SELECT token_ciphertext,waba_id,status FROM channel_accounts WHERE platform_id='22222'",
+    );
+    assert.equal(own.waba_id, '20000');
+    assert.ok(!String(own.token_ciphertext).includes('business-token'), 'Its key is kept sealed');
+    const [testLine] = await rows('SELECT status FROM channel_accounts WHERE id=?', [accountId]);
+    assert.equal(testLine.status, 'off', 'One number per business');
+
+    // A customer writes to it. The Charm answers with the business's own key, and a quote the owner
+    // sends two days later goes out on the template, since WhatsApp allows nothing else by then.
+    const kim = { phone: '16505554444', userId: 'US.5001', name: 'Kim Lee' };
+    const toOwn = async (message: object) => {
+      const id = `wamid.in-${++messageNumber}`;
+      await post({
+        metadata: { display_phone_number: '15550002222', phone_number_id: '22222' },
+        contacts: [{ profile: { name: kim.name }, wa_id: kim.phone, user_id: kim.userId }],
+        messages: [{ from: kim.phone, from_user_id: kim.userId, id, timestamp: '1', ...message }],
+      }).expect(200);
+      for (let tries = 0; tries < 200; tries++) {
+        const [inbox] = await rows('SELECT status FROM channel_inbox WHERE platform_message_id=?', [
+          id,
+        ]);
+        if (inbox?.status === 'handled') return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      assert.fail(`${id} was never answered`);
+    };
+    await toOwn(text('Driveways'));
+    assert.match(ownSent[0]?.text?.body ?? '', /^\[Demo\] Hi Kim! I’m the quote assistant/);
+    await toOwn(text('About 600 sq ft, two cars.'));
+    await toOwn(tap(`${CHIP}Skip photos`, 'Skip photos'));
+    const [kimChat] = await rows('SELECT id FROM lead_chats WHERE channel_user_id=?', [kim.userId]);
+    const [held] = await rows('SELECT id,status FROM live_quotes WHERE chat_id=?', [kimChat.id]);
+    assert.equal(held.status, 'review', 'Waiting for the owner, who checks each quote');
+    await mutate(
+      'UPDATE lead_chats SET last_inbound_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 DAY) WHERE id=?',
+      [kimChat.id],
+    );
+    await owner
+      .post(`/api/v1/app/quotes/${held.id}/approve`)
+      .set('Origin', origin)
+      .send({})
+      .expect(200);
+    await deliverWaiting();
+    const templated = ownSent.at(-1);
+    assert.equal(templated?.type, 'template');
+    assert.equal(templated?.template.name, 'pricecharm_quote_ready');
+    assert.deepEqual(
+      templated?.template.components[0].parameters
+        .map((parameter: { text: string }) => parameter.text)
+        .slice(0, 2),
+      ['Kim', 'Moss & Stone Exterior Care'],
+    );
+    assert.match(
+      templated?.template.components[0].parameters[2].text,
+      /^http:\/\/localhost:3100\/q\//,
+    );
+
+    // Disconnecting stops its messages coming to PriceCharm and drops the key.
+    const off = await owner.delete('/api/v1/app/whatsapp').set('Origin', origin).expect(200);
+    assert.equal(off.body.data.connected, null);
+    assert.equal(accountCalls.at(-1), 'DELETE subscribed_apps');
+    const [gone] = await rows(
+      "SELECT status,token_ciphertext FROM channel_accounts WHERE platform_id='22222'",
+    );
+    assert.deepEqual([gone.status, gone.token_ciphertext], ['off', null]);
+    delete process.env.META_APP_ID;
+    delete process.env.WHATSAPP_SIGNUP_CONFIG_ID;
 
     async function waitSkipped(response: request.Response) {
       assert.equal(response.status, 200);

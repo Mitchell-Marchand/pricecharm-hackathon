@@ -603,13 +603,20 @@ const hasContact = (chat: Row) =>
  * Why the owner can't reach this WhatsApp customer there anymore, or '' when they can. WhatsApp only
  * delivers a business's messages within a day of the customer's last one.
  */
-export async function whatsAppClosed(chatId: string, connection?: Sql): Promise<string> {
+export async function whatsAppClosed(
+  chatId: string,
+  connection?: Sql,
+  /** A quote can still go after that, on the business's quote template, once it has one. */
+  quote = false,
+): Promise<string> {
   const [chat] = await rows(
-    'SELECT channel_account_id,customer_phone,last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AS open FROM lead_chats WHERE id=?',
+    `SELECT c.channel_account_id,c.customer_phone,a.waba_id,
+       c.last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AS open
+     FROM lead_chats c LEFT JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?`,
     [chatId],
     connection,
   );
-  if (!chat?.channel_account_id || Number(chat.open)) return '';
+  if (!chat?.channel_account_id || Number(chat.open) || (quote && chat.waba_id)) return '';
   return `It’s been more than a day since they last wrote on WhatsApp, and WhatsApp won’t deliver anything after that.${chat.customer_phone ? ` Call or text them at ${chat.customer_phone}.` : ''}`;
 }
 

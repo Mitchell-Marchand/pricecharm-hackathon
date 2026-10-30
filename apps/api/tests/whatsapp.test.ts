@@ -6,6 +6,7 @@ import {
   CHIP,
   LIMITS,
   QUOTE,
+  QUOTE_TEMPLATE,
   REASON,
   WhatsAppError,
   messageBody,
@@ -396,6 +397,37 @@ test('buttons and lists are sent the way WhatsApp expects them', () => {
         type: 'list',
         body: { text: 'Which?' },
         action: { button: 'Pick one', sections: [{ rows: [{ id: 'a', title: 'A' }] }] },
+      },
+    },
+  );
+});
+
+test('a late quote goes out on a template Meta will accept, filled in with the customer and link', () => {
+  // Meta turns down templates that start or end on a variable, or have more variables than words.
+  assert.doesNotMatch(QUOTE_TEMPLATE.body, /^\{\{|\}\}\.?$/);
+  assert.equal(QUOTE_TEMPLATE.body.match(/\{\{\d\}\}/g)?.length, QUOTE_TEMPLATE.example.length);
+  assert.deepEqual(
+    messageBody({
+      kind: 'template',
+      name: QUOTE_TEMPLATE.name,
+      language: QUOTE_TEMPLATE.language,
+      parameters: ['Sam', 'Bright Panes', 'https://pricecharm.com/q/bright'],
+    }),
+    {
+      type: 'template',
+      template: {
+        name: 'pricecharm_quote_ready',
+        language: { code: 'en_US' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: 'Sam' },
+              { type: 'text', text: 'Bright Panes' },
+              { type: 'text', text: 'https://pricecharm.com/q/bright' },
+            ],
+          },
+        ],
       },
     },
   );

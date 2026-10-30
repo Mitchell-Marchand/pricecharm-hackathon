@@ -1,12 +1,14 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { closeDatabase, mutate, rows } from '../db.js';
+import { createQuoteTemplate } from './whatsapp.js';
 
 /**
  * Points our WhatsApp test number at one business, until owners connect their own numbers through
  * Meta's Embedded Signup. Uses WHATSAPP_PHONE_NUMBER_ID and, for what the owner sees,
  * WHATSAPP_DISPLAY_NUMBER. `--test` lists the numbers the owner tries it from: chats from those
- * are tests, never billed or emailed.
+ * are tests, never billed or emailed. With WHATSAPP_BUSINESS_ACCOUNT_ID too, it also creates the
+ * quote template late quotes go out on.
  *
  *   node --import tsx src/channels/connect.ts <business-slug> [--test +15551234567,...]
  *   node --import tsx src/channels/connect.ts <business-slug> --off
@@ -33,17 +35,24 @@ async function main() {
     console.info(`WhatsApp is off for ${business.name}.`);
     return;
   }
+  const wabaId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID?.trim() || null;
   await mutate(
-    `INSERT INTO channel_accounts (id,business_id,kind,platform_id,display_name,test_numbers) VALUES (?,?,'whatsapp',?,?,?)
-     ON DUPLICATE KEY UPDATE business_id=VALUES(business_id),display_name=VALUES(display_name),test_numbers=VALUES(test_numbers),status='connected'`,
+    `INSERT INTO channel_accounts (id,business_id,kind,platform_id,display_name,test_numbers,waba_id) VALUES (?,?,'whatsapp',?,?,?,?)
+     ON DUPLICATE KEY UPDATE business_id=VALUES(business_id),display_name=VALUES(display_name),test_numbers=VALUES(test_numbers),waba_id=VALUES(waba_id),status='connected'`,
     [
       randomUUID(),
       business.id,
       phoneNumberId,
       process.env.WHATSAPP_DISPLAY_NUMBER?.trim() ?? '',
       testNumbers.join(','),
+      wabaId,
     ],
   );
+  const token = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+  if (wabaId && token) {
+    await createQuoteTemplate(token, wabaId);
+    console.info('Asked Meta to approve the quote template for late quotes.');
+  }
   console.info(
     `WhatsApp number ${phoneNumberId} now answers for ${business.name}.${business.link_on ? '' : ' Its Charm is paused, so turn quoting on before testing.'}`,
   );

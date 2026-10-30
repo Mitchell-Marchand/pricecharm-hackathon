@@ -78,6 +78,19 @@ export function encryptEmail(payload: TransactionalEmail): string {
   ]);
   return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
 }
+/** Seals a secret the server keeps, like a business's WhatsApp key, with the same key as email. */
+export function sealSecret(secret: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64');
+}
+export function openSecret(sealed: string): string {
+  const bytes = Buffer.from(sealed, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), bytes.subarray(0, 12));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8');
+}
 export function decryptEmail(payload: string): TransactionalEmail {
   const bytes = Buffer.from(payload, 'base64');
   const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), bytes.subarray(0, 12));

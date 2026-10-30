@@ -11,6 +11,7 @@ import { ApiError } from '../http.js';
 import { recordActivity } from '../metrics.js';
 import { json, type Row } from '../models.js';
 import type { Quote } from '../practice/types.js';
+import { openSecret } from '../integrations/email.js';
 import { storeImage } from '../uploads.js';
 import { DEFAULT_ACCEPT_LABEL } from '../live/accept-wording.js';
 import {
@@ -33,6 +34,7 @@ import {
   CHIP,
   ERRORS,
   QUOTE,
+  QUOTE_TEMPLATE,
   REASON,
   WhatsAppError,
   download,
@@ -68,8 +70,16 @@ const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const previewCaption = (from: 'photo' | 'video') =>
   `Now, and what it could look like when it’s done. The after side was made with AI from your ${from}, so the real result can look different.`;
 
-/** Our test number sends with the platform's token. Each business's own comes with Embedded Signup. */
+/**
+ * A business's own number sends with the key it gave PriceCharm through Meta's sign-up. Our own
+ * number, pointed at a business with connect.ts, sends with the platform's token.
+ */
 function lineFor(account: Row): Line {
+  if (account.token_ciphertext)
+    return {
+      phoneNumberId: String(account.platform_id),
+      token: openSecret(String(account.token_ciphertext)),
+    };
   const token = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
   if (!token) throw new Error('Set WHATSAPP_ACCESS_TOKEN to answer on WhatsApp.');
   return { phoneNumberId: String(account.platform_id), token };
@@ -491,8 +501,9 @@ function outboundFor(message: Row, owner: string): Outbound | null {
  */
 async function deliver(chatId: string): Promise<void> {
   const [chat] = await rows(
-    `SELECT c.*,a.platform_id,a.status AS account_status FROM lead_chats c
-     JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?`,
+    `SELECT c.*,a.platform_id,a.status AS account_status,a.token_ciphertext,a.waba_id,
+       c.last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AS window_open
+     FROM lead_chats c JOIN channel_accounts a ON a.id=c.channel_account_id WHERE c.id=?`,
     [chatId],
   );
   if (!chat || chat.account_status !== 'connected') return;
@@ -510,6 +521,16 @@ async function deliver(chatId: string): Promise<void> {
   );
   const quoteAfter = quote ? new Date(quote.sent_at).getTime() + QUOTE_INTRO_MS : Infinity;
   let quoteDone = !quote;
+  // More than 24 hours since the customer last wrote, WhatsApp only takes an approved template.
+  const late = !Number(chat.window_open);
+  const first = String(chat.customer_name).trim().split(/\s+/)[0];
+  const sendTemplate = (link: string) =>
+    attempt(line, to, {
+      kind: 'template',
+      name: QUOTE_TEMPLATE.name,
+      language: QUOTE_TEMPLATE.language,
+      parameters: [first || 'there', String(business.name), link],
+    });
   const sendQuote = async () => {
     const card = json<Quote | null>(quote.quote_json, null);
     if (!card) return true;
@@ -519,19 +540,24 @@ async function deliver(chatId: string): Promise<void> {
          (SELECT COUNT(*) FROM lead_videos WHERE chat_id=?) AS videos`,
       [chatId, chatId],
     );
-    const result = await attempt(
-      line,
-      to,
-      quoteMessage({
-        quote: card,
-        totalCents: Number(quote.total_cents),
-        business: String(business.name),
-        owner,
-        sent: { photos: Number(media.photos) > 0, video: Number(media.videos) > 0 },
-        acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
-        link,
-      }),
-    );
+    let result =
+      late && chat.waba_id
+        ? await sendTemplate(link)
+        : await attempt(
+            line,
+            to,
+            quoteMessage({
+              quote: card,
+              totalCents: Number(quote.total_cents),
+              business: String(business.name),
+              owner,
+              sent: { photos: Number(media.photos) > 0, video: Number(media.videos) > 0 },
+              acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
+              link,
+            }),
+          );
+    // The 24 hours ran out between the owner sending it and now.
+    if (result?.refused === 'window_closed' && chat.waba_id) result = await sendTemplate(link);
     if (!result) return false;
     await mutate(
       'UPDATE live_quotes SET channel_message_id=?,channel_sent_at=UTC_TIMESTAMP(3) WHERE id=?',
@@ -539,6 +565,11 @@ async function deliver(chatId: string): Promise<void> {
     );
     return true;
   };
+  // Late, only the quote can go: anything else would be turned away.
+  if (late) {
+    if (!quoteDone) await sendQuote();
+    return;
+  }
   for (const message of messages) {
     if (!quoteDone && new Date(message.created_at).getTime() > quoteAfter) {
       if (!(await sendQuote())) return;
@@ -642,12 +673,18 @@ async function billShown(quote: Row) {
 
 /**
  * Sends what's waiting in WhatsApp chats still inside their 24 hours: an owner's reply, a quote
- * they approved, an after picture that finished drawing. Messages a restart left behind are
- * answered too. The worker runs this every couple of seconds.
+ * they approved, an after picture that finished drawing. Past them, a quote the owner sent goes on
+ * the business's quote template. Messages a restart left behind are answered too. The worker runs
+ * this every couple of seconds.
  */
 export async function deliverWaiting(): Promise<void> {
   for (const chat of await rows(
-    'SELECT id,channel_account_id,channel_user_id FROM lead_chats WHERE last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AND channel_account_id IS NOT NULL',
+    `SELECT id,channel_account_id,channel_user_id FROM lead_chats WHERE last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AND channel_account_id IS NOT NULL
+     UNION
+     SELECT c.id,c.channel_account_id,c.channel_user_id FROM lead_chats c
+     JOIN channel_accounts a ON a.id=c.channel_account_id AND a.waba_id IS NOT NULL
+     JOIN live_quotes q ON q.chat_id=c.id AND q.status IN ('sent','expired') AND q.channel_sent_at IS NULL
+     WHERE c.last_inbound_at<=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR)`,
   ))
     await holding(String(chat.channel_account_id), String(chat.channel_user_id), () =>
       deliver(String(chat.id)),

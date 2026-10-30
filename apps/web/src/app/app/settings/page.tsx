@@ -7,6 +7,7 @@ import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { QuotePageSettings } from '@/components/owner/QuotePageSettings';
+import { WhatsAppSettings } from '@/components/owner/WhatsAppSettings';
 import { Sheet } from '@/components/Sheet';
 import { useToast } from '@/components/Toast';
 import { LEARNING_TEXT } from '@/components/Charm';
@@ -27,6 +28,7 @@ import {
   type Billing,
 } from '@/lib/owner';
 import { planDetail, planName, type Plan } from '@/lib/plans';
+import { loadWhatsApp, type WhatsApp } from '@/lib/whatsapp';
 import { money, moneyInput, parseMoney, shortDate } from '@/lib/util';
 
 const TRAINED_MARKS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -75,8 +77,13 @@ export default function SettingsPage() {
   const [cap, setCap] = useState('');
   const [error, setError] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [whatsApp, setWhatsApp] = useState<WhatsApp | null>(null);
 
   useEffect(() => {
+    // An API from before WhatsApp just leaves the section out.
+    loadWhatsApp()
+      .then(setWhatsApp)
+      .catch(() => {});
     loadHome()
       .then((home) => {
         const settings = home.settings ?? {
@@ -295,6 +302,12 @@ export default function SettingsPage() {
         >
           <QuotePageSettings business={me.business.name} />
         </Section>
+
+        {whatsApp && (whatsApp.signup || whatsApp.connected) && (
+          <Section title="WhatsApp" intro="Your Charm answers customers who message you there.">
+            <WhatsAppSettings initial={whatsApp} />
+          </Section>
+        )}
 
         <Section
           title="Billing"

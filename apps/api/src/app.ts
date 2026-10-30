@@ -39,6 +39,7 @@ import { ownerQuotesRouter } from './live/owner.js';
 import { visitsRouter } from './metrics.js';
 import { activityRouter } from './activity.js';
 import { metaWebhook, verifyMetaWebhook } from './channels/webhook.js';
+import { channelRouter } from './channels/accounts.js';
 
 /**
  * Requests one address may make to the API in a minute. The browser tests make a lot from one
@@ -183,6 +184,7 @@ export function createApp() {
     shareRouter,
     ownerQuotesRouter,
     quotePageRouter,
+    channelRouter,
   );
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
   app.use(errorHandler);
