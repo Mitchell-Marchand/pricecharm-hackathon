@@ -352,3 +352,113 @@ test('demo mode never calls a live provider', async () => {
     process.env.AI_PROVIDER = 'openai';
   }
 });
+
+test('the benchmark keeps each answer, and a replay gives it back without the model or a key', async () => {
+  const saved: Record<string, { operation: string; answers: unknown[] }> = {};
+  ai.useSavedAnswers({
+    replayOnly: false,
+    answer: () => undefined,
+    keep: (key, operation, answer) => {
+      saved[key] ??= { operation, answers: [] };
+      saved[key].answers.push(answer);
+    },
+  });
+  try {
+    globalThis.fetch = async () => response({ reply: 'How many are upstairs?' });
+    assert.deepEqual(await ask(), { reply: 'How many are upstairs?' });
+    assert.deepEqual(Object.values(saved), [
+      { operation: 'intake_turn', answers: [{ reply: 'How many are upstairs?' }] },
+    ]);
+
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error('A replay never reaches the model.');
+    };
+    delete process.env.OPENAI_API_KEY;
+    ai.useSavedAnswers({
+      replayOnly: true,
+      answer: (key) => saved[key]?.answers[0],
+      keep: () => {},
+    });
+    assert.deepEqual(await ask(), { reply: 'How many are upstairs?' });
+    const unsaved = ai.requestJson(
+      'intake_turn',
+      'Reply to the customer.',
+      { message: 'I have 30 windows.' },
+      replyJson,
+      replySchema,
+    );
+    await assert.rejects(unsaved, /wasn’t in the saved run/);
+    assert.equal(calls, 0);
+  } finally {
+    ai.useSavedAnswers(null);
+  }
+});
+
+test('a saved answer is found again when only ids and times differ', () => {
+  const key = (id: string, at: string, text: string) =>
+    ai.answerKey('read_job', 'mock-model', 'Read the job.', { id, at, text });
+  const first = key(
+    '0b6f4f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b',
+    '2026-10-29T09:00:00.000Z',
+    '12 windows',
+  );
+  assert.equal(
+    key('9e8d7c6b-5a4f-4e3d-8c2b-1a0f9e8d7c6b', '2026-10-30T17:45:12.345Z', '12 windows'),
+    first,
+  );
+  assert.notEqual(
+    key('0b6f4f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b', '2026-10-29T09:00:00.000Z', '14 windows'),
+    first,
+  );
+  assert.notEqual(
+    ai.answerKey('read_job', 'other-model', 'Read the job.', {
+      id: '0b6f4f8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b',
+      at: '2026-10-29T09:00:00.000Z',
+      text: '12 windows',
+    }),
+    first,
+    'Another model is another answer',
+  );
+});
+
+test('a size given as an add-on’s count is dropped, not a failed read', async () => {
+  const { readJobParts } = await import('../src/ai/formula.js');
+  globalThis.fetch = async () =>
+    response({
+      service: 'House wash',
+      size: 1440,
+      surcharges: [],
+      addOns: [
+        { name: 'Sealing', count: 1440 },
+        { name: 'Downspout flush', count: 3 },
+      ],
+      otherServices: [],
+      uncovered: '',
+    });
+  const read = await readJobParts({
+    formula: {
+      services: [
+        { name: 'House wash', unit: 'sq ft', rateCents: 20, points: [], minimumCents: null },
+      ],
+      surcharges: [],
+      addOns: [
+        { name: 'Sealing', per: 'unit', cents: 30 },
+        { name: 'Downspout flush', per: 'item', cents: 1500 },
+      ],
+      bundlePercent: null,
+      roundToCents: 100,
+      minimumCents: null,
+      itemizes: true,
+    },
+    request: {
+      serviceName: 'House wash',
+      conversation: [{ from: 'customer', text: 'Seal it too.' }],
+    },
+  });
+  assert.deepEqual(read.addOns, [
+    { name: 'Sealing', count: null },
+    { name: 'Downspout flush', count: 3 },
+  ]);
+});

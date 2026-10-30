@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 export type AiProvider = 'openai' | 'anthropic' | 'meta' | 'demo';
@@ -86,6 +87,50 @@ export async function recordProviderUsage(usage: AiUsage): Promise<void> {
   await usageContexts.getStore()?.record(usage);
 }
 
+/**
+ * The benchmark's saved answers. Every answer the model gives is kept, and in a replay a call
+ * that was answered before gets the same answer back without asking the model, so a run can be
+ * scored again for free. Only the benchmark sets these.
+ */
+export type SavedAnswers = {
+  /** The saved answer for this call, if there is one. */
+  answer(key: string): unknown;
+  /** Keeps what the model answered, before it's checked. */
+  keep(key: string, operation: string, answer: unknown): void;
+  /** Only saved answers: a call with none fails instead of reaching the model. */
+  replayOnly: boolean;
+};
+let savedAnswers: SavedAnswers | null = null;
+export function useSavedAnswers(answers: SavedAnswers | null) {
+  savedAnswers = answers;
+}
+
+/**
+ * What identifies a call for a saved answer: the operation, model, instructions and input, with
+ * ids and timestamps blanked, since a benchmark run makes new ones for the same owners.
+ */
+export function answerKey(
+  operation: string,
+  model: string | undefined,
+  instructions: string,
+  input: unknown,
+  files: { dataBase64: string }[] = [],
+) {
+  const steady = JSON.stringify(input)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<id>')
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?/g, '<time>');
+  const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+  return hash(
+    JSON.stringify([
+      operation,
+      model ?? '',
+      instructions,
+      steady,
+      files.map((file) => hash(file.dataBase64)),
+    ]),
+  );
+}
+
 export class AiError extends Error {
   readonly status = 503;
   readonly statusCode = 503;
@@ -125,6 +170,19 @@ export async function requestJson<T>(
   const prefix = envPrefix[aiProvider];
   const key = process.env[`${prefix}_API_KEY`];
   const model = options.model || modelFor(operation);
+  const saved = savedAnswers;
+  const savedKey = saved
+    ? answerKey(operation, model, instructions, input, [...images, ...documents])
+    : '';
+  if (saved) {
+    const answer = saved.answer(savedKey);
+    if (answer !== undefined) {
+      const replayed = validator.safeParse(answer);
+      if (!replayed.success) throw new AiError('The AI returned an invalid response.');
+      return replayed.data;
+    }
+    if (saved.replayOnly) throw new AiError('This call wasn’t in the saved run.');
+  }
   if (!key || !model) {
     throw new AiError(
       `Configure ${prefix}_API_KEY and ${prefix}_MODEL to use the selected AI provider.`,
@@ -360,6 +418,7 @@ export async function requestJson<T>(
         (item) => item.type === 'tool_use' && item.name === 'emit_result',
       )?.input;
     }
+    saved?.keep(savedKey, operation, result);
     const validated = validator.safeParse(result);
     if (!validated.success) {
       const fields = new Set([

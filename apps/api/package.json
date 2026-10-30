@@ -21,6 +21,7 @@
     "replay": "node --import tsx src/replay.ts",
     "proof": "node --import tsx src/proof.ts",
     "bench": "node --import tsx src/bench.ts",
+    "bench:compare": "node --import tsx src/bench/compare.ts",
     "proof:production": "node dist/proof.js",
     "ops:production": "node dist/ops.js --http",
     "stripe:setup": "node --import tsx src/stripe-setup.ts"

@@ -10,6 +10,7 @@ import {
   simulatedOwners,
   type SimOwner,
 } from '../src/bench/owners.js';
+import { mcnemarP, ownerMoves, pairRuns, tally, type SavedRun } from '../src/bench/compare.js';
 
 const windows = (overrides: Partial<SimOwner['rules']> = {}): SimOwner => ({
   name: 'Test Windows',
@@ -120,4 +121,44 @@ test('the customer says everything the price depends on, and the spec records it
     timing: '',
   });
   assert.equal(drawJob(seeded(2), owner, 'small').quantity, 8, 'A small job is the smallest size');
+});
+
+test('the exact McNemar test weighs jobs fixed against jobs broken', () => {
+  assert.equal(mcnemarP(0, 0), 1);
+  assert.equal(mcnemarP(16, 8).toFixed(3), '0.152');
+  assert.equal(mcnemarP(8, 16), mcnemarP(16, 8), 'Either way round');
+  assert.ok(mcnemarP(266, 13) < 1e-60);
+  assert.equal(mcnemarP(10, 10), 1);
+});
+
+test('two runs of a seed line up job for job, and runs of different jobs are refused', () => {
+  const owners = simulatedOwners(5, 2, false);
+  const rng = seeded(77);
+  const tests = owners.flatMap((owner, index) =>
+    [0, 1].map(() => {
+      const job = drawJob(rng, owner, 'any');
+      return { owner: index, job, ownerCents: ownerTotal(owner, job) };
+    }),
+  );
+  // Within 10% or twice the owner's price, job by job.
+  const run = (hits: boolean[]): SavedRun => ({
+    seed: 5,
+    owners,
+    tests: tests.map((test, index) => ({
+      ...test,
+      formula: { cents: hits[index] ? test.ownerCents : test.ownerCents * 2 },
+    })),
+  });
+  const before = run([true, false, true, false]);
+  const after = run([true, true, false, true]);
+  const { pairs } = pairRuns([before], [after], 'formula');
+  assert.deepEqual(
+    { ...tally(pairs), p: undefined },
+    { jobs: 4, old: 2, new: 3, fixed: 2, broke: 1, p: undefined },
+  );
+  assert.deepEqual(ownerMoves(pairs), { better: 1, worse: 0, same: 1 });
+  const other = run([true, true, true, true]);
+  other.tests[3] = { ...other.tests[3], ownerCents: other.tests[3].ownerCents + 100 };
+  assert.throws(() => pairRuns([before], [other], 'formula'), /didn't price the same jobs/);
+  assert.throws(() => pairRuns([before], [{ ...after, seed: 6 }], 'formula'), /No seed/);
 });

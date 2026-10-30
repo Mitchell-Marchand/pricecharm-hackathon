@@ -28,7 +28,21 @@ const partsSchema = z.object({
   service: name,
   size: size.nullable(),
   surcharges: z.array(name).max(10),
-  addOns: z.array(z.object({ name, count: z.number().min(0).max(1000).nullable() })).max(10),
+  // A count only prices a per-item add-on. For one priced by size, like sealing per square foot,
+  // the AI sometimes gives the job's size, which nothing uses, so a count past any real one is
+  // dropped instead of failing the whole read.
+  addOns: z
+    .array(
+      z.object({
+        name,
+        count: z
+          .number()
+          .min(0)
+          .nullable()
+          .transform((count) => (count !== null && count > 1000 ? null : count)),
+      }),
+    )
+    .max(10),
   otherServices: z.array(z.object({ name, size: size.nullable() })).max(5),
 });
 const partsJson = {

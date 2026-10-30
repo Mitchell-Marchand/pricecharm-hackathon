@@ -307,3 +307,13 @@ test('a price the owner’s note gives isn’t tuned back to older quotes that d
   assert.equal(refineFormula(noted, examples).addOns[0].cents, 300);
   assert.equal(refineFormula({ ...noted, setByNotes: [] }, examples).addOns[0].cents, 200);
 });
+
+test('an owner who rounds to $25 isn’t taken for pricing by size bands', async () => {
+  const { priceShape } = await import('../src/pricing/formula.js');
+  // 75¢ a foot, each price rounded to $25: neighbors share a price without any bands.
+  const points = [174, 188, 190, 202, 217, 227, 235, 267, 278].map((size) => ({
+    size,
+    cents: Math.round((size * 75) / 2500) * 2500,
+  }));
+  assert.notEqual(priceShape(points), 'bands');
+});

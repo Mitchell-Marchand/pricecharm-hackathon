@@ -3,6 +3,8 @@
 # in the local PriceCharm container. It uses the AI keys in apps/api/.env, costs two model calls
 # for each job it prices, and never touches your dev data.
 set -euo pipefail
+# Files named on the command line (--json, --replay, --compare) are found from where you ran this.
+export BENCH_CWD="$PWD"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 docker compose up --detach --wait db
 # The app's user can only reach its own databases, so the container's local root makes this one.

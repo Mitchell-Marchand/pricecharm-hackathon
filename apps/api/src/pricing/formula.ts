@@ -153,11 +153,14 @@ export function priceShape(points: Point[]): PriceShape {
   const sorted = sortedPoints(points);
   // Fewer than four prices check each reading once at most: too few to call.
   if (sorted.length < 4) return 'line';
+  // Each guess is rounded the way the owner rounds, so an owner who rounds to $25 doesn't look
+  // like they price by size bands just because sizes near each other round to the same price.
+  const step = ownerRounding(sorted.map((point) => point.cents));
   const [fit, line, bands] = (['fit', 'line', 'bands'] as const).map((shape) =>
     sorted.slice(1, -1).reduce((sum, point, index) => {
       const others = sorted.filter((_, at) => at !== index + 1);
       const service = { name: '', unit: '', rateCents: null, minimumCents: null, shape };
-      const predicted = mainWork({ ...service, points: others }, point.size) ?? 0;
+      const predicted = rounded(mainWork({ ...service, points: others }, point.size) ?? 0, step);
       return sum + Math.abs(predicted - point.cents) / point.cents;
     }, 0),
   );

@@ -1,10 +1,11 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aiMode, aiProvider, modelFor, runWithAiUsage } from './ai/index.js';
+import { aiMode, aiProvider, modelFor, runWithAiUsage, useSavedAnswers } from './ai/index.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
+import { describeComparison, type SavedRun } from './bench/compare.js';
 import {
   customerMessage,
   drawJob,
@@ -39,11 +40,20 @@ import { accuracy, closer, share } from './proof.js';
  * practice adds.
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
- *     [--past 10] [--practice original] [--concurrency 4] [--json <file>]
+ *     [--past 10] [--practice original] [--concurrency 4] [--json <file>] [--formula-only]
+ *     [--replay <file>] [--fill] [--compare <file>]
  *
  * With --messy the owners price by eye a little, straying 2–8% from their own rates job to job,
  * the way real owners do. With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
  * falling back to the usual draft where the formula doesn't fit or doesn't cover the job.
+ * --formula-only prices with the formula alone, skipping the Charm's usual draft and the generic
+ * AI, for about half the model calls while working on formula pricing.
+ *
+ * --json saves every answer the model gave. --replay <file> runs again on a saved run's answers
+ * instead of the model, so a change to how prices are worked out from them is scored for free; a
+ * call the saved run never made fails rather than reaching the model, unless --fill sends it to
+ * the model, so only what a change asks anew is paid for. --compare <file> lines this run up job
+ * for job with an earlier run of the same seed (src/bench/compare.ts).
  *
  * Each owner's past jobs, practice customers and test jobs come from their own random sequences,
  * so changing the practice plan leaves the test jobs the same and two runs can be compared.
@@ -89,6 +99,17 @@ function option(name: string) {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
+/**
+ * A file named on the command line, found from where scripts/bench.sh was run (it passes BENCH_CWD),
+ * not from apps/api, where npm runs this.
+ */
+function fileOption(name: string) {
+  const given = option(name);
+  return given
+    ? path.resolve(process.env.BENCH_CWD ?? process.env.INIT_CWD ?? process.cwd(), given)
+    : undefined;
+}
+
 const number = (name: string, fallback: number, max: number) =>
   Math.min(Math.max(Math.round(Number(option(name) ?? fallback)) || fallback, 1), max);
 
@@ -118,8 +139,9 @@ function pastJobs(rng: Rng, owner: SimOwner, count: number): SimJob[] {
 
 /**
  * Saves the owner as a business with its past jobs and finished practice customers, the rows the
- * Charm learns from. Practice customer i finishes i+1 minutes after the past jobs, so a draft
- * can be limited to what it knew before any practice.
+ * Charm learns from. Past jobs are 10 ms apart, so they always load in the same order and a run
+ * asks the model the same things each time. Practice customer i finishes i+1 minutes after the
+ * past jobs, so a draft can be limited to what it knew before any practice.
  */
 async function seedOwner(
   owner: SimOwner,
@@ -144,11 +166,19 @@ async function seedOwner(
       'INSERT INTO offerings (id,business_id,name,custom,position) VALUES (?,?,?,FALSE,?)',
       [randomUUID(), id, rule.name, position],
     );
-  for (const job of pastJobs(rng.past, owner, past)) {
+  for (const [index, job] of pastJobs(rng.past, owner, past).entries()) {
     const record = pastJobRecord(owner, job);
     await mutate(
       "INSERT INTO past_jobs (id,business_id,service_name,description,price_cents,size,notes,created_at) VALUES (?,?,?,?,?,?,'',?)",
-      [randomUUID(), id, record.service, record.description, record.priceCents, record.size, start],
+      [
+        randomUUID(),
+        id,
+        record.service,
+        record.description,
+        record.priceCents,
+        record.size,
+        new Date(start.getTime() + index * 10),
+      ],
     );
   }
   for (const [position, { shape, extra }] of plan.entries()) {
@@ -236,6 +266,9 @@ const best = (drafted: DraftedQuote) => (drafted.lines.length ? quoteTotal(draft
 const gapOf = (cents: number | null | undefined, owner: number) =>
   cents ? gapPercent(cents, owner) : null;
 
+/** Whether this run answers only from a saved run, never the model (--replay without --fill). */
+let replayOnly = false;
+
 /** Tries a draft up to three times, since the model's API sometimes says it's unavailable. */
 async function retried<T>(task: () => Promise<T>): Promise<T> {
   for (let attempt = 1; ; attempt++) {
@@ -243,9 +276,46 @@ async function retried<T>(task: () => Promise<T>): Promise<T> {
       return await task();
     } catch (error) {
       if (attempt >= 3) throw error;
-      await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
+      // A replay has no API to wait for.
+      if (!replayOnly) await new Promise((resolve) => setTimeout(resolve, attempt * 5000));
     }
   }
+}
+
+type Saved = Record<string, { operation: string; answers: unknown[] }>;
+
+/**
+ * Keeps every answer the model gives, and with a saved run's answers, gives each call back what
+ * it was answered before, in the order it was answered: a call that failed its check and was
+ * asked again gets its second answer the second time.
+ */
+function savedAnswers(earlier: Saved | null, fill: boolean) {
+  const kept: Saved = {};
+  const served = new Map<string, number>();
+  const replay = { answered: 0, missing: 0 };
+  const keep = (key: string, operation: string, answer: unknown) => {
+    kept[key] ??= { operation, answers: [] };
+    kept[key].answers.push(answer);
+  };
+  useSavedAnswers({
+    replayOnly: Boolean(earlier) && !fill,
+    keep,
+    answer: (key) => {
+      const saved = earlier?.[key];
+      if (!saved) {
+        if (earlier) replay.missing++;
+        return undefined;
+      }
+      const turn = served.get(key) ?? 0;
+      served.set(key, turn + 1);
+      replay.answered++;
+      const answer = saved.answers[Math.min(turn, saved.answers.length - 1)];
+      // Kept again, so a replayed run's file can be replayed too.
+      keep(key, saved.operation, answer);
+      return answer;
+    },
+  });
+  return { kept, replay };
 }
 
 /** Runs tasks a few at a time, so the model isn't sent everything at once. */
@@ -333,7 +403,12 @@ async function main() {
   const concurrency = number('concurrency', 4, 12);
   const model = option('model');
   const curve = process.argv.includes('--curve');
-  const formula = process.argv.includes('--formula');
+  const formulaOnly = process.argv.includes('--formula-only');
+  const formula = formulaOnly || process.argv.includes('--formula');
+  if (curve && formulaOnly)
+    throw new Error(
+      '--curve compares the Charm’s usual drafts, so it can’t run with --formula-only.',
+    );
   const messy = process.argv.includes('--messy');
   const past = number('past', 10, 50);
   const planName = option('practice') ?? PLAN;
@@ -341,7 +416,23 @@ async function main() {
   if (!plan)
     throw new Error(`No practice plan called ${planName}. Try ${Object.keys(PLANS).join(' or ')}.`);
   const tokens = { input: 0, output: 0, calls: 0 };
-  const generic = aiMode !== 'demo';
+  /** Each kind of model call: how many were answered, their tokens, and why any failed. */
+  const calls: Record<
+    string,
+    { answered: number; input: number; output: number; failed: Record<string, number> }
+  > = {};
+  const callsOf = (operation: string) =>
+    (calls[operation] ??= { answered: 0, input: 0, output: 0, failed: {} });
+  const replayFile = fileOption('replay');
+  const earlier = replayFile
+    ? ((JSON.parse(await readFile(replayFile, 'utf8')) as { answers?: Saved }).answers ?? null)
+    : null;
+  if (replayFile && !earlier)
+    throw new Error(`${replayFile} has no saved answers. Runs save them with --json.`);
+  const fill = process.argv.includes('--fill');
+  replayOnly = Boolean(earlier) && !fill;
+  const answers = savedAnswers(earlier, fill);
+  const generic = aiMode !== 'demo' && !formulaOnly;
   const owners = simulatedOwners(seed, count, messy);
   const start = new Date(Date.now() - 86_400_000);
 
@@ -378,7 +469,7 @@ async function main() {
     ['full', undefined],
     ...(curve ? ([['0', new Date(start.getTime() + 30_000)]] as [string, Date][]) : []),
   ];
-  /** A draft, retried if the API is down, with the tokens it used added up. */
+  /** A draft, retried if the API is down, with the tokens it used and any failures added up. */
   const tallied = <T>(businessId: string, task: () => Promise<T>) =>
     runWithAiUsage(
       {
@@ -387,6 +478,14 @@ async function main() {
           tokens.input += usage.inputTokens;
           tokens.output += usage.outputTokens;
           tokens.calls++;
+          const kind = callsOf(usage.operation);
+          kind.answered++;
+          kind.input += usage.inputTokens;
+          kind.output += usage.outputTokens;
+        },
+        failed: async (failure) => {
+          const kind = callsOf(failure.operation);
+          kind.failed[failure.reason] = (kind.failed[failure.reason] ?? 0) + 1;
         },
       },
       task,
@@ -400,7 +499,7 @@ async function main() {
     const owner = owners[test.owner];
     const spec = jobSpec(owner, test.job);
     const conversation = [{ from: 'customer' as const, text: test.message }];
-    for (const [level, before] of levels)
+    for (const [level, before] of formulaOnly ? [] : levels)
       tasks.push(async () => {
         try {
           const { drafted } = await counted(test.businessId, () =>
@@ -513,12 +612,12 @@ async function main() {
   out.push(
     `PriceCharm simulated-owner benchmark, ${new Date().toISOString().slice(0, 10)}, seed ${seed}`,
     '',
-    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
+    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${formulaOnly ? `This run priced with the owner’s formula alone (--formula-only), on ${engine}.` : generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
     '',
     `All ${scored.length} jobs:`,
   );
   const all = report(scored);
-  out.push(...lines('Charm', all.charm));
+  if (!formulaOnly) out.push(...lines('Charm', all.charm));
   if (formula) out.push(...lines('Formula pricing', all.formulas));
   if (generic) {
     out.push(...lines('Generic AI', all.others));
@@ -538,14 +637,15 @@ async function main() {
     out.push(
       `  The Charm would have asked the owner to see ${visits} of these first; its price still counts above.`,
     );
-  out.push(
-    '',
-    'Where the Charm misses (typical miss on jobs with each, then without):',
-    ...missBreakdown(scored, owners).map(
-      (row) =>
-        `  ${row.label}: ${row.withIt.medianGap ?? '-'}% on ${row.withIt.jobs} jobs, against ${row.without.medianGap ?? '-'}%`,
-    ),
-  );
+  if (!formulaOnly)
+    out.push(
+      '',
+      'Where the Charm misses (typical miss on jobs with each, then without):',
+      ...missBreakdown(scored, owners).map(
+        (row) =>
+          `  ${row.label}: ${row.withIt.medianGap ?? '-'}% on ${row.withIt.jobs} jobs, against ${row.without.medianGap ?? '-'}%`,
+      ),
+    );
   const learned: unknown[] = [];
   if (formula) {
     const used = scored.filter((test) => test.formula?.used);
@@ -592,7 +692,8 @@ async function main() {
   for (const trade of trades) {
     const subset = scored.filter((test) => owners[test.owner].trade === trade);
     const { charm, others, formulas } = report(subset);
-    out.push(`${trade} (${subset.length} jobs)`, ...lines('Charm', charm));
+    out.push(`${trade} (${subset.length} jobs)`);
+    if (!formulaOnly) out.push(...lines('Charm', charm));
     if (formula) out.push(...lines('Formula pricing', formulas));
     if (generic) out.push(...lines('Generic AI', others));
   }
@@ -614,31 +715,54 @@ async function main() {
       '',
       `${tokens.calls} model calls: ${tokens.input.toLocaleString('en-US')} tokens in, ${tokens.output.toLocaleString('en-US')} out.`,
     );
+  // Failures are counted per try, so a formula that took three tries shows two here.
+  const kinds = Object.entries(calls).sort(([a], [b]) => a.localeCompare(b));
+  if (kinds.length)
+    out.push(
+      'By kind of call:',
+      ...kinds.map(([operation, kind]) => {
+        const reasons = Object.entries(kind.failed);
+        const failures = reasons.reduce((sum, [, n]) => sum + n, 0);
+        return `  ${operation}: ${kind.answered} answered${failures ? `, ${failures} failed (${reasons.map(([reason, n]) => `${n} ${reason}`).join(', ')})` : ''}${operation === 'learn_formula_quick' ? ', each the quicker last try after longer ones failed' : ''}`;
+      }),
+    );
+  if (earlier)
+    out.push(
+      '',
+      `Replayed from ${replayFile}: ${answers.replay.answered} calls answered from the saved run${answers.replay.missing ? `, ${answers.replay.missing} not in it, ${fill ? 'so the model answered them' : 'so those jobs failed instead of reaching the model'}` : ', none missing'}.`,
+    );
+
+  const run = {
+    seed,
+    engine,
+    practice: planName,
+    formulaOnly,
+    tokens,
+    calls,
+    owners,
+    learned,
+    tests: tests.map((test) => ({
+      ...test,
+      business: owners[test.owner].name,
+      spec: describeSpec(jobSpec(owners[test.owner], test.job)),
+    })),
+  };
+  const against = fileOption('compare');
+  if (against) {
+    const before = JSON.parse(await readFile(against, 'utf8')) as SavedRun;
+    out.push(
+      '',
+      ...describeComparison([before], [run], formula ? 'formula' : 'charm').map((text, index) =>
+        index ? text : `${text} Before is ${against}; after is this run.`,
+      ),
+    );
+  }
   console.info(`\n${out.join('\n')}`);
 
-  const file = option('json');
+  const file = fileOption('json');
   if (file) {
-    await writeFile(
-      file,
-      `${JSON.stringify(
-        {
-          seed,
-          engine,
-          practice: planName,
-          tokens,
-          owners,
-          learned,
-          tests: tests.map((test) => ({
-            ...test,
-            business: owners[test.owner].name,
-            spec: describeSpec(jobSpec(owners[test.owner], test.job)),
-          })),
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    console.info(`\nSaved every owner’s rules and every job to ${file}.`);
+    await writeFile(file, `${JSON.stringify({ ...run, answers: answers.kept }, null, 2)}\n`);
+    console.info(`\nSaved every owner’s rules, every job and every model answer to ${file}.`);
   }
 }
 
