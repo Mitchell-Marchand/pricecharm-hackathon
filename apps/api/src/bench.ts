@@ -39,7 +39,7 @@ import { accuracy, closer, share } from './proof.js';
  * practice adds.
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
- *     [--practice original] [--concurrency 4] [--json <file>]
+ *     [--past 3] [--practice original] [--concurrency 4] [--json <file>]
  *
  * With --messy the owners price by eye a little, straying 2–8% from their own rates job to job,
  * the way real owners do. With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
@@ -92,11 +92,14 @@ function option(name: string) {
 const number = (name: string, fallback: number, max: number) =>
   Math.min(Math.max(Math.round(Number(option(name) ?? fallback)) || fallback, 1), max);
 
-/** Three past jobs of the owner's main service: small, usual and big, nothing unusual. */
-function pastJobs(rng: Rng, owner: SimOwner): SimJob[] {
+/**
+ * The owner's past jobs: three of their main service, small, usual and big, nothing unusual, then
+ * with --past more, of any kind, the way an owner's invoices run.
+ */
+function pastJobs(rng: Rng, owner: SimOwner, count: number): SimJob[] {
   const rule = owner.rules.services[0];
   const [low, high] = rule.sizes;
-  return [0.2, 0.5, 0.85].map((share) => {
+  const first = [0.2, 0.5, 0.85].map((share) => {
     const raw = low + (high - low) * share;
     return {
       service: rule.name,
@@ -107,6 +110,10 @@ function pastJobs(rng: Rng, owner: SimOwner): SimJob[] {
       second: null,
     };
   });
+  return [
+    ...first,
+    ...Array.from({ length: Math.max(0, count - 3) }, () => drawJob(rng, owner, 'any')),
+  ];
 }
 
 /**
@@ -119,6 +126,7 @@ async function seedOwner(
   rng: { past: Rng; practice: Rng },
   start: Date,
   plan: { shape: Shape; extra?: number }[],
+  past: number,
 ) {
   const id = randomUUID();
   await mutate(
@@ -136,7 +144,7 @@ async function seedOwner(
       'INSERT INTO offerings (id,business_id,name,custom,position) VALUES (?,?,?,FALSE,?)',
       [randomUUID(), id, rule.name, position],
     );
-  for (const job of pastJobs(rng.past, owner)) {
+  for (const job of pastJobs(rng.past, owner, past)) {
     const record = pastJobRecord(owner, job);
     await mutate(
       "INSERT INTO past_jobs (id,business_id,service_name,description,price_cents,size,notes,created_at) VALUES (?,?,?,?,?,?,'',?)",
@@ -327,6 +335,7 @@ async function main() {
   const curve = process.argv.includes('--curve');
   const formula = process.argv.includes('--formula');
   const messy = process.argv.includes('--messy');
+  const past = number('past', 3, 50);
   const planName = option('practice') ?? PLAN;
   const plan = PLANS[planName];
   if (!plan)
@@ -345,6 +354,7 @@ async function main() {
       { past: seeded(base + 1), practice: seeded(base + 2) },
       start,
       plan,
+      past,
     );
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
@@ -491,7 +501,7 @@ async function main() {
   out.push(
     `PriceCharm simulated-owner benchmark, ${new Date().toISOString().slice(0, 10)}, seed ${seed}`,
     '',
-    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from 3 past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
+    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
     '',
     `All ${scored.length} jobs:`,
   );

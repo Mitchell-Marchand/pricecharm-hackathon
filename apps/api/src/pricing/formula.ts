@@ -284,6 +284,18 @@ export function refineFormula(
       shape: priceShape(service.points),
     })),
   };
+  // A service's minimum that another service's job was also charged is the whole business's.
+  if (best.minimumCents === null)
+    best.minimumCents =
+      best.services.find(
+        (service) =>
+          service.minimumCents &&
+          examples.some(
+            (example) =>
+              !same(example.parts.service, service.name) &&
+              Math.abs(example.totalCents - service.minimumCents!) <= service.minimumCents! * 0.01,
+          ),
+      )?.minimumCents ?? null;
   for (const [index, surcharge] of formula.surcharges.entries()) {
     const mains = examples
       .filter((example) => example.parts.surcharges.some((name) => same(name, surcharge.name)))
@@ -293,10 +305,20 @@ export function refineFormula(
       })
       .filter((cents): cents is number => cents !== null && cents > 0);
     if (!mains.length) continue;
+    // One job can't tell a percent from a flat amount, so it's read as a percent.
+    if (mains.length === 1 && surcharge.percent === null)
+      best = {
+        ...best,
+        surcharges: best.surcharges.map((item, at) =>
+          at === index
+            ? { ...item, percent: ((item.flatCents ?? 0) / mains[0]) * 100, flatCents: null }
+            : item,
+        ),
+      };
     // Each job that had it gives one way to turn the amount into the other kind, and a percent is
     // also searched from none to 80% in half points, since rounding can hide the right one.
     const others: FormulaSurcharge[] = [
-      ...[...new Set(mains)].map((main) =>
+      ...[...new Set(mains.length > 1 ? mains : [])].map((main) =>
         surcharge.percent !== null
           ? { ...surcharge, percent: null, flatCents: Math.round((main * surcharge.percent) / 100) }
           : { ...surcharge, percent: ((surcharge.flatCents ?? 0) / main) * 100, flatCents: null },
@@ -345,8 +367,14 @@ export function refineFormula(
           : []),
       );
     }
+    // From one job, per unit and per job give it back equally, so how it's charged stays the
+    // AI's reading of how the trade charges it, unless that reading can't give the job back.
+    const seen = examples.filter((example) =>
+      example.parts.addOns.some((item) => same(item.name, addOn.name)),
+    ).length;
+    const sameWay = candidates.filter((other) => other.per === addOn.per);
     let current = miss(best);
-    for (const other of candidates) {
+    for (const other of seen > 1 || !sameWay.length ? candidates : sameWay) {
       const alternative = {
         ...best,
         addOns: best.addOns.map((item, at) => (at === index ? other : item)),

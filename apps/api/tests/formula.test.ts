@@ -238,3 +238,29 @@ test('“the inside too” with no size of its own is priced at the same size', 
     [16000, 12000],
   );
 });
+
+test('from one job, an add-on keeps how the AI read it’s charged, and a surcharge is a percent', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  const read = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [{ name: 'Second story', when: 'two-story', percent: null, flatCents: 4800 }],
+    addOns: [{ name: 'Screens', per: 'unit' as const, cents: 150 }],
+  };
+  const job = (surcharges: string[], addOns: { name: string; count: null }[]) => ({
+    service: 'Exterior windows',
+    size: 20,
+    surcharges,
+    addOns,
+    otherServices: [],
+  });
+  // 20 windows at $8: $40 more for screens on one job, $48 for a second story on another.
+  const refined = refineFormula(read, [
+    { parts: job([], [{ name: 'Screens', count: null }]), totalCents: 20000 },
+    { parts: job(['Second story'], []), totalCents: 20800 },
+  ]);
+  assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
+  assert.equal(refined.surcharges[0].flatCents, null);
+  assert.equal(refined.surcharges[0].percent, 30);
+});
