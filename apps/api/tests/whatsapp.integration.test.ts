@@ -225,18 +225,18 @@ test(
     // A webhook Meta didn't sign is turned away.
     assert.equal((await post({ messages: [] }, 'another-secret')).status, 401);
 
-    // 1. The first message starts a chat with the name and number Meta passes on. The Charm says
-    // who it is, then asks its question, and the customer sees it typing first.
+    // 1. The first message starts a chat with the name and number Meta passes on. The Charm's
+    // first reply says hello and who it is, and asks its question, all in one message, and the
+    // customer sees it typing first.
     const sam = { phone: '16505551234', userId: 'US.1349', name: 'Sam Kim' };
     let replies = await says(sam, text('Driveways'));
     assert.deepEqual(typing, ['wamid.in-1']);
-    assert.equal(replies.length, 2, JSON.stringify(replies));
+    assert.equal(replies.length, 1, JSON.stringify(replies));
     assert.equal(replies[0].to, '16505551234');
     assert.match(
       replies[0].text.body,
-      /^Hi! I’m the quote assistant for Moss & Stone Exterior Care\./,
+      /^\[Demo\] Hi Sam! I’m the quote assistant for Moss & Stone Exterior Care\. \S/,
     );
-    assert.match(replies[1].text.body, /^\[Demo\] Thanks!/);
     const [chat] = await rows('SELECT * FROM lead_chats WHERE channel_user_id=?', [sam.userId]);
     assert.equal(chat.source, 'whatsapp');
     assert.equal(chat.customer_name, 'Sam Kim');
@@ -258,11 +258,11 @@ test(
     assert.equal(quote.status, 'sent');
     const quoteMessage = replies.find((reply) => reply.type === 'interactive');
     assert.ok(quoteMessage, JSON.stringify(replies));
-    assert.equal(
-      replies.indexOf(quoteMessage),
-      replies.findIndex((reply) => /Here’s your quote, Sam\./.test(reply.text?.body ?? '')) + 1,
-      'The quote follows the line that introduces it',
+    assert.ok(
+      !replies.some((reply) => /Here’s your quote/.test(reply.text?.body ?? '')),
+      'The quote says what it is, without a line before it',
     );
+    assert.equal(replies.at(-1), quoteMessage, 'The quote comes after the Charm’s last word');
     assert.match(quoteMessage.interactive.body.text, /^\*Quote from Moss & Stone Exterior Care\*/);
     assert.match(
       quoteMessage.interactive.body.text,
@@ -316,12 +316,12 @@ test(
     replies = await says(sam, tap(QUOTE.question, 'Ask a question'));
     assert.match(
       replies[0].text.body,
-      /^Sure, what would you like to know\? I’ll pass it on to Maya\./,
+      /^Sure, what would you like to know\? I’ll pass it on to Maya at Moss & Stone Exterior Care\./,
     );
     replies = await says(sam, text('Can you also do the front path?'));
     assert.deepEqual(
       replies.map((reply) => reply.text.body),
-      ['I’ve passed that on to Maya. They’ll reply to you here.'],
+      ['I’ve passed that on to Maya at Moss & Stone Exterior Care. They’ll reply to you here.'],
     );
     replies = await says(sam, text('It’s about 30 feet.'));
     assert.deepEqual(replies, [], 'Said once is enough');
@@ -338,14 +338,17 @@ test(
       .send({ text: 'Sure, add $40 for the path.' })
       .expect(200);
     await deliverWaiting();
-    assert.equal(sent.at(-1)?.text.body, '*Maya*\nSure, add $40 for the path.');
+    assert.equal(
+      sent.at(-1)?.text.body,
+      '*Maya at Moss & Stone Exterior Care*\nSure, add $40 for the path.',
+    );
 
     // 5. The yes is a tap. It's recorded as on the chat page, and the owner hears about it.
     replies = await says(sam, tap(QUOTE.accept, String(quote.accept_label)));
     const [accepted] = await rows('SELECT status FROM live_quotes WHERE id=?', [quote.id]);
     assert.equal(accepted.status, 'accepted');
     assert.equal(replies.length, 1);
-    assert.match(replies[0].text.body, /Maya will be in touch/);
+    assert.match(replies[0].text.body, /Maya at Moss & Stone Exterior Care will be in touch/);
     assert.ok((await keys()).includes(`owner-accepted:${chat.id}:once`));
 
     // A day after the customer last wrote, WhatsApp won't deliver, so the owner hears that now

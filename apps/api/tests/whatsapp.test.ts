@@ -227,7 +227,8 @@ test('a quote is one message with its lines, total, link and the web card’s bu
     quote: card,
     totalCents: 25245,
     business: 'Bright Panes',
-    owner: 'Dana',
+    owner: 'Dana at Bright Panes',
+    sent: { photos: true, video: false },
     acceptLabel: 'Works for me',
     link: 'https://pricecharm.com/q/bright#chat=1&token=t',
   });
@@ -243,13 +244,14 @@ test('a quote is one message with its lines, total, link and the web card’s bu
       '• Second visit: −$28.05',
       '',
       '*Total: $252.45*',
-      'Next week · About 3 hours',
-      'Based on the photos and details you shared.',
+      'Can start: Next week · Takes about 3 hours',
+      'Based on your photos and what you told us.',
       '',
       'See the full quote: https://pricecharm.com/q/bright#chat=1&token=t',
     ].join('\n'),
   );
-  assert.equal(message.footer, 'No payment now. Dana will reach out to book a time.');
+  // The longest line that fits WhatsApp's 60 characters, naming who books it.
+  assert.equal(message.footer, 'No payment now. Dana at Bright Panes will reach out to book.');
   assert.deepEqual(
     message.buttons.map((button) => [button.id, button.title]),
     [
@@ -270,7 +272,8 @@ test('a price range shows what’s included but not what each part costs', () =>
     },
     totalCents: 28050,
     business: 'Bright Panes',
-    owner: 'Dana',
+    owner: 'Dana at Bright Panes',
+    sent: { photos: false, video: true },
     acceptLabel: 'Looks good to me',
     link: 'https://pricecharm.com/q/bright',
   });
@@ -278,7 +281,12 @@ test('a price range shows what’s included but not what each part costs', () =>
   assert.match(message.text, /^• Outside windows \(24\)$/m);
   assert.doesNotMatch(message.text, /\$240|\$40\.50|\$280/);
   assert.match(message.text, /\*Price range: \$250 to \$325\*/);
-  assert.match(message.text, /Dana confirms the final price before starting\./);
+  // It says what the customer sent and names no one they haven't met.
+  assert.match(
+    message.text,
+    /A price range based on your video\. You’ll know the exact price before any work starts\./,
+  );
+  assert.doesNotMatch(message.text, /Dana/);
 });
 
 test('every part of a quote message fits WhatsApp’s limits, however long the quote', () => {
@@ -291,7 +299,8 @@ test('every part of a quote message fits WhatsApp’s limits, however long the q
     quote: { ...card, lines, discount: null },
     totalCents: 900000,
     business: 'A Painting Company With Quite a Long Name LLC',
-    owner: 'Alexandra Konstantinopoulou',
+    owner: 'Alexandra Konstantinopoulou at A Painting Company With Quite a Long Name LLC',
+    sent: { photos: false, video: false },
     acceptLabel: 'An owner wording that runs long',
     link: `https://pricecharm.com/q/painting#chat=${'c'.repeat(36)}&token=${'t'.repeat(43)}`,
   });

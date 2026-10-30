@@ -522,6 +522,10 @@ export function notesFor(walkaround: Omit<Walkaround, 'notes'>): string[] {
       `The ${walkaround.area.surface} in the ${where} looks like about ${formatNumber(walkaround.area.low)} to ${formatQuantity(walkaround.area.high, walkaround.area.unit)}, sized from ${walkaround.area.basis || 'what it shows'}.`,
     );
   if (walkaround.material) notes.push(`It's ${walkaround.material}.`);
+  // So the assistant doesn't ask what the customer already showed.
+  if (walkaround.condition)
+    notes.push(`Its condition, from the ${where}: ${walkaround.condition}.`);
+  if (walkaround.access) notes.push(`Getting to it, from the ${where}: ${walkaround.access}.`);
   for (const finding of walkaround.findings ?? [])
     notes.push(
       `${finding.what[0].toUpperCase()}${finding.what.slice(1)}${finding.detail ? `: ${finding.detail}` : ''}${finding.severity ? ` (${finding.severity} extra work)` : ''}.`,

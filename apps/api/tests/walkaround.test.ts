@@ -312,6 +312,9 @@ test('photos are read like a video: counted by SAM, each find graded up close, a
   assert.ok(result.notes.includes('Hard-water stains: on the lower panes (heavy extra work).'));
   assert.ok(result.notes.includes('Screens: one torn.'));
   assert.ok(result.notes.includes("It's vinyl frames."));
+  // So the chat doesn't ask what the photos already show.
+  assert.ok(result.notes.includes('Its condition, from the photos: stained.'));
+  assert.ok(result.notes.includes('Getting to it, from the photos: second story.'));
 });
 
 test('graded finds group by kind, most common condition first, without SAM’s mistakes', () => {

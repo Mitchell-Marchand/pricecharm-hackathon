@@ -52,7 +52,8 @@ export interface ChatView {
     /** The words on its accept button. Missing from older APIs. */
     acceptLabel?: string;
     /** Their photo and a picture of the job done, once it's drawn. Missing from older APIs. */
-    preview?: { before: string; after: string } | null;
+    /** `from` is missing from older APIs, which drew it from a photo. */
+    preview?: { before: string; after: string; from?: 'photo' | 'video' } | null;
   } | null;
   waitingForOwner: boolean;
   /** In an owner's test, why this quote would wait for them. Missing from older APIs. */

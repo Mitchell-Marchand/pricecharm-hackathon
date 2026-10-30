@@ -20,9 +20,7 @@ async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
     await page.locator('input[type=file][accept="image/*"]').setInputFiles(photo);
     await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
     // Like a video, the photo is read while the chat says so, and the assistant carries on after.
-    await expect(
-      page.getByText('Looking over your photos and counting what’s in them…'),
-    ).toBeVisible();
+    await expect(page.getByText('Looking over your photos…')).toBeVisible();
   } else await page.getByRole('button', { name: 'Skip photos' }).click();
 }
 
@@ -180,7 +178,13 @@ test('the owner trying their own link always sees the quote, and why it would wa
   const quote = page.getByRole('article', { name: /from Moss & Stone.*price range \$/ });
   await expect(quote).toBeVisible();
   await expect(quote).toContainText('Price range');
-  await expect(page.getByText(/Maya confirms the final price before starting\./)).toBeVisible();
+  // It says what the price is based on, and names no one the customer hasn't met.
+  await expect(
+    page.getByText(
+      'A price range based on what you told us. You’ll know the exact price before any work starts.',
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(/confirms the final price/)).toHaveCount(0);
   await expect(page.getByText(/will look this over/)).toHaveCount(0);
 
   // Checking each quote first: it still shows the draft, and why a customer would wait.

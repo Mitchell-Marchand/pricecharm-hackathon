@@ -53,13 +53,27 @@ export function rangeOf(quote: Pick<Quote, 'style' | 'range'>) {
   return quote.style === 'range' && quote.range ? quote.range : null;
 }
 
-/** The line under a customer's quote, saying how firm the price is. */
-export function quoteFootnote(quote: Pick<Quote, 'style' | 'range'>, owner: string) {
+/** What the customer sent with their request, as the quote says it's based on it. */
+function basedOn(sent: { photos: boolean; video: boolean }) {
+  if (sent.photos && sent.video) return 'your photos and video';
+  if (sent.video) return 'your video';
+  if (sent.photos) return 'your photos';
+  return 'what you told us';
+}
+
+/** The line under a customer's quote, saying how firm the price is and what it's based on. */
+export function quoteFootnote(
+  quote: Pick<Quote, 'style' | 'range'>,
+  sent: { photos: boolean; video: boolean },
+) {
+  const from = basedOn(sent);
   if (rangeOf(quote))
-    return `A price range from the photos and details you shared. ${owner} confirms the final price before starting.`;
+    return `A price range based on ${from}. You’ll know the exact price before any work starts.`;
   if (quote.style === 'estimate')
-    return `An estimate from the photos and details you shared. ${owner} confirms the final price before starting.`;
-  return 'Based on the photos and details you shared.';
+    return `An estimate based on ${from}. You’ll know the exact price before any work starts.`;
+  return from === 'what you told us'
+    ? 'Based on what you told us.'
+    : `Based on ${from} and what you told us.`;
 }
 
 /** A range around the total, rounded outward like the server's. */

@@ -42,7 +42,13 @@ import { liveBillingAccess, recordAcceptance, recordLiveDelivery } from './billi
 import { lossReasonPhrase, type LossReason } from './outcomes.js';
 import { recordActivity } from '../metrics.js';
 import { chooseAcceptLabel, DEFAULT_ACCEPT_LABEL } from './accept-wording.js';
-import { acceptedMessage, businessLogo, contactName, visitMessage } from './quote-page.js';
+import {
+  acceptedMessage,
+  businessLogo,
+  contactAt,
+  contactName,
+  visitMessage,
+} from './quote-page.js';
 import { previewView, startAfterPreview } from './previews.js';
 import {
   photoReading,
@@ -187,10 +193,6 @@ export async function addMessage(
 export const greeting = (businessName: string) =>
   `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
 
-/** On WhatsApp the customer writes first, so the greeting doesn't ask what they need. */
-const channelGreeting = (businessName: string) =>
-  `Hi! I’m the quote assistant for ${businessName}. I can put a price together for you right here.`;
-
 /** Who a WhatsApp chat is with: Meta's ID for them on the business's number, and what Meta shares. */
 export type ChannelCustomer = {
   accountId: string;
@@ -202,7 +204,8 @@ export type ChannelCustomer = {
 /**
  * Starts a quote chat. The owner's own test chats are marked so they're never billed or emailed.
  * A WhatsApp chat starts with the name and number Meta passes on, so the customer is never asked
- * for a way to reach them.
+ * for a way to reach them. The customer wrote first there, so there's no greeting: the
+ * assistant's first reply says who it is.
  */
 export async function startChat(
   business: Row,
@@ -232,13 +235,14 @@ export async function startChat(
       ref: id,
       detail: source,
     });
-    await addMessage(connection, {
-      businessId: String(business.id),
-      chatId: id,
-      sender: 'assistant',
-      text: customer ? channelGreeting(String(business.name)) : greeting(String(business.name)),
-      chips: offered.slice(0, 6),
-    });
+    if (!customer)
+      await addMessage(connection, {
+        businessId: String(business.id),
+        chatId: id,
+        sender: 'assistant',
+        text: greeting(String(business.name)),
+        chips: offered.slice(0, 6),
+      });
   });
   return { token, chatId: id };
 }
@@ -462,6 +466,10 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
         photoNotes: photos?.notes.length ? photos.notes : undefined,
         videoNotes: measured.flatMap((result) => result.notes),
         contactFirst,
+        // On WhatsApp the customer writes first, so the first reply says who it is.
+        ...(chat.channel_account_id
+          ? { customerStarted: { firstName: String(chat.customer_name).trim().split(/\s+/)[0] } }
+          : {}),
       },
       await chatImages(String(business.id), String(chat.id)),
     ),
@@ -1079,13 +1087,15 @@ export async function markSent(
     value: Number(quote.total_cents),
   });
   const first = String(chat.customer_name).trim().split(/\s+/)[0];
-  await addMessage(connection, {
-    businessId: input.businessId,
-    chatId: String(quote.chat_id),
-    sender: 'assistant',
-    kind: 'status',
-    text: `Here’s your quote${first ? `, ${first}` : ''}.${chat.customer_email ? ' A copy is on its way to your inbox.' : ''}`,
-  });
+  // On WhatsApp the quote comes as its own message that says what it is.
+  if (!chat.channel_account_id)
+    await addMessage(connection, {
+      businessId: input.businessId,
+      chatId: String(quote.chat_id),
+      sender: 'assistant',
+      kind: 'status',
+      text: `Here’s your quote${first ? `, ${first}` : ''}.${chat.customer_email ? ' A copy is on its way to your inbox.' : ''}`,
+    });
   if (input.test || !hasContact(chat)) return;
   await notifyCustomerQuote(
     connection,
@@ -1295,7 +1305,10 @@ export async function decide(
         quoteId: String(quote.id),
         totalCents: Number(quote.total_cents),
       });
-    const owner = (await contactName(business)) || String(business.name);
+    // On WhatsApp nothing says who the owner is, so they're named with the business.
+    const owner = chat.channel_account_id
+      ? await contactAt(business)
+      : (await contactName(business)) || String(business.name);
     await addMessage(connection, {
       businessId: String(business.id),
       chatId: String(chat.id),
@@ -1319,9 +1332,11 @@ export async function decide(
           ? await acceptedMessage(
               business,
               json<Quote | null>(quote.quote_json, null)?.style === 'range',
+              undefined,
+              owner,
             )
           : decision === 'visit'
-            ? await visitMessage(business)
+            ? await visitMessage(business, undefined, owner)
             : `Thanks for letting ${owner} know.`,
     });
     if (chat.source !== 'test')

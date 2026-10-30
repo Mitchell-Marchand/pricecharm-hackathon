@@ -26,8 +26,8 @@ import {
 import { recordLiveDelivery } from '../live/billing.js';
 import { lossReasons, type LossReason } from '../live/outcomes.js';
 import { readPhotos } from '../live/photo-readings.js';
-import { previewFile } from '../live/previews.js';
-import { contactName } from '../live/quote-page.js';
+import { previewPair } from '../live/previews.js';
+import { contactAt } from '../live/quote-page.js';
 import { kickVideos, storeVideo } from '../live/videos.js';
 import {
   CHIP,
@@ -60,12 +60,13 @@ import {
 const BURST_MS = 1500;
 /** How long one answer may hold a sender before someone else may pick them up. */
 const LEASE_SECONDS = 180;
-/** markSent writes "Here's your quote" just after it marks the quote sent; the quote follows it. */
+/** The quote goes out after anything the chat said up to just after it was marked sent. */
 const QUOTE_INTRO_MS = 2000;
 const MAX_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
-const PREVIEW_CAPTION =
-  'What it could look like when it’s done. This picture was made with AI from your photo, so the real result can look different.';
+/** Under the before-and-after: what the right side is, and that AI made it. */
+const previewCaption = (from: 'photo' | 'video') =>
+  `Now, and what it could look like when it’s done. The after side was made with AI from your ${from}, so the real result can look different.`;
 
 /** Our test number sends with the platform's token. Each business's own comes with Embedded Signup. */
 function lineFor(account: Row): Line {
@@ -191,7 +192,8 @@ async function answerWaiting(accountId: string, sender: string) {
     [messages[0].name, chatId],
   );
   const asker: Asker = { ip: `wa:${sender}`.slice(0, 64) };
-  const owner = (await contactName(business)) || String(business.name);
+  // Nothing on WhatsApp says who the owner is, so they're named with the business.
+  const owner = await contactAt(business);
   let carryOn = false,
     forOwner = false;
   try {
@@ -440,11 +442,7 @@ async function video(line: Line, business: Row, chat: Row, message: Inbound, ask
   const { bytes } = await download(line, message.mediaId, MAX_VIDEO_BYTES);
   const { durationMs, stills } = await stillsFrom(bytes);
   await storeVideo(business, chat, { bytes, durationMs, stills, requester: String(asker.ip) });
-  await note(
-    business,
-    chatId,
-    'Got your video. I’m counting what’s in it now, which takes a minute or two.',
-  );
+  await note(business, chatId, 'Thanks! I’m watching your video now. This takes a minute or two.');
   await kickVideos(chatId);
   return null;
 }
@@ -501,7 +499,7 @@ async function deliver(chatId: string): Promise<void> {
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
   const line = lineFor(chat);
   const to = addressee(chat);
-  const owner = (await contactName(business)) || String(business.name);
+  const owner = await contactAt(business);
   const messages = await rows(
     "SELECT * FROM lead_messages WHERE chat_id=? AND sender IN ('assistant','owner') AND channel_sent_at IS NULL AND channel_status IS NULL ORDER BY created_at,id",
     [chatId],
@@ -516,6 +514,11 @@ async function deliver(chatId: string): Promise<void> {
     const card = json<Quote | null>(quote.quote_json, null);
     if (!card) return true;
     const { link } = await chatEmailLink(undefined, String(business.slug), chatId);
+    const [media] = await rows(
+      `SELECT (SELECT COUNT(*) FROM attachments WHERE conversation_id=?) AS photos,
+         (SELECT COUNT(*) FROM lead_videos WHERE chat_id=?) AS videos`,
+      [chatId, chatId],
+    );
     const result = await attempt(
       line,
       to,
@@ -524,6 +527,7 @@ async function deliver(chatId: string): Promise<void> {
         totalCents: Number(quote.total_cents),
         business: String(business.name),
         owner,
+        sent: { photos: Number(media.photos) > 0, video: Number(media.videos) > 0 },
         acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
         link,
       }),
@@ -562,14 +566,19 @@ async function sendPreview(line: Line, to: Addressee, business: Row, chatId: str
   if (!quote) return;
   let mediaId: string;
   try {
-    mediaId = await upload(line, await previewFile(quote, 'after'), 'image/jpeg');
+    // One picture with both sides, since WhatsApp has no slider to drag across.
+    mediaId = await upload(line, await previewPair(quote), 'image/jpeg');
   } catch (error) {
     if (error instanceof WhatsAppError && error.passing) return;
     reportError(error, { event: 'whatsapp_preview' });
     mediaId = '';
   }
   const result = mediaId
-    ? await attempt(line, to, { kind: 'image', mediaId, caption: PREVIEW_CAPTION })
+    ? await attempt(line, to, {
+        kind: 'image',
+        mediaId,
+        caption: previewCaption(quote.preview_from === 'video' ? 'video' : 'photo'),
+      })
     : { id: null, refused: 'failed' };
   if (!result) return;
   await mutate('UPDATE live_quotes SET channel_preview_sent_at=UTC_TIMESTAMP(3) WHERE id=?', [

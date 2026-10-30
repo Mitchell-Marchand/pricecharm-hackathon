@@ -35,29 +35,47 @@ export async function contactName(business: Row, connection?: Sql) {
   );
 }
 
+/**
+ * The person with the business they're at, "Mitch at Some Window Co", for where customers have
+ * nothing else that says who that is, like WhatsApp. The web chat shows it at the top.
+ */
+export async function contactAt(business: Row, connection?: Sql) {
+  const name = await contactName(business, connection);
+  return name && name !== String(business.name)
+    ? `${name} at ${business.name}`
+    : String(business.name);
+}
+
 /** What the chat says after a customer accepts, unless the owner wrote their own. */
 export const defaultAcceptedMessage = (who: string, range = false) =>
   range
-    ? `You’re all set. ${who} will confirm the final price and be in touch to schedule.`
+    ? `You’re all set. ${who} will confirm the exact price and be in touch to schedule.`
     : `You’re all set. ${who} will be in touch to schedule.`;
 export const defaultVisitMessage = (who: string) =>
   `Got it. ${who} will get in touch to set up a visit.`;
 
-export async function acceptedMessage(business: Row, range: boolean, connection?: Sql) {
+/** `who` names the person, when the chat says it another way than the owner's name alone. */
+export async function acceptedMessage(
+  business: Row,
+  range: boolean,
+  connection?: Sql,
+  who?: string,
+) {
   const own = String(business.accepted_message ?? '').trim();
   return (
     own ||
     defaultAcceptedMessage(
-      (await contactName(business, connection)) || String(business.name),
+      who ?? ((await contactName(business, connection)) || String(business.name)),
       range,
     )
   );
 }
 
-export async function visitMessage(business: Row, connection?: Sql) {
+export async function visitMessage(business: Row, connection?: Sql, who?: string) {
   const own = String(business.visit_message ?? '').trim();
   return (
-    own || defaultVisitMessage((await contactName(business, connection)) || String(business.name))
+    own ||
+    defaultVisitMessage(who ?? ((await contactName(business, connection)) || String(business.name)))
   );
 }
 

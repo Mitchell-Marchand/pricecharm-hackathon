@@ -77,3 +77,36 @@ test('a rejected picture fails without retrying', async () => {
   );
   assert.equal(calls, 1);
 });
+
+test('an after picture only shows when Muse Spark sees the job done next to the photo', async () => {
+  const before = { mimeType: 'image/jpeg', dataBase64: await photo(64, 64) };
+  const after = { mimeType: 'image/jpeg', dataBase64: await photo(64, 64) };
+  for (const visible of [true, false]) {
+    let request: any;
+    globalThis.fetch = async (_url, init) => {
+      request = JSON.parse(String(init?.body));
+      return Response.json({
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: JSON.stringify({ visible, why: 'checked' }) }],
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+    };
+    assert.equal(
+      await preview.afterShowsChange({
+        trade: 'Window cleaning',
+        serviceName: 'Interior windows',
+        before,
+        after,
+      }),
+      visible,
+    );
+    // Both pictures go to the model, before first.
+    const images = JSON.stringify(request).match(/data:image\/jpeg;base64,/g) ?? [];
+    assert.equal(images.length, 2);
+  }
+});

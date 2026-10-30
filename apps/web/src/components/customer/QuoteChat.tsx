@@ -440,7 +440,10 @@ export function QuoteChat({
                           : undefined
                     }
                     animate={freshQuote}
-                    footnote={quoteFootnote(chat.quote.card, ownerName)}
+                    footnote={quoteFootnote(chat.quote.card, {
+                      photos: messages.some((message) => message.photos.length > 0),
+                      video: messages.some((message) => message.video),
+                    })}
                     actions={
                       quoteOpen ? (
                         <>
@@ -684,9 +687,7 @@ export function QuoteChat({
 
         {measuring && (
           <p className="py-2 text-sm text-muted">
-            {chat?.measuringPhotos
-              ? 'Looking over your photos and counting what’s in them…'
-              : 'Watching your video and counting what’s in it…'}
+            {chat?.measuringPhotos ? 'Looking over your photos…' : 'Watching your video…'}
           </p>
         )}
 
@@ -914,7 +915,7 @@ function QuotePreview({
   preview,
   access,
 }: {
-  preview: { before: string; after: string };
+  preview: { before: string; after: string; from?: 'photo' | 'video' };
   access: ChatAccess;
 }) {
   const [sources, setSources] = useState<{ before: string; after: string } | null>(null);
@@ -939,7 +940,7 @@ function QuotePreview({
       <BeforeAfter
         before={sources.before}
         after={sources.after}
-        caption="What it could look like when it’s done. This picture was made with AI from your photo, so the real result can look different."
+        caption={`What it could look like when it’s done. This picture was made with AI from your ${preview.from === 'video' ? 'video' : 'photo'}, so the real result can look different.`}
       />
     </div>
   );

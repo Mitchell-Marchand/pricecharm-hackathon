@@ -443,13 +443,28 @@ export const QUOTE = {
 } as const;
 export const REASON = 'reason:';
 
+/** What the customer sent with their request, which the quote says it's based on. */
+export type Sent = { photos: boolean; video: boolean };
+
+const basedOn = (sent: Sent) =>
+  sent.photos && sent.video
+    ? 'your photos and video'
+    : sent.video
+      ? 'your video'
+      : sent.photos
+        ? 'your photos'
+        : 'what you told us';
+
 /** Under the price: the same note the quote card on the web carries. */
-function footnote(quote: Pick<Quote, 'style' | 'range'>, owner: string) {
+function footnote(quote: Pick<Quote, 'style' | 'range'>, sent: Sent) {
+  const from = basedOn(sent);
   if (quote.style === 'range' && quote.range)
-    return `A price range from the photos and details you shared. ${owner} confirms the final price before starting.`;
+    return `A price range based on ${from}. You’ll know the exact price before any work starts.`;
   if (quote.style === 'estimate')
-    return `An estimate from the photos and details you shared. ${owner} confirms the final price before starting.`;
-  return 'Based on the photos and details you shared.';
+    return `An estimate based on ${from}. You’ll know the exact price before any work starts.`;
+  return from === 'what you told us'
+    ? 'Based on what you told us.'
+    : `Based on ${from} and what you told us.`;
 }
 
 /**
@@ -460,7 +475,9 @@ export function quoteMessage(input: {
   quote: Quote;
   totalCents: number;
   business: string;
+  /** Who books the job, as customers hear it: "Mitch at Some Window Co". */
   owner: string;
+  sent: Sent;
   acceptLabel: string;
   link: string;
 }): Outbound {
@@ -471,7 +488,12 @@ export function quoteMessage(input: {
   );
   const off = discountCents(quote);
   if (off > 0 && !range) lines.push(`• ${quote.discount?.reason || 'Discount'}: −${money(off)}`);
-  const when = [quote.start, quote.duration].filter(Boolean).join(' · ');
+  const when = [
+    quote.start ? `Can start: ${quote.start}` : '',
+    quote.duration ? `Takes about ${quote.duration.replace(/^about\s+/i, '')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const compose = (shown: string[]) =>
     [
       `*${quote.style === 'estimate' ? 'Estimate' : 'Quote'} from ${input.business}*`,
@@ -480,7 +502,7 @@ export function quoteMessage(input: {
       '',
       `*${range ? 'Price range' : 'Total'}: ${priceText(quote, input.totalCents)}*`,
       ...(when ? [when] : []),
-      footnote(quote, input.owner),
+      footnote(quote, input.sent),
       '',
       `See the full quote: ${input.link}`,
     ].join('\n');
@@ -491,11 +513,17 @@ export function quoteMessage(input: {
     shown--;
     text = compose([...lines.slice(0, shown), `• and ${lines.length - shown} more`]);
   }
-  const footer = `No payment now. ${input.owner} will reach out to book a time.`;
+  // The longest that fits WhatsApp's footer.
+  const footer =
+    [
+      `No payment now. ${input.owner} will reach out to book a time.`,
+      `No payment now. ${input.owner} will reach out to book.`,
+      `No payment now. ${input.business} will reach out to book.`,
+    ].find((line) => line.length <= LIMITS.footer) ?? 'No payment now.';
   return {
     kind: 'buttons',
     text: text.slice(0, LIMITS.body),
-    footer: footer.length <= LIMITS.footer ? footer : 'No payment now.',
+    footer,
     buttons: [
       {
         id: QUOTE.accept,
