@@ -97,7 +97,8 @@ function straightLine(points: Point[]) {
  * - between two of them, on a straight line, or at the nearer one's price when they price by
  *   size bands, or on the one line closest to all of them when they price by eye;
  * - past the biggest, carrying on at their rate across everything they've priced;
- * - below the smallest, scaled down from the smallest (a minimum still applies on top).
+ * - below the smallest, scaled down from the smallest, or its price when they price by bands
+ *   (a minimum still applies on top).
  * With no prices at sizes, it's the rate.
  */
 export function mainWork(service: FormulaService, size: number): number | null {
@@ -128,7 +129,8 @@ export function mainWork(service: FormulaService, size: number): number | null {
     const rate = slope >= perUnit * 0.4 && slope <= perUnit * 1.5 ? slope : perUnit;
     return last.cents + rate * (size - last.size);
   }
-  if (first && size < first.size) return (first.cents * size) / first.size;
+  if (first && size < first.size)
+    return service.shape === 'bands' ? first.cents : (first.cents * size) / first.size;
   if (service.rateCents) return service.rateCents * size;
   if (first) return (first.cents * size) / first.size;
   return null;

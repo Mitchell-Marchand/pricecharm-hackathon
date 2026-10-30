@@ -379,7 +379,11 @@ export function drawJob(
           ? Math.round(low + (high - low) * between(rng, 0.6, 0.85))
           : shape === 'any'
             ? Math.round(between(rng, low, high))
-            : Math.round(low + (high - low) * between(rng, 0.35, 0.55));
+            : // A practice job that shows one extra or condition is big enough that a minimum
+              // can't hide what it costs.
+              shape === 'plain' || shape === 'other' || shape === 'tall'
+              ? Math.round(low + (high - low) * between(rng, 0.55, 0.8))
+              : Math.round(low + (high - low) * between(rng, 0.35, 0.55));
   const sized =
     rule.unit === 'windows' || rule.unit === 'ft' ? quantity : Math.round(quantity / 10) * 10;
   const addOns: SimJob['addOns'] = [];

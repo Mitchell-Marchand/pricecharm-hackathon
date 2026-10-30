@@ -116,7 +116,7 @@ test('an owner who prices by size bands is priced at the nearer size they charge
   };
   assert.equal(mainWork(bands, 31), 22000, 'Nearer 27 than 40');
   assert.equal(mainWork(bands, 37), 35000);
-  assert.equal(mainWork(bands, 10), (22000 * 10) / 23, 'Below the smallest, scaled down from it');
+  assert.equal(mainWork(bands, 10), 22000, 'Below the smallest, in the smallest band');
 });
 
 test('a surcharge is read as a percent or a flat amount, whichever gives back the owner’s quotes', async () => {
