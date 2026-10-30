@@ -20,7 +20,12 @@ import {
 } from './bench/owners.js';
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
-import { draftWithFormula, learnedFormula } from './pricing/formula-draft.js';
+import {
+  draftWithFormula,
+  holdFailedFormulas,
+  learnedFormula,
+  type Learned,
+} from './pricing/formula-draft.js';
 import { describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
@@ -378,6 +383,8 @@ async function main() {
     );
   const counted = <T>(businessId: string, task: () => Promise<T>) =>
     retried(() => tallied(businessId, task));
+  /** Each owner's formula from before pricing started, so the report never works one out again. */
+  const formulas = new Map<string, Learned | null>();
   const tasks: (() => Promise<void>)[] = [];
   for (const test of tests) {
     const owner = owners[test.owner];
@@ -453,12 +460,17 @@ async function main() {
     // Each owner's formula is worked out before any job is priced, a few at a time, so the long
     // calls don't all hit the API at once.
     console.info(`Working out ${owners.length} owners’ formulas.`);
+    holdFailedFormulas(null);
     const ids = [...new Set(tests.map((test) => test.businessId))];
     await pool(
       ids.map((id) => async () => {
         // Learning retries on its own, so it isn't retried again here.
-        await tallied(id, () => learnedFormula(id, {}, model)).catch((error: unknown) =>
-          console.error(`  ${id}: ${error instanceof Error ? error.message : error}`),
+        formulas.set(
+          id,
+          await tallied(id, () => learnedFormula(id, {}, model)).catch((error: unknown) => {
+            console.error(`  ${id}: ${error instanceof Error ? error.message : error}`);
+            return null;
+          }),
         );
       }),
       3,
@@ -527,9 +539,7 @@ async function main() {
     let fitting = 0;
     for (const [index, owner] of owners.entries()) {
       const businessId = tests.find((test) => test.owner === index)?.businessId;
-      const result = businessId
-        ? await learnedFormula(businessId, {}, model).catch(() => null)
-        : null;
+      const result = businessId ? (formulas.get(businessId) ?? null) : null;
       if (result?.fits) fitting++;
       learned.push({
         owner: owner.name,

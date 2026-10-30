@@ -72,6 +72,7 @@ export function modelFor(operation: string): string | undefined {
 function metaReasoning(operation: string) {
   // Nine or ten quotes to explain at once can take Muse Spark well past a draft's reasoning.
   if (operation === 'learn_formula') return { effort: 'medium', allowance: 32000 };
+  if (operation === 'learn_formula_quick') return { effort: 'low', allowance: 16000 };
   return operation === 'draft_quote'
     ? { effort: 'medium', allowance: 6000 }
     : { effort: 'low', allowance: 2500 };

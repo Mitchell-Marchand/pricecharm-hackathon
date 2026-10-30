@@ -86,6 +86,16 @@ export type Learned = LearnedFormula & {
 };
 
 const learning = new Map<string, Promise<Learned | null>>();
+let failedHoldMs: number | null = 10 * 60_000;
+
+/**
+ * How long quotes go the usual way after a formula fails to work out, before it's tried again:
+ * ten minutes by default, or never again in this process with null (the benchmark, so a long run
+ * doesn't keep retrying the same owners).
+ */
+export function holdFailedFormulas(ms: number | null) {
+  failedHoldMs = ms;
+}
 
 /**
  * The owner's formula, worked out once for what they've taught so far. Null when there are too
@@ -102,8 +112,9 @@ export function learnedFormula(
     const key = `${businessId}:${model ?? ''}:${createHash('sha256').update(JSON.stringify(examples)).digest('hex')}`;
     let pending = learning.get(key);
     if (!pending) {
-      const ask = () =>
+      const ask = (quick: boolean) =>
         learnFormula({
+          quick,
           business: {
             trade: data.history.business.trade,
             services: data.history.business.services,
@@ -115,7 +126,8 @@ export function learnedFormula(
       // so it gets two more tries before the quote falls back to the usual draft.
       const attempt = async (tries: number): Promise<Awaited<ReturnType<typeof ask>>> => {
         try {
-          return await ask();
+          // The last try reasons less, so it finishes inside its allowance.
+          return await ask(tries <= 1);
         } catch (error) {
           if (tries <= 1) throw error;
           await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -155,7 +167,9 @@ export function learnedFormula(
       });
       // After a failure, quotes go the usual way for ten minutes before it's tried again, so a
       // run of quotes doesn't retry the same long call one after another.
-      pending.catch(() => setTimeout(() => learning.delete(key), 10 * 60_000).unref());
+      pending.catch(() => {
+        if (failedHoldMs !== null) setTimeout(() => learning.delete(key), failedHoldMs).unref();
+      });
       learning.set(key, pending);
     }
     return pending;
