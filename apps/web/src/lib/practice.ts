@@ -84,7 +84,7 @@ export const retryPractice = (runId: string) =>
 export const finishPractice = () =>
   api<PracticeState>('/onboarding/practice/done', { method: 'POST', ...json({}) });
 /**
- * Another practice customer once setup's three are done, for one service if given. An unfinished
+ * Another practice customer once setup's are done, for one service if given. An unfinished
  * one comes back instead.
  */
 export const morePractice = (service?: string | null) =>

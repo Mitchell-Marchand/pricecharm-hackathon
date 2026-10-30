@@ -10,6 +10,7 @@ import { reportError } from './error-reporting.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { json, type Row } from './models.js';
 import { insertPastJobs, jobInput, listPastJobs } from './past-jobs.js';
+import { refreshFormula } from './pricing/formula-draft.js';
 import { deletePhoto, getPhoto, putPhoto } from './storage.js';
 import { uploadSlot } from './uploads.js';
 import { withAiUsage } from './usage.js';
@@ -298,6 +299,7 @@ jobImportsRouter.post('/onboarding/imports/save', requireWorkspace, async (req, 
       connection,
     );
   });
+  refreshFormula(current.businessId);
   for (const { importId, job } of jobs)
     await recordRequestEvent(
       req,

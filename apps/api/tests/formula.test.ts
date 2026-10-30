@@ -282,3 +282,28 @@ test('below the sizes priced, a band owner’s lowest band can be the one the AI
   assert.equal(mainWork({ ...service, minimumCents: 20000 }, 12), 20000);
   assert.equal(mainWork({ ...service, minimumCents: null }, 12), 32500);
 });
+
+test('a price the owner’s note gives isn’t tuned back to older quotes that disagree', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  const noted = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    addOns: [{ name: 'Screens', per: 'unit' as const, cents: 300 }],
+    setByNotes: ['Screens'],
+  };
+  // Their old quotes charged $2 a window for screens; their note says $3 now.
+  const job = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: [],
+    addOns: [{ name: 'Screens', count: null }],
+    otherServices: [],
+  });
+  const examples = [
+    { parts: job(20), totalCents: 20000 },
+    { parts: job(30), totalCents: 30000 },
+  ];
+  assert.equal(refineFormula(noted, examples).addOns[0].cents, 300);
+  assert.equal(refineFormula({ ...noted, setByNotes: [] }, examples).addOns[0].cents, 200);
+});

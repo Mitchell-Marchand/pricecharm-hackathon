@@ -20,7 +20,7 @@ import { recordRequestEvent, setupFacts } from '../metrics.js';
 import { gapPercent, quoteTotal } from './types.js';
 
 /**
- * Practice customers, the owner's quotes and what the AI picked up: three during setup, and as
+ * Practice customers, the owner's quotes and what the AI picked up: six during setup, and as
  * many more as the owner likes from the Train page.
  */
 export const practiceRouter = Router();
@@ -36,7 +36,7 @@ practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req
 });
 
 /**
- * Another practice customer once setup's three are done: from the Train page, or from the Ready
+ * Another practice customer once setup's are done: from the Train page, or from the Ready
  * screen for a service that isn't sending on its own yet.
  */
 practiceRouter.post(
@@ -50,7 +50,7 @@ practiceRouter.post(
       .parse(req.body ?? {});
     const { businessId, draft } = workspace(req);
     if (draft && (await practiceState(businessId)).finished < PRACTICE_COUNT)
-      throw new ApiError(409, 'PRACTICE_SETUP', 'Finish the three practice customers first.');
+      throw new ApiError(409, 'PRACTICE_SETUP', 'Finish setup’s practice customers first.');
     const focus = service
       ? (await businessContext(businessId)).services.find(
           (name) => name.toLowerCase() === service.toLowerCase(),

@@ -9,6 +9,9 @@ import { useOnboarding } from '@/lib/onboarding';
 import { preparePractice } from '@/lib/practice';
 import { TRADES_BY_ID } from '@/lib/trades';
 
+/** Past jobs to ask for: with about ten, the formula it works out holds up on new jobs. */
+const PAST_JOBS = 10;
+
 export default function JobsStep() {
   const { state, goTo } = useOnboarding();
   const [count, setCount] = useState(0);
@@ -35,11 +38,12 @@ export default function JobsStep() {
     <div className="flex min-h-dvh flex-col">
       <WizardHeader step={2} charm={changes} />
       <main className="gutter mx-auto w-full max-w-[680px] flex-1 pt-10 pb-16 sm:pt-14">
-        <h1 className="t-h1">Add three jobs you've already done.</h1>
+        <h1 className="t-h1">Add about ten jobs you&apos;ve already done.</h1>
         <p className="mt-3 text-lg text-ink-2">
-          A small, a medium and a large one for your main service, with how big each was and what
-          you charged. That&apos;s what your Charm prices from, so each one raises its score. Old
-          invoices work too: upload them and it reads them for you.
+          Start with a small, a medium and a large one for your main service, then the rest of your
+          recent jobs, with how big each was and what you charged. Your Charm works out how you
+          price from these, so the more it has, the closer it comes. Old invoices work too: upload
+          them and it reads them for you.
         </p>
         <div className="mt-8">
           <PastJobsEditor
@@ -50,7 +54,11 @@ export default function JobsStep() {
           />
         </div>
         {count > 0 && (
-          <p className="mt-6 text-sm text-muted">You can continue now and add more later.</p>
+          <p className="mt-6 text-sm text-muted">
+            {count >= PAST_JOBS
+              ? `${count} jobs. That's plenty to start, and you can add more later.`
+              : `${count} of about ${PAST_JOBS}. You can continue now and add more later.`}
+          </p>
         )}
       </main>
       <BottomBar

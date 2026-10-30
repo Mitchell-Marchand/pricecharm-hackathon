@@ -7,6 +7,7 @@ import { json } from './models.js';
 import { recordRequestEvent } from './metrics.js';
 import { editInsight, forgetInsight } from './practice/engine.js';
 import type { Insight, PracticeScenario } from './practice/types.js';
+import { refreshFormula } from './pricing/formula-draft.js';
 import { loadPricingData } from './pricing/history.js';
 import { fitRates, rateWords, type PricePoint } from './pricing/rates.js';
 import { requireWorkspace, workspace } from './workspace.js';
@@ -296,6 +297,7 @@ charmNotesRouter.post('/onboarding/knows/notes', requireWorkspace, async (req, r
   const { text } = noteInput.parse(req.body);
   const { businessId } = workspace(req);
   await transaction((connection) => addOwn(connection, businessId, 'price', text));
+  refreshFormula(businessId);
   await recordRequestEvent(req, businessId, 'charm_note_changed', { action: 'add' });
   res.status(201).json(ok(await charmKnows(businessId)));
 });
@@ -314,6 +316,7 @@ charmNotesRouter.put('/onboarding/knows/notes/:id', requireWorkspace, async (req
     if (!updated.affectedRows)
       throw new ApiError(404, 'NOTE_NOT_FOUND', 'That note isn’t here anymore.');
   }
+  refreshFormula(businessId);
   await recordRequestEvent(req, businessId, 'charm_note_changed', {
     action: 'edit',
     source: practice ? 'practice' : 'owner',
@@ -334,6 +337,7 @@ charmNotesRouter.delete('/onboarding/knows/notes/:id', requireWorkspace, async (
     if (!deleted.affectedRows)
       throw new ApiError(404, 'NOTE_NOT_FOUND', 'That note isn’t here anymore.');
   }
+  refreshFormula(businessId);
   await recordRequestEvent(req, businessId, 'charm_note_changed', {
     action: 'remove',
     source: practice ? 'practice' : 'owner',

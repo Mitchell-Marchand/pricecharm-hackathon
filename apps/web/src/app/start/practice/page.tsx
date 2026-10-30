@@ -80,10 +80,10 @@ export default function PracticeStep() {
   if (!onboarding) return <SetupLoading />;
   const run = practice && index !== null ? practice.runs[index] : null;
   const business = onboarding.business.name || 'Your business';
-  const count = practice?.count ?? 3;
+  const count = practice?.count ?? 6;
   const finishedCount = practice?.finished ?? 0;
   const last = index === null || index >= count - 1;
-  // One more for a single service, started from the Ready screen once setup's three are done.
+  // One more for a single service, started from the Ready screen once setup's are done.
   const extra = index !== null && index >= count;
 
   async function next() {
@@ -171,7 +171,7 @@ export default function PracticeStep() {
               {extra
                 ? 'Done. See where it stands now.'
                 : last
-                  ? `All ${count === 3 ? 'three' : count} done.`
+                  ? `All ${count} done.`
                   : `${count - finishedCount} to go. The next one is ready.`}
             </p>
             <Button size="lg" onClick={() => void next()}>

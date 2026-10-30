@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok, rateLimit } from './http.js';
+import { refreshFormula } from './pricing/formula-draft.js';
 import { parseQuantity } from './pricing/units.js';
 import { deletePhoto, getPhoto } from './storage.js';
 import { imageUpload, saveImage, uploadSlot } from './uploads.js';
@@ -205,6 +206,7 @@ pastJobsRouter.post('/onboarding/jobs', requireWorkspace, async (req, res) => {
   const current = workspace(req);
   const id = randomUUID();
   await transaction((connection) => insertPastJobs(connection, current, [{ id, input }]));
+  refreshFormula(current.businessId);
   const jobs = await listPastJobs(current.businessId);
   await recordRequestEvent(
     req,
@@ -231,6 +233,7 @@ pastJobsRouter.put('/onboarding/jobs/:id', requireWorkspace, async (req, res) =>
     return attachPhotos(connection, current.businessId, id, input.photoIds);
   });
   for (const key of dropped) await deletePhoto(key).catch(() => {});
+  refreshFormula(current.businessId);
   const job = (await listPastJobs(current.businessId)).find((item) => item.id === id);
   await recordRequestEvent(req, current.businessId, 'job_edited', jobFacts(input), { ref: id });
   res.json(ok(job));
@@ -251,6 +254,7 @@ pastJobsRouter.delete('/onboarding/jobs/:id', requireWorkspace, async (req, res)
     return keys;
   });
   for (const key of dropped) await deletePhoto(key).catch(() => {});
+  refreshFormula(current.businessId);
   await recordRequestEvent(
     req,
     current.businessId,

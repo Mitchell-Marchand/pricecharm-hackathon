@@ -255,7 +255,7 @@ test('several old invoices are read in the background and saved together', async
   await expect(page.getByRole('heading', { name: 'Check these jobs' })).toHaveCount(0);
 });
 
-test('step 3 runs three practice customers and learns from each one', async ({ page }) => {
+test('step 3 runs six practice customers and learns from each one', async ({ page }) => {
   await finishStepOne(page, 'Moss & Stone Exterior Care');
   const created = await page.request.post('/api/v1/onboarding/jobs', {
     headers: { Origin: new URL(page.url()).origin },
@@ -315,6 +315,16 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });
   await quote('Flagstone wash, about 350 sq ft', '175');
   await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
+  // Demo mode's three customers come round again for the rest of setup.
+  for (const [name, label, price] of [
+    ['Dana R. · Eastgate', 'Patio wash, about 550 sq ft', '280'],
+    ['Marcus T. · North Hills', 'Patio wash, about 400 sq ft', '220'],
+    ['Priya S. · Old Town', 'Flagstone wash, about 350 sq ft', '175'],
+  ]) {
+    await page.getByRole('button', { name: 'Next practice request' }).click();
+    await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
+    await quote(label, price);
+  }
   await page.getByRole('button', { name: 'See your Charm' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
 
@@ -323,14 +333,14 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
     page.getByRole('heading', { name: /^Your Charm is (\d+% trained|ready to quote)\.$/ }),
   ).toBeVisible();
   await expect(
-    page.getByText('It learned from 1 past job and 3 practice customers.', { exact: false }),
+    page.getByText('It learned from 1 past job and 6 practice customers.', { exact: false }),
   ).toBeVisible();
   await expect(page.getByText('How big is the area?')).toBeVisible();
   // How it prices is the rate its drafts are held to, not a line from each practice run.
   await expect(page.getByText(/^About \$\d+\.\d\d per sq ft, lowest \$\d+$/).first()).toBeVisible();
   await expect(page.getByText(/^Charges about/)).toHaveCount(0);
   await expect(page.getByText('Asks about size and stains')).toHaveCount(0);
-  await expect(page.getByRole('cell', { name: 'Dana R.' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'Dana R.' }).first()).toBeVisible();
   await expect(
     page.getByText(/^Anything over \$/),
     'No price limit unless they set one',
@@ -374,7 +384,7 @@ test('step 3 runs three practice customers and learns from each one', async ({ p
   await page.getByRole('button', { name: 'See your Charm' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
   await expect(
-    page.getByText('It learned from 2 past jobs and 4 practice customers.', { exact: false }),
+    page.getByText('It learned from 2 past jobs and 7 practice customers.', { exact: false }),
   ).toBeVisible();
 
   await page.getByRole('button', { name: 'Create your free account' }).click();

@@ -1,14 +1,19 @@
 import { aiMode, aiProvider, modelFor, type AiImage } from '../ai/index.js';
 import { DRAFT_PROMPT_VERSION, draftQuote, type DraftRequest } from '../ai/quote-engine.js';
 import { rows } from '../db.js';
+import { reportError } from '../error-reporting.js';
 import type { PastJob } from '../past-jobs.js';
 import type { DraftEngine, DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
+import { currentFormula, priceFromFormula } from './formula-draft.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
 import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
 import { describeSpec, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
+
+/** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
+const FORMULA_VERSION = 'formula-2026-10-30';
 
 /** Photos from the owner's own past jobs that go with a draft, next to the customer's. */
 const REFERENCE_PHOTOS = 2;
@@ -110,11 +115,47 @@ export async function draftForBusiness(input: {
   model?: string;
   /** What demo mode answers instead of a model. */
   demo?: () => DraftedQuote;
+  /** False to leave the owner's formula out, so the benchmark can compare the two. */
+  formula?: boolean;
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
   const rates = fitRates(data.points);
   const estimate = estimateFor(rates, serviceName, spec?.quantity ?? null, spec?.unit ?? '');
+  const examples = {
+    pastJobs: data.history.pastJobs.length,
+    practice: data.history.practice.length,
+    liveQuotes: data.history.liveQuotes.length,
+  };
+
+  // The owner's formula prices it when it fits their quotes and covers the job. A replay of an old
+  // quote, or another model, goes the usual way, since the formula is today's.
+  if (aiMode !== 'demo' && input.formula !== false && !input.model && !input.history?.before) {
+    const priced = await currentFormula(businessId, data)
+      .then((learned) => (learned ? priceFromFormula(learned, input) : null))
+      .catch((error: unknown) => {
+        reportError(error, { event: 'formula_draft' });
+        return null;
+      });
+    if (priced?.drafted)
+      return {
+        drafted: priced.drafted,
+        estimate,
+        rates,
+        engine: {
+          provider: aiProvider,
+          model: modelFor('read_job') ?? null,
+          promptVersion: FORMULA_VERSION,
+          estimateCents: estimate?.cents ?? null,
+          estimateBasis: '',
+          estimateSolid: Boolean(estimate?.solid),
+          startingPoint: false,
+          examples,
+          referencePhotos: 0,
+          formula: true,
+        },
+      };
+  }
 
   let startingPoint: DraftRequest['startingPoint'];
   if (!examplesFor(data.history, serviceName) && marketPricesEnabled() && data.tradeId) {
@@ -196,6 +237,7 @@ export async function draftForBusiness(input: {
         liveQuotes: history.liveQuotes.length,
       },
       referencePhotos: reference.length,
+      formula: false,
     },
   };
 }

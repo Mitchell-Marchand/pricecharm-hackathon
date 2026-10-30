@@ -192,7 +192,7 @@ type Reveal = { runId: string; messages: number; insights: boolean };
 
 /**
  * One practice customer: the conversation, the quote or site-visit answer, and what the AI picked
- * up. Setup runs three of these; the Train page runs as many more as the owner likes.
+ * up. Setup runs six of these; the Train page runs as many more as the owner likes.
  */
 export function PracticeSession({
   business,

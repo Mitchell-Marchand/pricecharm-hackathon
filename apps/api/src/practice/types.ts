@@ -109,6 +109,8 @@ export type DraftEngine = {
   startingPoint: boolean;
   examples: { pastJobs: number; practice: number; liveQuotes: number };
   referencePhotos: number;
+  /** Priced from the owner's formula, with the AI only reading the request. */
+  formula?: boolean;
 };
 
 export type Shadow = DraftedQuote & { cents: number; engine?: DraftEngine };

@@ -56,6 +56,8 @@ export type PriceFormula = {
   minimumCents: number | null;
   /** Surcharges on their own lines, or folded into the main work. */
   itemizes: boolean;
+  /** Surcharges and add-ons whose price the owner's notes give, which their quotes don't change. */
+  setByNotes?: string[];
 };
 
 /** What a job is in the formula's terms. Names match the formula's own. */
@@ -275,7 +277,8 @@ export function fitGaps(
  * Settles what the AI can't always tell from a few rounded prices: how price follows size,
  * whether a surcharge is a percent of the main work or a flat amount, how big it is, and whether
  * there's one at all, and what each add-on costs and how it's charged. Each reading is tried against the owner's own
- * quotes, and the one that gives them back best is kept. On a tie, the simpler reading wins.
+ * quotes, and the one that gives them back best is kept. On a tie, the simpler reading wins. A
+ * price the owner's notes give stays as it is, even where older quotes disagree.
  */
 export function refineFormula(
   formula: PriceFormula,
@@ -302,7 +305,9 @@ export function refineFormula(
               Math.abs(example.totalCents - service.minimumCents!) <= service.minimumCents! * 0.01,
           ),
       )?.minimumCents ?? null;
+  const fromNotes = (name: string) => formula.setByNotes?.some((item) => same(item, name));
   for (const [index, surcharge] of formula.surcharges.entries()) {
+    if (fromNotes(surcharge.name)) continue;
     const mains = examples
       .filter((example) => example.parts.surcharges.some((name) => same(name, surcharge.name)))
       .map((example) => {
@@ -356,6 +361,7 @@ export function refineFormula(
   // Add-ons the same way: each job that had one says what it must have cost, given the rest of
   // the formula, per unit, per item or per job.
   for (const [index, addOn] of best.addOns.entries()) {
+    if (fromNotes(addOn.name)) continue;
     const without = {
       ...best,
       addOns: best.addOns.map((item, at) => (at === index ? { ...item, cents: 0 } : item)),

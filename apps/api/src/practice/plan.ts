@@ -2,17 +2,19 @@ import { median, SOLID_POINTS, type PricePoint } from '../pricing/rates.js';
 import { formatQuantity, roundSize } from '../pricing/units.js';
 
 /**
- * Setup's customers each show the AI something different that moves this owner's price: each
- * service, the extras they charge for, a job in bad shape or hard to reach, the low end where a
- * minimum shows, and two services together. The simulated-owner benchmark (src/bench.ts) found
- * extras and the second service were where the AI missed most, so those come first.
+ * Setup's customers each change one thing from a plain job, so nothing hides anything else: an
+ * extra, the other service, bad shape, a hard-to-reach job, the low end where a minimum shows,
+ * then two services together. Jobs that show one extra or condition are big enough that a
+ * minimum can't hide what it costs. On the simulated-owner benchmark (src/bench.ts) this plan,
+ * with ten past jobs, gave back the owner's price within 10% on 92% of new jobs.
  */
 export const SITUATIONS = [
-  'A typical, clear job for their main service, sized like their usual past jobs, plus one extra that businesses in their trade usually price separately, like screens with windows or sealing after a wash.',
-  'A usual job for a different one of their services than the main one, plus a different extra that’s usually priced separately.',
-  'A trickier job: the photos and messages show it’s in bad shape or harder to reach, like heavy buildup or a second story, so it could cost more. The customer is getting a few quotes and hopes for a price from the photos.',
+  'A clear job for their main service, on the bigger side of their usual past jobs, plus one extra that businesses in their trade usually price separately, like screens with windows or sealing after a wash. Nothing else unusual.',
+  'A job for a different one of their services than the main one, on the bigger side of a usual job for it, plus a different extra that’s usually priced separately. Nothing else unusual.',
+  'A main-service job on the bigger side of their usual jobs that the photos and messages show is in bad shape, like heavy buildup or stains. Easy to reach, no extras. The customer is getting a few quotes and hopes for a price from the photos.',
+  'A usual-sized job that’s harder to reach, like a second story, and otherwise clear: no buildup, no extras.',
   'A small job at the low end of what they do, from a customer in a hurry.',
-  'A bigger job that combines two of their services and adds an extra, where the customer also asks about a discount, for example because a neighbor wants the same work.',
+  'A bigger job that combines two of their services and adds the first extra again, where the customer asks whether doing both together saves anything.',
 ];
 
 /** How the AI's private guess did on one finished practice customer. */

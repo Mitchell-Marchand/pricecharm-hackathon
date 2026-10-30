@@ -21,9 +21,9 @@ import {
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
-  draftWithFormula,
   holdFailedFormulas,
   learnedFormula,
+  priceFromFormula,
   type Learned,
 } from './pricing/formula-draft.js';
 import { describeSpec } from './pricing/spec.js';
@@ -32,14 +32,14 @@ import { accuracy, closer, share } from './proof.js';
 
 /**
  * The simulated-owner benchmark. Made-up businesses with hidden pricing rules (src/bench/owners.ts)
- * each go through setup the way a real owner does: three past jobs, then five practice customers
+ * each go through setup the way a real owner does: ten past jobs, then six practice customers
  * like setup's, answered by their rules. Then each owner's Charm prices jobs it has never seen,
  * next to the same model with none of the owner's prices, and both are compared with what the
  * owner's rules say. With --curve it also prices them from the past jobs alone, to show what
  * practice adds.
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
- *     [--past 3] [--practice original] [--concurrency 4] [--json <file>]
+ *     [--past 10] [--practice original] [--concurrency 4] [--json <file>]
  *
  * With --messy the owners price by eye a little, straying 2–8% from their own rates job to job,
  * the way real owners do. With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
@@ -53,8 +53,8 @@ import { accuracy, closer, share } from './proof.js';
 type Shape = Parameters<typeof drawJob>[2];
 
 /**
- * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them. The
- * plan setup used until October 30 is kept, so a run can compare the two.
+ * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them
+ * (experiments, since October 30). The plans setup used before are kept, so a run can compare.
  */
 const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
   original: [
@@ -82,7 +82,7 @@ const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
     { shape: 'bigger', extra: 0 },
   ],
 };
-const PLAN = 'coverage';
+const PLAN = 'experiments';
 
 function option(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -335,7 +335,7 @@ async function main() {
   const curve = process.argv.includes('--curve');
   const formula = process.argv.includes('--formula');
   const messy = process.argv.includes('--messy');
-  const past = number('past', 3, 50);
+  const past = number('past', 10, 50);
   const planName = option('practice') ?? PLAN;
   const plan = PLANS[planName];
   if (!plan)
@@ -412,6 +412,7 @@ async function main() {
               images: [],
               history: before ? { before } : {},
               model,
+              formula: false,
             }),
           );
           test.charm[level] = { cents: best(drafted), visit: drafted.decision === 'site_visit' };
@@ -422,16 +423,27 @@ async function main() {
     if (formula)
       tasks.push(async () => {
         try {
-          const { drafted, use } = await counted(test.businessId, () =>
-            draftWithFormula({
-              businessId: test.businessId,
-              serviceName: test.job.service,
-              conversation,
-              spec,
-              images: [],
-              model,
-            }),
-          );
+          // Where the formula can't price it, the usual draft does, as in a live quote.
+          const { drafted, use } = await counted(test.businessId, async () => {
+            const input = { businessId: test.businessId, serviceName: test.job.service };
+            const learned = await learnedFormula(test.businessId, {}, model).catch(() => null);
+            const priced = await priceFromFormula(learned, { ...input, conversation, spec, model });
+            return priced.drafted
+              ? { drafted: priced.drafted, use: priced.use }
+              : {
+                  drafted: (
+                    await draftForBusiness({
+                      ...input,
+                      conversation,
+                      spec,
+                      images: [],
+                      model,
+                      formula: false,
+                    })
+                  ).drafted,
+                  use: priced.use,
+                };
+          });
           test.formula = {
             cents: best(drafted),
             used: use.used,

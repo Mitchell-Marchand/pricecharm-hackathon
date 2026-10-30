@@ -9,6 +9,7 @@ import { ApiError } from '../http.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
 import { draftForBusiness } from '../pricing/draft.js';
+import { refreshFormula } from '../pricing/formula-draft.js';
 import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
 import { chargesLine } from '../pricing/rates.js';
 import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
@@ -28,7 +29,7 @@ import {
 } from './types.js';
 
 /** Practice quotes to finish before the AI counts as trained. More can follow later. */
-export const PRACTICE_COUNT = 3;
+export const PRACTICE_COUNT = 6;
 const MAX_MESSAGES = 40;
 const TONES = ['canary', 'pink', 'blue'] as const;
 const centsFormat = new Intl.NumberFormat('en-US', {
@@ -51,11 +52,11 @@ export async function ensurePracticeRuns(businessId: string, count = PRACTICE_CO
     ]);
 }
 
-/** Practice customers one business can have in all, setup's three included. */
+/** Practice customers one business can have in all, setup's included. */
 export const MAX_PRACTICE_RUNS = { draft: 8, active: 50 };
 
 /**
- * Another practice customer once setup's three are done, for training whenever the owner likes,
+ * Another practice customer once setup's are done, for training whenever the owner likes,
  * and for one service if they pick it. If one is still being written or answered, that's the one:
  * the AI never writes two at once for a business.
  */
@@ -770,6 +771,7 @@ async function finishRun(
       connection,
     );
   });
+  refreshFormula(businessId);
   await kickPreparation(businessId);
   return viewOf(businessId, runId);
 }

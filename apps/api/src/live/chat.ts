@@ -775,13 +775,15 @@ async function usualTerms(businessId: string, serviceName: string) {
     service: json<{ serviceName?: string }>(run.scenario_json, {}).serviceName,
     quote: json<Quote | null>(run.quote_json, null),
   }));
-  const match =
-    quotes.find((item) => item.service === serviceName && item.quote) ??
-    quotes.find((item) => item.quote);
+  const same = quotes.find((item) => item.service === serviceName && item.quote);
+  const match = same ?? quotes.find((item) => item.quote);
   return {
     included: match?.quote?.included ?? [],
     excluded: match?.quote?.excluded ?? [],
     validDays: match?.quote?.validDays ?? 14,
+    start: match?.quote?.start ?? '',
+    // How long a job takes depends on the service, so only the same service's says.
+    duration: same?.quote?.duration ?? '',
   };
 }
 
@@ -860,8 +862,9 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       place: String(business.service_area ?? ''),
       lines: drafted.lines.map((line, index) => ({ id: `l${index}`, ...line })),
       discount: drafted.discount,
-      start: drafted.start,
-      duration: drafted.duration,
+      // A formula prices the job but doesn't say when; the owner's usual answer does.
+      start: drafted.start || terms.start,
+      duration: drafted.duration || terms.duration,
       included: terms.included,
       excluded: terms.excluded,
       validDays: terms.validDays,

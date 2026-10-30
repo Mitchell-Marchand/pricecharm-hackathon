@@ -12,7 +12,7 @@ const origin = 'http://localhost:3100';
 after(() => closeDatabase());
 
 test(
-  'practice runs three customers end to end: photos, answers, the AI’s guess, quotes and site visits',
+  'practice runs setup’s customers end to end: photos, answers, the AI’s guess, quotes and site visits',
   { skip: !enabled },
   async () => {
     process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-practice-'));
@@ -45,7 +45,7 @@ test(
 
     const prepared = await owner.post('/api/v1/onboarding/practice/prepare').set('Origin', origin);
     assert.equal(prepared.status, 200, JSON.stringify(prepared.body));
-    assert.equal(prepared.body.data.runs.length, 3);
+    assert.equal(prepared.body.data.runs.length, 6);
     async function practice() {
       for (let attempt = 0; attempt < 60; attempt++) {
         const state = (await owner.get('/api/v1/onboarding/practice')).body.data;
@@ -296,19 +296,24 @@ test(
     assert.equal(third.customer.name, 'Priya S.');
     const more = (body: object = {}) =>
       owner.post('/api/v1/onboarding/practice/more').set('Origin', origin).send(body);
-    assert.equal(
-      (await more()).body.error?.code,
-      'PRACTICE_SETUP',
-      'Setup’s three customers come first',
-    );
+    assert.equal((await more()).body.error?.code, 'PRACTICE_SETUP', 'Setup’s customers come first');
     await owner
       .post(`/api/v1/onboarding/practice/${third.id}/quote`)
       .set('Origin', origin)
       .send({ lines: [{ id: 'a', label: 'Flagstone wash, about 350 sq ft', amountCents: 17500 }] })
       .expect(200);
+    for (const position of [3, 4, 5]) {
+      state = await practice();
+      assert.equal(state.current, position);
+      await owner
+        .post(`/api/v1/onboarding/practice/${state.runs[position].id}/quote`)
+        .set('Origin', origin)
+        .send({ lines: [{ id: 'a', label: 'Patio wash, about 500 sq ft', amountCents: 25000 }] })
+        .expect(200);
+    }
     const finished = await owner.post('/api/v1/onboarding/practice/done').set('Origin', origin);
-    assert.equal(finished.body.data.finished, 3);
-    assert.equal(finished.body.data.results.length, 3);
+    assert.equal(finished.body.data.finished, 6);
+    assert.equal(finished.body.data.results.length, 6);
     assert.equal(finished.body.data.results[1].siteVisit, true);
     assert.equal(
       finished.body.data.results[2].aiFlagged,
@@ -377,7 +382,7 @@ test(
       'An unfinished practice customer is reused, never a second one written',
     );
     state = await practice();
-    assert.equal(state.runs.length, 5);
+    assert.equal(state.runs.length, 8);
     assert.equal(state.runs[state.current].id, extraId);
     assert.equal(state.runs[state.current].focus, null, 'Practice from the Train page is any job');
     await owner
@@ -386,8 +391,8 @@ test(
       .send({ lines: [{ id: 'a', label: 'Patio wash, about 550 sq ft', amountCents: 28000 }] })
       .expect(200);
     const extra = (await owner.get('/api/v1/onboarding/practice')).body.data;
-    assert.equal(extra.finished, 5);
-    assert.equal(extra.results.length, 5, 'Extra practice counts like setup practice');
+    assert.equal(extra.finished, 8);
+    assert.equal(extra.results.length, 8, 'Extra practice counts like setup practice');
     const another = (await more()).body.data.runId;
     assert.notEqual(another, extraId, 'Once done, the next one is new');
     // Let it finish writing, so nothing is still running when the test closes the database.
