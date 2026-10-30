@@ -95,11 +95,11 @@ export function PricingDetails() {
       <div className="rounded-md border border-line bg-surface p-5 md:col-span-3">
         <dt className="t-label text-muted">What counts as a quote</dt>
         <dd className="mt-2 text-ink-2">
-          A quote counts when a customer who confirmed their email receives it, whether it went out
-          on its own or you approved it first. It counts as accepted when they say yes to it in the
-          chat. Practice quotes, your own tests and sending the same quote again don’t count. You
-          can switch plans any time, and set a monthly limit on fees: when you reach it, new
-          requests wait for you instead.
+          A quote counts when it’s shown to a customer, whether it went out on its own or you
+          approved it first. It counts as accepted when they say yes to it in the chat. Practice
+          quotes, your own tests and sending the same quote again don’t count. You can switch plans
+          any time, and set a monthly limit on fees: when you reach it, new requests wait for you
+          instead.
         </dd>
       </div>
     </dl>

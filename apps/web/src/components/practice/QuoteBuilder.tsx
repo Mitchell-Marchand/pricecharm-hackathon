@@ -394,8 +394,8 @@ function BuilderForm({
             htmlFor="quote-note"
             hint={
               <span className="inline-flex items-center gap-1.5">
-                <Lock className="size-3.5" aria-hidden /> Only your Charm sees this. It's the best
-                way to teach it.
+                <Lock className="size-3.5" aria-hidden /> Other businesses never see this. It's the
+                best way to teach your Charm.
               </span>
             }
           >

@@ -391,10 +391,12 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await expect(page).toHaveURL(/\/start\/account$/);
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByText('Add your first name.')).toBeVisible();
+  await expect(page.getByText('Check the box to agree first.')).toBeVisible();
   await page.getByLabel('First name').fill('Maya');
   await page.getByLabel('Last name').fill('Lopez');
   await page.getByLabel('Email').fill(`maya-${Date.now()}@example.test`);
   await page.getByLabel('Password', { exact: true }).fill('test password strong123');
+  await page.getByRole('checkbox', { name: /I agree to the/ }).check();
   await page.getByRole('button', { name: 'Create account' }).click();
 
   // Then trying it as a customer would, in the same chat, before any plan.

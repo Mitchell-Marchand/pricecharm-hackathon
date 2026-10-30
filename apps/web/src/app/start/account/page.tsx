@@ -24,6 +24,7 @@ export default function AccountStep() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
+  const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<{ message: string; exists?: boolean } | null>(null);
@@ -40,7 +41,7 @@ export default function AccountStep() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setTried(true);
-    if (!firstName.trim() || !lastName.trim() || !emailOk || !passwordOk || busy) return;
+    if (!firstName.trim() || !lastName.trim() || !emailOk || !passwordOk || !agreed || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -157,6 +158,46 @@ export default function AccountStep() {
               </button>
             </div>
           </Field>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-start gap-3">
+              <input
+                id="account-terms"
+                type="checkbox"
+                checked={agreed}
+                onChange={(event) => setAgreed(event.target.checked)}
+                aria-describedby="account-terms-note"
+                className="mt-0.5 size-5 shrink-0 accent-accent"
+              />
+              <label htmlFor="account-terms" className="text-sm text-ink">
+                I agree to the{' '}
+                <Link
+                  href="/terms"
+                  target="_blank"
+                  className="font-semibold underline underline-offset-4"
+                >
+                  Terms
+                </Link>{' '}
+                and{' '}
+                <Link
+                  href="/privacy"
+                  target="_blank"
+                  className="font-semibold underline underline-offset-4"
+                >
+                  Privacy Policy
+                </Link>
+                .
+              </label>
+            </div>
+            <p id="account-terms-note" className="pl-8 text-sm text-muted">
+              Other businesses never see your prices or customers. With names and contact details
+              taken out, your jobs also help train PriceCharm’s AI.
+            </p>
+            {tried && !agreed && (
+              <p className="pl-8 text-sm text-stop" data-field-error="Terms">
+                Check the box to agree first.
+              </p>
+            )}
+          </div>
           {error && (
             <p className="text-sm text-stop" role="alert">
               {error.message}{' '}
@@ -171,17 +212,6 @@ export default function AccountStep() {
           <Button type="submit" size="lg" className="w-full" disabled={busy}>
             {busy ? 'Setting up your quote link…' : 'Create account'}
           </Button>
-          <p className="text-center text-sm text-muted">
-            By creating an account you agree to the{' '}
-            <Link href="/terms" className="underline underline-offset-4">
-              Terms
-            </Link>{' '}
-            and{' '}
-            <Link href="/privacy" className="underline underline-offset-4">
-              Privacy Policy
-            </Link>
-            .
-          </p>
         </form>
       </main>
     </div>

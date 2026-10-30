@@ -562,8 +562,8 @@ export function JobSheet({
       title={editing?.id ? 'Edit job' : 'Add a job'}
       subtitle={
         start.slot && !editing?.id
-          ? `${SLOTS[start.slot].sheet(serviceName)} Only you and your Charm see this.`
-          : 'Only you and your Charm see this.'
+          ? `${SLOTS[start.slot].sheet(serviceName)} Other businesses never see this.`
+          : 'Other businesses never see this.'
       }
       footer={
         <div className="flex items-center justify-between gap-3">

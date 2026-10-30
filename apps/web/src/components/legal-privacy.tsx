@@ -44,7 +44,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 business you contacted. That business decides what happens with your request, and
                 its own privacy policy covers what it does with it. We use your information only to
                 run PriceCharm for that business and for the few purposes of our own listed below,
-                such as security and billing.
+                such as security, billing and improving PriceCharm once nothing in it identifies
+                you.
               </li>
             </ul>
           </>
@@ -71,6 +72,12 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 and quotes.
               </li>
               <li>
+                <strong>Connected accounts:</strong> if you connect WhatsApp, Messenger or
+                Instagram, the IDs Meta gives us for your business’s number, Facebook Page or
+                Instagram account, and the access Meta grants us to send and receive messages for
+                you.
+              </li>
+              <li>
                 <strong>Billing:</strong> your usage, fees and spending cap. Stripe collects your
                 card details, and we never see your full card number.
               </li>
@@ -85,10 +92,21 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 What you tell the assistant about your project, the photos you send and the
                 conversation.
               </li>
-              <li>
-                Your name and email address, and the code we email you to confirm the address.
-              </li>
+              <li>Your name and a phone number or email address, so the business can reach you.</li>
               <li>The quote you receive and whether you accept or decline it.</li>
+            </ul>
+            <h3>Through WhatsApp, Messenger and Instagram</h3>
+            <ul>
+              <li>
+                If you message a business that has connected one of these apps, Meta passes us your
+                messages and photos, the name on your profile, and your phone number (on WhatsApp)
+                or an ID Meta assigns you (on Messenger and Instagram).
+              </li>
+              <li>
+                We use them only for that business: to answer you, draft your quote and teach that
+                business’s own assistant. We never use them to improve PriceCharm for other
+                businesses or in combined figures.
+              </li>
             </ul>
             <h3>From people trying the demo</h3>
             <ul>
@@ -164,13 +182,22 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               <li>
                 <strong>To teach each business’s assistant</strong> from that business’s own jobs,
                 notes, practice quotes and real quotes, including whether its customers accepted
-                them. No other business’s assistant sees any of it.
+                them. No other business sees any of it.
+              </li>
+              <li>
+                <strong>To improve PriceCharm for every business:</strong> we use job details,
+                prices, quotes, conversations and how they turned out, from all businesses, to train
+                and test the AI behind PriceCharm, for example so it reads requests and prices jobs
+                more accurately. First we remove names, contact details, addresses and anything else
+                that identifies a person or business. We never use conversations from WhatsApp,
+                Messenger or Instagram this way.
               </li>
               <li>
                 <strong>To make combined figures,</strong> like the typical price for a kind of job
                 in a trade. They combine prices and job details from at least five businesses and
                 can’t be traced back to any one business or customer. They never include names,
-                addresses or contact details. We use them to improve PriceCharm and may share them.
+                addresses or contact details, or anything from WhatsApp, Messenger or Instagram. We
+                use them to improve PriceCharm and may share them.
               </li>
               <li>
                 <strong>To see how PriceCharm is used and fix what gets in the way,</strong> we
@@ -223,6 +250,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               We use these providers’ business services. Under their terms, they don’t use what we
               send to train their models. OpenAI and Anthropic keep it only for a limited time,
               generally up to 30 days, to watch for abuse.
+            </p>
+            <p>
+              When we train AI for all businesses, we use only information with names, contact
+              details, addresses and anything else that identifies a person or business removed, as{' '}
+              <SectionLink id="use">How we use it</SectionLink> describes.
             </p>
             <p>
               A business can let its assistant send quotes automatically, without the owner
@@ -282,6 +314,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 ],
               ]}
             />
+            <p>
+              <strong>Meta’s messaging apps.</strong> If a business connects WhatsApp, Messenger or
+              Instagram, messages between the business and its customers go through Meta, which
+              handles them under its own terms and privacy policy.
+            </p>
             <p>
               <strong>Combined figures.</strong> We may share the combined figures described in{' '}
               <SectionLink id="use">How we use it</SectionLink>. They don’t identify any business or
@@ -373,6 +410,14 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'As long as the business that received them has an account, unless deleted sooner on request',
                 ],
                 [
+                  'Connected WhatsApp, Messenger and Instagram accounts',
+                  'Until the business disconnects them or closes its account',
+                ],
+                [
+                  'Information used to improve PriceCharm, with everything that identifies a person or business removed',
+                  'Kept, since it can’t be linked to anyone',
+                ],
+                [
                   'Setups that never become an account, including their photos',
                   '14 days after you start',
                 ],
@@ -397,8 +442,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             <p>
               When a business closes its account, we delete its information, including its
               customers’ requests and photos. We keep only a record that the deletion happened (an
-              ID and the dates) and usage records that can no longer be linked to the business.
-              Stripe keeps billing records under its own rules and the law.
+              ID and the dates), usage records that can no longer be linked to the business, and
+              what PriceCharm already learned from information that identifies no one. Stripe keeps
+              billing records under its own rules and the law.
             </p>
           </>
         ),
@@ -435,6 +481,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 Close your account from Settings. We then delete your information as described
                 above.
               </li>
+              <li>Disconnect WhatsApp, Messenger or Instagram at any time.</li>
               <li>
                 The emails PriceCharm sends are part of the service, so they continue while you have
                 an account. If we ever send product news, every one will have an unsubscribe link.
@@ -467,8 +514,9 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             <p>
               If you’re in the UK or EU: we rely on our contract with you to run your account; on
               our legitimate interests to keep PriceCharm secure, prevent fraud and fix problems; on
-              legal obligations for billing and tax; and on your consent where we ask for it. You
-              can complain to your local data protection authority.
+              legal obligations for billing and tax; on our legitimate interests to improve
+              PriceCharm with information that no longer identifies you; and on your consent where
+              we ask for it. You can complain to your local data protection authority.
             </p>
           </>
         ),

@@ -49,9 +49,10 @@ export function termsOfService(operator?: Operator): LegalDocument {
           <>
             <p>
               PriceCharm learns how you price from the jobs, notes and practice quotes you give it.
-              It then talks with your customers, asks the questions you need answered and drafts
-              quotes. You decide whether each quote waits for your review or goes out automatically,
-              within the rules and limits you set.
+              It then talks with your customers on your quote link, on your website and, if you
+              connect them, on WhatsApp, Messenger and Instagram. It asks the questions you need
+              answered and drafts quotes. You decide whether each quote waits for your review or
+              goes out automatically, within the rules and limits you set.
             </p>
             <p>
               We keep improving PriceCharm, so features will change. If we remove something you rely
@@ -114,41 +115,78 @@ export function termsOfService(operator?: Operator): LegalDocument {
         ),
       },
       {
+        id: 'meta-apps',
+        title: 'WhatsApp, Messenger and Instagram',
+        body: (
+          <ul>
+            <li>
+              You can connect your business’s WhatsApp number, Facebook Page or Instagram account so
+              the assistant can answer customers there. These apps belong to Meta, and Meta’s terms
+              and policies apply when you use them, including the WhatsApp Business Messaging
+              Policy.
+            </li>
+            <li>
+              Only connect accounts you’re allowed to manage. Don’t use them to message people first
+              unless they’ve agreed to hear from you and Meta’s rules allow it.
+            </li>
+            <li>
+              Meta can limit or switch off these connections at any time. If it does, your quote
+              link and website keep working. You can disconnect them at any time too.
+            </li>
+            <li>
+              Conversations from these apps are used only for your business, as{' '}
+              <SectionLink id="content">Your content</SectionLink> explains.
+            </li>
+          </ul>
+        ),
+      },
+      {
         id: 'fees',
         title: 'Fees and payment',
         body: (
           <ul>
             <li>
-              Before your quote link takes requests, you choose a plan: a fee for each qualifying
-              quote delivered, a fee for each qualifying quote a customer accepts, or a monthly or
-              yearly subscription. The current prices and details are on our{' '}
+              Before your quote link takes requests, you choose a plan: a fee for each quote shown
+              to a customer, a fee for each quote a customer accepts, or a monthly or yearly
+              subscription. The current prices and details are on our{' '}
               <Link href="/pricing">pricing page</Link> and in your billing settings. The prices in
               place when you choose a plan apply until we change them as described below. Setting
               up, practice and your own tests are free on every plan.
             </li>
             <li>
-              A quote qualifies when a customer whose email address has been verified receives it,
-              whether the assistant sent it automatically or you approved it first. On the per-quote
-              plan, the fee applies once a qualifying quote is delivered, whether or not the
-              customer accepts it. On the accepted-quote plan, the fee applies when the customer
-              accepts a qualifying quote through PriceCharm, as a percentage of the quote within the
-              stated minimum and maximum. We don’t charge for practice, the demo, your own test
-              requests, or sending the same quote again.
+              A quote counts when it’s shown to a customer, whether the assistant sent it
+              automatically or you approved it first. Each quote counts once.
             </li>
             <li>
-              A subscription includes a set number of qualifying quotes each calendar month, with a
+              On the per-quote plan, the fee applies to each quote that counts, whether or not the
+              customer answers it. On the accepted-quote plan, the fee applies only when the
+              customer accepts the quote through PriceCharm, as a percentage of the quote within the
+              stated minimum and maximum.
+            </li>
+            <li>
+              We don’t charge for practice, the demo, your own test requests or sending the same
+              quote again.
+            </li>
+            <li>
+              For 30 days from when you first add a payment method, your quote fees stop at the
+              first-month maximum shown on our pricing page. Quotes past it still go out, and you
+              don’t pay for them.
+            </li>
+            <li>
+              A subscription includes a set number of quotes that count each calendar month, with a
               fee for each one past that. A new subscription may start with a free trial; you give a
               payment method to start it, and unless you cancel before the trial ends, the
               subscription begins and you’re charged then. Subscriptions renew automatically at the
               end of each monthly or yearly period until you cancel. You can cancel or switch plans
-              at any time in your billing settings. Switching away from a subscription, or from
-              yearly to monthly, takes effect at the end of the period you’ve paid for, and we don’t
-              refund the rest of a period.
+              at any time in your billing settings. A switch takes effect right away, and what’s
+              left of a period you’ve paid for is credited to your next bills. If you cancel, we
+              don’t refund the rest of a period.
             </li>
             <li>
               You can set a monthly spending cap in billing settings. Once you reach it, no more
               quotes go out until the next month or until you raise the cap. New requests wait for
-              you in the meantime.
+              you in the meantime. Customers can still accept quotes they already have, and we don’t
+              charge for those acceptances.
             </li>
             <li>
               Sending quotes to customers needs a payment method on file. Until you add one, quotes
@@ -187,13 +225,21 @@ export function termsOfService(operator?: Operator): LegalDocument {
             <li>
               You let us host, copy, process, display and send your content, including to the
               service providers in our <DocumentLink to="privacy">Privacy Policy</DocumentLink>, as
-              needed to run PriceCharm for you, keep it secure, meet the law and make the combined
-              figures described below. This permission ends when your content is deleted, apart from
-              copies in backups until they’re overwritten.
+              needed to run PriceCharm for you, keep it secure and meet the law, and to improve
+              PriceCharm and make the combined figures described below. This permission ends when
+              your content is deleted, apart from copies in backups until they’re overwritten and
+              what PriceCharm has already learned from it.
             </li>
             <li>
               We don’t sell your content. No other business ever sees your prices, quotes, jobs,
               customers or name, and your assistant never shows them to anyone else.
+            </li>
+            <li>
+              We use content from all businesses to improve PriceCharm for everyone. For example, we
+              teach the AI behind PriceCharm to read requests, price jobs and catch mistakes, and we
+              test changes on it before they go out. Before we use your content this way, we remove
+              names, contact details, addresses and anything else that identifies you, your business
+              or your customers.
             </li>
             <li>
               We may combine prices and job details, like sizes and what was included, from many
@@ -201,8 +247,18 @@ export function termsOfService(operator?: Operator): LegalDocument {
               such as the typical price per square foot for washing a driveway. We use these figures
               to improve PriceCharm, for example to give a business a starting price for a service
               it hasn’t priced yet, and we may share them with others. A figure always combines at
-              least five businesses and never includes names, addresses or contact details. Once
-              your content is deleted, it stops counting toward new figures.
+              least five businesses and never includes names, addresses or contact details.
+            </li>
+            <li>
+              Conversations that come in through WhatsApp, Messenger or Instagram, and anything
+              taken from them, like job details, quotes and whether the customer said yes, are used
+              only for your own assistant. We never use them to improve PriceCharm for other
+              businesses or count them in combined figures.
+            </li>
+            <li>
+              Once your content is deleted, we stop using it to improve PriceCharm and it stops
+              counting toward new figures. What PriceCharm already learned from it, and figures
+              already made, stay, but they can’t be traced back to you.
             </li>
             <li>
               Make sure you have the right to everything you upload, including photos and documents,
@@ -279,9 +335,10 @@ export function termsOfService(operator?: Operator): LegalDocument {
             <ul>
               <li>
                 use it only to run PriceCharm for you, following the instructions you give through
-                your settings and how you use PriceCharm, or as the law requires, apart from job
-                details that go into combined figures without anything that identifies a customer,
-                as <SectionLink id="content">Your content</SectionLink> describes;
+                your settings and how you use PriceCharm, or as the law requires, apart from
+                improving PriceCharm and making combined figures once anything that identifies a
+                customer is removed, as <SectionLink id="content">Your content</SectionLink>{' '}
+                describes;
               </li>
               <li>make sure everyone who works on PriceCharm keeps it confidential;</li>
               <li>protect it with the measures described in our Privacy Policy;</li>
@@ -400,6 +457,15 @@ export function termsOfService(operator?: Operator): LegalDocument {
               <li>
                 Your conversation, photos and contact details go to the business, as our{' '}
                 <DocumentLink to="privacy">Privacy Policy</DocumentLink> explains.
+              </li>
+              <li>
+                We may also use what you share to improve PriceCharm, after removing your name,
+                contact details, address and anything else that identifies you. We don’t do this
+                with messages sent through WhatsApp, Messenger or Instagram.
+              </li>
+              <li>
+                If you message a business on WhatsApp, Messenger or Instagram, Meta’s own terms and
+                privacy policy apply to those apps too.
               </li>
               <li>
                 Use the quote page honestly. Don’t make fake requests, try to misuse the assistant,
