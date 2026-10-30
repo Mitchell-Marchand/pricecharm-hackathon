@@ -85,7 +85,7 @@ test('a formula is trusted only when it gives back nearly all the owner’s own 
     ]),
     [0, 20],
   );
-  assert.equal(formulaFits([0, 2, 4, 1, 3]), true);
+  assert.equal(formulaFits([0, 2, 8, 1, 6]), true, 'An owner who prices by eye still fits');
   assert.equal(formulaFits([0, 2, 40, 1, 30]), false);
   assert.equal(formulaFits([0, 0]), false, 'Two examples are too few to trust');
 });
@@ -263,4 +263,22 @@ test('from one job, an add-on keeps how the AI read it’s charged, and a surcha
   assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
   assert.equal(refined.surcharges[0].flatCents, null);
   assert.equal(refined.surcharges[0].percent, 30);
+});
+
+test('below the sizes priced, a band owner’s lowest band can be the one the AI read as a minimum', async () => {
+  const { mainWork } = await import('../src/pricing/formula.js');
+  const service = {
+    name: 'Exterior windows',
+    unit: 'windows',
+    rateCents: null,
+    points: [
+      { size: 27, cents: 32500 },
+      { size: 31, cents: 32500 },
+      { size: 36, cents: 40000 },
+      { size: 39, cents: 42500 },
+    ],
+    shape: 'bands' as const,
+  };
+  assert.equal(mainWork({ ...service, minimumCents: 20000 }, 12), 20000);
+  assert.equal(mainWork({ ...service, minimumCents: null }, 12), 32500);
 });

@@ -97,8 +97,8 @@ function straightLine(points: Point[]) {
  * - between two of them, on a straight line, or at the nearer one's price when they price by
  *   size bands, or on the one line closest to all of them when they price by eye;
  * - past the biggest, carrying on at their rate across everything they've priced;
- * - below the smallest, scaled down from the smallest, or its price when they price by bands
- *   (a minimum still applies on top).
+ * - below the smallest, scaled down from the smallest, or the lowest band's price when they
+ *   price by bands (a minimum still applies on top).
  * With no prices at sizes, it's the rate.
  */
 export function mainWork(service: FormulaService, size: number): number | null {
@@ -129,8 +129,12 @@ export function mainWork(service: FormulaService, size: number): number | null {
     const rate = slope >= perUnit * 0.4 && slope <= perUnit * 1.5 ? slope : perUnit;
     return last.cents + rate * (size - last.size);
   }
+  // An owner who prices by bands often charges the lowest band as their minimum, and the AI may
+  // have read it that way, so below the sizes priced it's the lower of the two.
   if (first && size < first.size)
-    return service.shape === 'bands' ? first.cents : (first.cents * size) / first.size;
+    return service.shape === 'bands'
+      ? Math.min(first.cents, service.minimumCents ?? first.cents)
+      : (first.cents * size) / first.size;
   if (service.rateCents) return service.rateCents * size;
   if (first) return (first.cents * size) / first.size;
   return null;
@@ -391,11 +395,12 @@ export function refineFormula(
 
 /**
  * Whether the formula is trusted to price: it has to give back the owner's own quotes, nearly
- * all of them within 5%. Otherwise the owner's prices don't follow a formula well enough yet,
- * and the AI drafts instead.
+ * all of them within 10%. Owners who price by eye stray a few percent job to job, so a formula
+ * that has them right still can't match every quote to the dollar; one that's wrong misses some
+ * by far more. Otherwise the AI drafts instead.
  */
 export function formulaFits(gaps: (number | null)[]) {
   if (gaps.length < 3) return false;
-  const close = gaps.filter((gap) => gap !== null && gap <= 5).length;
+  const close = gaps.filter((gap) => gap !== null && gap <= 10).length;
   return close / gaps.length >= 0.8;
 }
