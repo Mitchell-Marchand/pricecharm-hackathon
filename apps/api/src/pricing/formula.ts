@@ -142,15 +142,16 @@ export function mainWork(service: FormulaService, size: number): number | null {
 
 /**
  * How the owner's prices follow size: each reading predicts every price they charged between
- * two others from the rest, and the one that comes closest is kept. On a tie, the plainer one.
- * Rounding can make two sizes come to the same price without the owner pricing by bands, and an
- * owner who prices by eye is better followed by one line than from each price to the next.
+ * two others from the rest. One line through all of them is the plain reading; a line from each
+ * price to the next (for a bend, like cheaper big jobs) or size bands have to predict clearly
+ * better to be chosen, since a few prices that stray, or round to the same amount, can look like
+ * either when the owner charges one rate.
  */
 export function priceShape(points: Point[]): PriceShape {
   const sorted = sortedPoints(points);
-  if (sorted.length < 3) return 'line';
-  const shapes: PriceShape[] = ['line', 'fit', 'bands'];
-  const misses = shapes.map((shape) =>
+  // Fewer than four prices check each reading once at most: too few to call.
+  if (sorted.length < 4) return 'line';
+  const [fit, line, bands] = (['fit', 'line', 'bands'] as const).map((shape) =>
     sorted.slice(1, -1).reduce((sum, point, index) => {
       const others = sorted.filter((_, at) => at !== index + 1);
       const service = { name: '', unit: '', rateCents: null, minimumCents: null, shape };
@@ -158,7 +159,8 @@ export function priceShape(points: Point[]): PriceShape {
       return sum + Math.abs(predicted - point.cents) / point.cents;
     }, 0),
   );
-  return shapes[misses.indexOf(Math.min(...misses))];
+  if (bands < 0.7 * Math.min(fit, line)) return 'bands';
+  return line < 0.7 * fit ? 'line' : 'fit';
 }
 
 const rounded = (cents: number, to: number) =>
@@ -333,17 +335,19 @@ export function refineFormula(
         flatCents: null,
       })),
     ];
-    let current = miss(best);
+    // A surcharge at all has to give the quotes back better than none, and a flat amount better
+    // than a percent, by half a point for each job that had it: an owner who prices by eye
+    // strays enough to make a small surcharge, or a flat one, look a little closer.
+    const weight = (item: FormulaSurcharge) =>
+      item.percent === 0 ? 0 : ((item.percent === null ? 2 : 1) * mains.length) / 2;
+    let current = miss(best) + weight(best.surcharges[index]);
     for (const other of others) {
       const alternative = {
         ...best,
         surcharges: best.surcharges.map((item, at) => (at === index ? other : item)),
       };
-      const candidate = miss(alternative);
-      // On a tie, no surcharge beats one, and a percent beats a flat amount.
-      const simpler =
-        other.percent === 0 || (other.percent !== null && best.surcharges[index].percent === null);
-      if (candidate < current || (candidate === current && simpler)) {
+      const candidate = miss(alternative) + weight(other);
+      if (candidate < current) {
         best = alternative;
         current = candidate;
       }
@@ -376,14 +380,16 @@ export function refineFormula(
     const seen = examples.filter((example) =>
       example.parts.addOns.some((item) => same(item.name, addOn.name)),
     ).length;
+    // Charging it another way has to give the quotes back better by a point for each job.
     const sameWay = candidates.filter((other) => other.per === addOn.per);
+    const weight = (item: FormulaAddOn) => (item.per === addOn.per ? 0 : seen);
     let current = miss(best);
     for (const other of seen > 1 || !sameWay.length ? candidates : sameWay) {
       const alternative = {
         ...best,
         addOns: best.addOns.map((item, at) => (at === index ? other : item)),
       };
-      const candidate = miss(alternative);
+      const candidate = miss(alternative) + weight(other);
       if (candidate < current) {
         best = alternative;
         current = candidate;
