@@ -59,8 +59,10 @@ export interface ChatView {
   wouldWait?: { id: string; detail: string }[];
   /** Whether this chat takes walk-around videos. Missing from older APIs, which don't. */
   videosAllowed?: boolean;
-  /** A video is being measured; the assistant carries on once it's done. */
+  /** A video or the photos are being measured; the assistant carries on once they're done. */
   measuring?: boolean;
+  /** What's being measured is the customer's photos. Missing from older APIs. */
+  measuringPhotos?: boolean;
 }
 
 export type ChatAccess = { chatId: string; token: string };

@@ -139,8 +139,8 @@ export function QuoteChat({
     });
   }, []);
 
-  // Once the chat is with the owner, check in now and then for their quote or reply. A video
-  // being measured is checked on more often, since the assistant carries on as soon as it's done.
+  // Once the chat is with the owner, check in now and then for their quote or reply. A video or
+  // photos being measured are checked on more often, since the assistant carries on once they're done.
   const measuring = !!chat?.measuring;
   const waiting =
     !!chat &&
@@ -683,7 +683,11 @@ export function QuoteChat({
         )}
 
         {measuring && (
-          <p className="py-2 text-sm text-muted">Watching your video and counting what’s in it…</p>
+          <p className="py-2 text-sm text-muted">
+            {chat?.measuringPhotos
+              ? 'Looking over your photos and counting what’s in them…'
+              : 'Watching your video and counting what’s in it…'}
+          </p>
         )}
 
         {status === 'closed' && <p className="py-1 text-sm text-muted">This request is closed.</p>}

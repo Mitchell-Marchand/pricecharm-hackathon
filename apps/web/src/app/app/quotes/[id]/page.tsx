@@ -21,7 +21,7 @@ import {
   loadQuote,
   messageCustomer,
   type QuoteDetail,
-  type QuoteVideo,
+  type MediaReading,
   type ThreadMessage,
 } from '@/lib/owner';
 import { restyle, type Quote } from '@/lib/quote';
@@ -137,8 +137,17 @@ export default function QuotePage() {
             </p>
           )}
           {quote.videos?.map((video) => (
-            <VideoFindings key={video.id} video={video} />
+            <MediaFindings
+              key={video.id}
+              id={video.id}
+              source="video"
+              reading={video}
+              narration={video.narration}
+            />
           ))}
+          {quote.photoReading && (
+            <MediaFindings id="photos" source="photos" reading={quote.photoReading} />
+          )}
           {quote.preview && (
             <div className="mt-5">
               <BeforeAfter
@@ -162,7 +171,7 @@ export default function QuotePage() {
         </div>
 
         <div className="order-1 flex min-w-0 flex-col gap-5 lg:sticky lg:top-24 lg:order-2">
-          {waiting && <WhyWaiting quote={quote} />}
+          {(waiting || quote.checks.some((check) => !check.passed)) && <WhyWaiting quote={quote} />}
           {waiting && (
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm font-semibold">Send as</p>
@@ -265,7 +274,10 @@ function BackLink() {
   );
 }
 
-/** Why the quote didn't go out on its own, and what the Charm based it on. */
+/**
+ * Why the quote didn't go out on its own, or went out as a range instead of a firm price, and what
+ * the Charm based it on.
+ */
 function WhyWaiting({ quote }: { quote: QuoteDetail }) {
   const reasons = quote.checks
     .filter((check) => !check.passed && check.detail)
@@ -277,7 +289,14 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
       aria-labelledby="why-title"
     >
       <h2 id="why-title" className="flex items-center gap-2 font-semibold">
-        <CircleAlert className="size-5" aria-hidden /> Why it&apos;s waiting for you
+        <CircleAlert className="size-5" aria-hidden />{' '}
+        {quote.status === 'review'
+          ? 'Why it’s waiting for you'
+          : quote.card.style === 'range'
+            ? 'Why it went out as a range'
+            : quote.card.style === 'estimate'
+              ? 'Why it went out as an estimate'
+              : 'Worth a look'}
       </h2>
       {reasons.length === 1 ? (
         <p className="mt-2 text-[15px]">{reasons[0]}</p>
@@ -310,64 +329,115 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
 
 const plural = (unit: string, count: number) => (count === 1 ? unit.replace(/s$/, '') : unit);
 
-/** What was counted and measured in a customer's walk-around video, and where each number came from. */
-function VideoFindings({ video }: { video: QuoteVideo }) {
-  if (video.status === 'measuring')
+/** What was counted, measured and seen in a customer's video or photos, and where each number came from. */
+function MediaFindings({
+  id,
+  source,
+  reading,
+  narration,
+}: {
+  id: string;
+  source: 'video' | 'photos';
+  reading: MediaReading;
+  narration?: string;
+}) {
+  const sent = source === 'video' ? 'a video' : 'photos';
+  if (reading.status === 'measuring')
     return <p className="mt-4 text-sm text-muted">Measuring the video they sent…</p>;
-  if (video.status === 'failed')
+  if (reading.status === 'failed')
     return (
       <p className="mt-4 text-sm text-muted">
-        They sent a video, but it couldn&apos;t be measured. {video.failure}
+        They sent {sent}, but {source === 'video' ? 'it' : 'they'} couldn&apos;t be measured.{' '}
+        {reading.failure}
       </p>
     );
+  const findings = reading.findings ?? [];
+  if (
+    !reading.counts.length &&
+    !reading.area &&
+    !reading.material &&
+    !findings.length &&
+    !narration
+  )
+    return null;
   return (
     <section
       className="mt-5 rounded-md border border-line bg-surface p-4"
-      aria-labelledby={`video-${video.id}`}
+      aria-labelledby={`media-${id}`}
     >
-      <h3 id={`video-${video.id}`} className="font-semibold">
-        Measured from their video
+      <h3 id={`media-${id}`} className="font-semibold">
+        {source === 'video' ? 'Measured from their video' : 'Read from their photos'}
       </h3>
       <ul className="mt-2 flex flex-col gap-1.5 text-[15px]">
-        {video.counts.map((item) => (
+        {reading.counts.map((item) => (
           <li key={item.label}>
             <span className="font-semibold">
               {item.count} {plural(item.unit, item.count)}
             </span>
             <span className="text-ink-2">
               {' '}
-              — each one followed through the video and counted once
+              {source === 'video'
+                ? '— each one followed through the video and counted once'
+                : '— each one found in the photos and checked up close'}
               {item.sparkCount !== null && item.sparkCount !== item.count
-                ? `. Watching it straight through, about ${item.sparkCount}.`
+                ? `. Looking it over as a whole, about ${item.sparkCount}.`
                 : '.'}
             </span>
+            {item.kinds && item.kinds.length > 0 && (
+              <ul className="mt-1 flex flex-col gap-0.5 pl-4 text-sm text-ink-2">
+                {item.kinds.map((kind) => (
+                  <li key={kind.kind}>
+                    {kind.kind} × {kind.count}
+                    {kind.condition && <span className="text-muted"> · {kind.condition}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
-        {video.area && (
+        {reading.area && (
           <li>
             <span className="font-semibold">
-              {video.area.surface}: about {video.area.low.toLocaleString()}–
-              {video.area.high.toLocaleString()} {video.area.unit}
+              {reading.area.surface}: about {reading.area.low.toLocaleString()}–
+              {reading.area.high.toLocaleString()} {reading.area.unit}
             </span>
-            {video.area.basis && (
-              <span className="text-ink-2"> — sized from {video.area.basis}.</span>
+            {reading.area.basis && (
+              <span className="text-ink-2"> — sized from {reading.area.basis}.</span>
             )}
           </li>
         )}
-        {video.narration && (
+        {reading.material && (
+          <li>
+            <span className="font-semibold">Material: </span>
+            {reading.material}
+          </li>
+        )}
+        {findings.map((finding) => (
+          <li key={finding.what}>
+            <span className="font-semibold">
+              {finding.what[0]?.toUpperCase()}
+              {finding.what.slice(1)}
+            </span>
+            {finding.detail && <span className="text-ink-2"> — {finding.detail}</span>}
+            {finding.severity && (
+              <span className="text-muted"> · {finding.severity} extra work</span>
+            )}
+          </li>
+        ))}
+        {narration && (
           <li className="text-ink-2">
             <span className="font-semibold text-ink">They said: </span>
-            {video.narration}
+            {narration}
           </li>
         )}
       </ul>
-      {video.overlays.length > 0 && (
+      {reading.overlays.length > 0 && (
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {video.overlays.map((overlay) => (
+          {reading.overlays.map((overlay) => (
             <figure key={overlay.url} className="flex flex-col gap-1">
               <img
                 src={overlay.url}
-                alt={`${overlay.label} outlined on a still from their video`}
+                alt={`${overlay.label} outlined on ${source === 'video' ? 'a still from their video' : 'their photo'}`}
                 className="w-full rounded-[10px] border border-line"
               />
               <figcaption className="text-xs text-muted">{overlay.label} outlined</figcaption>

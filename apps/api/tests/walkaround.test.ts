@@ -215,3 +215,128 @@ test('a SAM failure fails the measuring instead of inventing a count', async () 
     /couldn’t be measured/,
   );
 });
+
+test('photos are read like a video: counted by SAM, each find graded up close, and quality kept', async () => {
+  const photo = await sharp({
+    create: { width: 320, height: 334, channels: 3, background: '#d9d4c7' },
+  })
+    .jpeg()
+    .toBuffer();
+  const image = { mimeType: 'image/jpeg', dataBase64: photo.toString('base64') };
+  const calls: { body: any }[] = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    calls.push({ body });
+    if (body.model === 'sam-3.1') {
+      const [phrase] = body.input[0].content;
+      return responses(phrase.text === 'window' ? `<0f>${A},${B}\n` : '');
+    }
+    const text = JSON.stringify(body);
+    if (text.includes('numbered tiles'))
+      return responses(
+        JSON.stringify({
+          tiles: [
+            { tile: 1, kind: 'Large picture window', condition: 'heavy hard-water stains' },
+            { tile: 2, kind: 'large picture window', condition: 'heavy hard-water stains' },
+            { tile: 3, kind: 'not one', condition: '' },
+            { tile: 4, kind: 'standard double-hung', condition: 'light dust' },
+          ],
+        }),
+      );
+    return responses(
+      JSON.stringify({
+        summary: 'The back of a house with big windows facing the yard.',
+        narration: '',
+        serviceName: 'exterior windows',
+        counts: [{ label: 'windows', phrase: 'window', estimate: 3 }],
+        area: { surface: '', phrase: '', low: null, high: null, unit: '', basis: '' },
+        condition: 'stained',
+        access: 'second story',
+        extras: [],
+        material: 'vinyl frames',
+        findings: [
+          { what: 'hard-water stains', detail: 'on the lower panes', severity: 'heavy' },
+          { what: 'screens', detail: 'one torn', severity: 'none' },
+        ],
+      }),
+    );
+  };
+  const saved: Buffer[] = [];
+  const result = await walkaround.measurePhotos({
+    business: { name: 'Clear View', trade: 'Window cleaning', services: ['Exterior windows'] },
+    serviceName: '',
+    priceUnits: { 'exterior windows': ['windows'] },
+    photos: [
+      { id: 'photo-1', image },
+      { id: 'photo-2', image },
+    ],
+    saveOverlay: async (jpeg) => {
+      saved.push(jpeg);
+      return `overlay-${saved.length}.jpg`;
+    },
+  });
+
+  const read = calls.find((call) => call.body.model !== 'sam-3.1')!;
+  assert.equal(
+    read.body.input[0].content.filter((part: { type: string }) => part.type === 'input_image')
+      .length,
+    2,
+    'Muse Spark sees both photos at once',
+  );
+  // SAM found two windows in each photo; the grader threw out one find as not a window. Muse Spark
+  // counted three looking at both photos together, which is within what the photos can show.
+  const [windows] = result.counts;
+  assert.equal(windows.count, 3);
+  assert.deepEqual(windows.kinds, [
+    { kind: 'large picture window', count: 2, condition: 'heavy hard-water stains' },
+    { kind: 'standard double-hung', count: 1, condition: 'light dust' },
+  ]);
+  assert.equal(result.source, 'photos');
+  assert.equal(result.serviceName, 'Exterior windows');
+  assert.equal(result.quantity, 3);
+  assert.equal(result.unit, 'windows');
+  assert.equal(result.material, 'vinyl frames');
+  assert.deepEqual(result.findings, [
+    { what: 'hard-water stains', detail: 'on the lower panes', severity: 'heavy' },
+    { what: 'screens', detail: 'one torn', severity: '' },
+  ]);
+  assert.deepEqual(result.overlays, [
+    { label: 'windows', frameId: 'photo-1', storageKey: 'overlay-1.jpg' },
+  ]);
+  assert.ok(result.notes.some((note) => note.includes('photos show 3 windows')));
+  assert.ok(
+    result.notes.includes(
+      'Looked at up close, the windows are: large picture window ×2 (heavy hard-water stains), standard double-hung ×1 (light dust).',
+    ),
+  );
+  assert.ok(result.notes.includes('Hard-water stains: on the lower panes (heavy extra work).'));
+  assert.ok(result.notes.includes('Screens: one torn.'));
+  assert.ok(result.notes.includes("It's vinyl frames."));
+});
+
+test('graded finds group by kind, most common condition first, without SAM’s mistakes', () => {
+  const grades = [
+    { kind: 'skylight', condition: 'moss on the frame', real: true },
+    { kind: 'skylight', condition: '', real: true },
+    { kind: 'not one', condition: '', real: false },
+  ];
+  assert.deepEqual(walkaround.groupKinds(grades), [
+    { kind: 'skylight', count: 2, condition: 'moss on the frame' },
+  ]);
+});
+
+test('a grading sheet numbers each find on one image', async () => {
+  const photo = await sharp({
+    create: { width: 320, height: 334, channels: 3, background: '#d9d4c7' },
+  })
+    .jpeg()
+    .toBuffer();
+  const image = { mimeType: 'image/jpeg', dataBase64: photo.toString('base64') };
+  const box = { left: 20, top: 30, right: 120, bottom: 140 };
+  const sheet = await walkaround.gradingSheet(Array.from({ length: 5 }, () => ({ image, box })));
+  const meta = await sharp(sheet!).metadata();
+  // Four to a row, so five finds make two rows.
+  assert.equal(meta.width, 4 * 256);
+  assert.equal(meta.height, 2 * 256);
+  assert.equal(await walkaround.gradingSheet([]), null);
+});

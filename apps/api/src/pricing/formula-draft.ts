@@ -17,7 +17,7 @@ import {
   type PriceFormula,
 } from './formula.js';
 import { loadPricingData, type HistoryOptions, type PricingData } from './history.js';
-import { describeSpec, type JobSpec } from './spec.js';
+import { describeJob, type JobSpec } from './spec.js';
 import { canonicalUnit } from './units.js';
 
 /**
@@ -295,6 +295,8 @@ export async function priceFromFormula(
     serviceName: string;
     conversation: { from: 'customer' | 'owner'; text: string }[];
     spec: JobSpec | null;
+    /** What was measured and seen in the customer's video and photos, in words. */
+    media?: string[];
     model?: string;
   },
 ): Promise<{ drafted: DraftedQuote | null; use: FormulaUse }> {
@@ -307,7 +309,7 @@ export async function priceFromFormula(
     request: {
       serviceName: input.serviceName,
       conversation: input.conversation,
-      details: describeSpec(input.spec) || undefined,
+      details: describeJob(input.spec, input.media) || undefined,
     },
     model: input.model,
   });

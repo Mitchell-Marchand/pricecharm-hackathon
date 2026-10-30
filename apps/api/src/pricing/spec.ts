@@ -70,6 +70,11 @@ export function specFromScenario(scenario: PracticeScenario): JobSpec {
   return emptySpec();
 }
 
+/** The job's fields, then what was measured and seen in the customer's video and photos. */
+export function describeJob(spec: JobSpec | null, media: string[] = []): string {
+  return [describeSpec(spec), ...media].filter(Boolean).join('. ');
+}
+
 /** "600 sq ft; heavy moss; steep driveway; adds: gutter brightening; wants it next week" */
 export function describeSpec(spec: JobSpec | null): string {
   if (!spec) return '';

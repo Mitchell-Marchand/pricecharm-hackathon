@@ -19,6 +19,10 @@ async function askForQuote(page: Page, { withPhoto }: { withPhoto: boolean }) {
   if (withPhoto) {
     await page.locator('input[type=file][accept="image/*"]').setInputFiles(photo);
     await expect(page.getByRole('img', { name: 'Your photo' })).toBeVisible();
+    // Like a video, the photo is read while the chat says so, and the assistant carries on after.
+    await expect(
+      page.getByText('Looking over your photos and counting what’s in them…'),
+    ).toBeVisible();
   } else await page.getByRole('button', { name: 'Skip photos' }).click();
 }
 

@@ -9,7 +9,7 @@ import { currentFormula, priceFromFormula } from './formula-draft.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
 import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
-import { describeSpec, type JobSpec } from './spec.js';
+import { describeJob, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
 
 /** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
@@ -109,6 +109,8 @@ export async function draftForBusiness(input: {
   serviceName: string;
   conversation: DraftRequest['conversation'];
   spec: JobSpec | null;
+  /** What was measured and seen in the customer's video and photos, in words. */
+  media?: string[];
   images: AiImage[];
   history?: HistoryOptions;
   /** A model to try instead of the configured one, when replaying past quotes. */
@@ -206,7 +208,7 @@ export async function draftForBusiness(input: {
           request: {
             serviceName,
             conversation: input.conversation,
-            details: describeSpec(spec) || undefined,
+            details: describeJob(spec, input.media) || undefined,
             estimate: estimate
               ? { mainWorkCents: estimate.cents, basis: estimateBasis }
               : undefined,
