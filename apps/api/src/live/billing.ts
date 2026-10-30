@@ -18,14 +18,13 @@ import { ApiError } from '../http.js';
 
 /**
  * Billing for quotes from the customer chat, on the plan the owner chose:
- * - $2 for each quote a customer leaves their contact details on: a yes, a visit request, or a
- *   copy to their inbox. Seeing the price costs the owner nothing;
+ * - $2 for each quote shown to a customer, whether or not they answer it;
  * - 1% of each quote a customer accepts, charged when they accept;
  * - a subscription that covers a set number of quotes a month, then a fee for each one past it.
  * A payment method has to be on file first. An account can have `trial_quote_limit` free quotes
  * before that (none by default). For 30 days after the first card, quote fees on any plan stop at
- * the first-month max, and quotes past it still go out. Owner tests, repeat sends and a second
- * quote to the same customer within a week are never billed.
+ * the first-month max, and quotes past it still go out. Owner tests and repeat sends are never
+ * billed.
  */
 const LIVE_SOURCES = "('live_auto','live_owner')";
 const MONTH_START = "DATE_FORMAT(UTC_DATE(),'%Y-%m-01')";
@@ -95,7 +94,11 @@ export async function liveBillingAccess(
   )
     return {
       canSend: false,
-      reason: 'Add a payment method in Settings so your quotes can go out.',
+      // Stripe's "canceled" means they had a plan and it ended; their card may still be there.
+      reason:
+        account.subscription_status === 'canceled'
+          ? 'Your plan ended. Choose a plan in Settings to start it again.'
+          : 'Add a payment method in Settings so your quotes can go out.',
     };
   if (
     billingProvider() === 'stripe' &&
@@ -150,25 +153,11 @@ export async function liveBillingSummary(businessId: string) {
 }
 
 /**
- * Records one quote that reached a customer who left their contact details, once. Call it in the
- * transaction that gives the owner the lead.
- *
- * A customer saying yes is never turned away over the owner's billing: past their spending limit,
- * or with their card failing since the quote showed, the lead is recorded with no fee. Neither is a
- * second quote to the same customer within a week, so one person can't run up the owner's bill.
+ * Records one quote shown to a customer, once. Call it in the transaction that shows it.
  */
 export async function recordLiveDelivery(
   connection: Sql,
-  input: {
-    businessId: string;
-    quoteId: string;
-    totalCents: number;
-    sentBy: 'auto' | 'owner';
-    /** The customer is leaving their details now, rather than the owner sending it. */
-    byCustomer?: boolean;
-    /** This customer already had a quote from the business in the last week. */
-    repeat?: boolean;
-  },
+  input: { businessId: string; quoteId: string; totalCents: number; sentBy: 'auto' | 'owner' },
 ): Promise<{ recorded: boolean; feeCents: number }> {
   const [existing] = await rows(
     "SELECT id FROM quote_usage WHERE business_id=? AND quote_id=? AND charge='delivered'",
@@ -177,16 +166,14 @@ export async function recordLiveDelivery(
   );
   if (existing) return { recorded: false, feeCents: 0 };
   const access = await liveBillingAccess(input.businessId, connection, input.totalCents);
-  if (!access.canSend && !input.byCustomer) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
+  if (!access.canSend) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
   const account = await ensureBillingAccount(input.businessId, connection);
   const plan = PLANS.includes(account.plan) ? (account.plan as Plan) : null;
   const usage = await liveUsage(input.businessId, connection);
-  const trial = access.canSend && access.trial;
-  const free = trial || !plan || !access.canSend || input.repeat;
   const { feeCents, waivedCents } = await underFirstMonthMax(
     connection,
     account,
-    free ? 0 : deliveryFee(plan, account, usage.covered),
+    access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered),
     'delivered',
   );
   const usageId = await insertUsage(connection, account, {
@@ -194,13 +181,11 @@ export async function recordLiveDelivery(
     quoteId: input.quoteId,
     charge: 'delivered',
     source: input.sentBy === 'auto' ? 'live_auto' : 'live_owner',
-    trial,
+    trial: access.trial,
     totalCents: input.totalCents,
     feeCents,
     waivedCents,
-    // Without a plan behind it, a yes on the accepted-quote plan isn't charged either, and the
-    // lead doesn't count against a subscription's allowance.
-    plan: access.canSend && !input.repeat ? plan : null,
+    plan,
   });
   await mutate(
     'INSERT IGNORE INTO usage_events(id,business_id,kind,dedupe_key,metadata_json) VALUES (?,?,?,?,?)',
@@ -216,8 +201,7 @@ export async function recordLiveDelivery(
         totalCents: input.totalCents,
         feeCents,
         waivedCents,
-        trialCovered: trial,
-        repeat: Boolean(input.repeat),
+        trialCovered: access.trial,
         usageId,
       }),
     ],
@@ -299,17 +283,22 @@ export async function recordAcceptance(
     connection,
   );
   if (already) return { recorded: false, feeCents: 0 };
+  // A yes is never turned away over the owner's billing, and past their spending limit, or with
+  // their card failing since the quote showed, it isn't charged.
+  const access = await liveBillingAccess(input.businessId, connection, input.totalCents);
   const account = await ensureBillingAccount(input.businessId, connection);
   // The terms it was delivered under, even if the owner has since moved plans.
   const terms = planTariff('per_accepted');
   const { feeCents, waivedCents } = await underFirstMonthMax(
     connection,
     account,
-    feeForQuote(input.totalCents, {
-      fee_basis_points: terms.basisPoints,
-      minimum_fee_cents: terms.minimumFeeCents,
-      maximum_fee_cents: terms.maximumFeeCents,
-    }),
+    access.canSend
+      ? feeForQuote(input.totalCents, {
+          fee_basis_points: terms.basisPoints,
+          minimum_fee_cents: terms.minimumFeeCents,
+          maximum_fee_cents: terms.maximumFeeCents,
+        })
+      : 0,
     'accepted',
   );
   await insertUsage(

@@ -334,7 +334,7 @@ test(
     const [askedUsage] = await rows('SELECT fee_cents FROM quote_usage WHERE quote_id=?', [
       asked.quote.id,
     ]);
-    assert.ok(askedUsage, 'A lead from the start');
+    assert.ok(askedUsage, 'Billed once it shows');
     await setPage({ contactFirst: false }).expect(200);
 
     // The weekly report says how each wording is doing.

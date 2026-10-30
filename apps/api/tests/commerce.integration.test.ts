@@ -7,7 +7,6 @@ import { createApp } from '../src/app.js';
 import { closeDatabase, mutate, rows, transaction } from '../src/db.js';
 import { hashToken } from '../src/auth.js';
 import {
-  applyDuePlanChanges,
   dispatchFee,
   ensureBillingAccount,
   reconcileStripeCustomer,
@@ -30,6 +29,7 @@ import {
 import { deleteBusinessAccount } from '../src/accounts.js';
 import { runOneJob } from '../src/worker.js';
 import { getPhoto, putPhoto } from '../src/storage.js';
+import { json } from '../src/models.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
 /** Mocked Stripe settings: a price for each plan, and the meter that counts billed quotes. */
@@ -372,13 +372,14 @@ test(
 
       // 1% when the customer accepts, at least $1 and at most $25, charged then and only once.
       assert.equal((await choose(a, 'per_accepted')).body.data.plan, 'per_accepted');
-      const [small, usual, huge, unanswered] = [
+      const [small, usual, huge, unanswered, capped] = [
+        randomUUID(),
         randomUUID(),
         randomUUID(),
         randomUUID(),
         randomUUID(),
       ];
-      for (const quoteId of [small, usual, huge, unanswered]) await record(quoteId);
+      for (const quoteId of [small, usual, huge, unanswered, capped]) await record(quoteId);
       const fees = async (quoteId: string) =>
         (
           await rows('SELECT charge,fee_cents FROM quote_usage WHERE quote_id=? ORDER BY charge', [
@@ -389,6 +390,16 @@ test(
       assert.deepEqual(await accept(usual, 32000), { recorded: true, feeCents: 320 });
       assert.deepEqual(await accept(usual, 32000), { recorded: false, feeCents: 0 });
       assert.equal((await accept(small, 5000)).feeCents, 100);
+      // Past the spending limit, a yes still goes through but isn't charged.
+      const cap = (cents: number) =>
+        a
+          .patch('/api/v1/billing')
+          .set('Origin', origin)
+          .send({ spendingCapCents: cents })
+          .expect(200);
+      await cap(600);
+      assert.deepEqual(await accept(capped, 32000), { recorded: true, feeCents: 0 });
+      await cap(100000);
       // Moving plans after it went out doesn't change how it's charged.
       assert.equal((await choose(a, 'per_quote')).body.data.plan, 'per_quote');
       assert.equal((await accept(huge, 400000)).feeCents, 2500);
@@ -406,23 +417,14 @@ test(
       assert.equal((await liveBillingSummary(businessId)).coveredThisMonth, 3);
       delete process.env.BILLING_INCLUDED_QUOTES;
 
-      // Off a paid subscription waits for the end of the period; changing back undoes it.
+      // Off a paid subscription, mid-period, it switches now like any other switch.
       await mutate(
         'UPDATE billing_accounts SET period_end=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 10 DAY) WHERE business_id=?',
         [businessId],
       );
-      const booked = (await choose(a, 'per_quote')).body.data;
-      assert.deepEqual([booked.plan, booked.nextPlan], ['monthly', 'per_quote']);
-      const undone = (await choose(a, 'monthly')).body.data;
-      assert.deepEqual([undone.plan, undone.nextPlan], ['monthly', null]);
-      await choose(a, 'per_quote');
-      await mutate(
-        'UPDATE billing_accounts SET period_end=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 MINUTE) WHERE business_id=?',
-        [businessId],
-      );
-      await applyDuePlanChanges();
+      assert.equal((await choose(a, 'per_quote')).body.data.plan, 'per_quote');
       const switched = (await a.get('/api/v1/app/billing')).body.data;
-      assert.deepEqual([switched.plan, switched.nextPlan], ['per_quote', null]);
+      assert.deepEqual([switched.plan, switched.nextPlan], ['per_quote', undefined]);
       const [{ choices }] = await rows(
         "SELECT COUNT(*) choices FROM usage_events WHERE business_id=? AND kind='plan_chosen'",
         [businessId],
@@ -749,8 +751,69 @@ test(
         assert.equal(options.idempotencyKey, `quotient-customer:${businessId}`);
         return { id: `cus_${suffix}` };
       }) as any;
-      stripe.subscriptions.list = (async () => ({ data: [] })) as any;
+      // Stripe as a small stand-in: the customer's cards and subscriptions, changed by the calls.
+      let card: { id: string; created: number } | null = null;
+      let subscriptions: any[] = [];
+      const defaults: string[] = [],
+        starts: any[] = [],
+        moves: any[] = [];
+      stripe.customers.retrieve = (async (id: string, params: any) => {
+        assert.deepEqual(
+          [id, params],
+          [`cus_${suffix}`, { expand: ['invoice_settings.default_payment_method'] }],
+        );
+        return { id, invoice_settings: { default_payment_method: card } };
+      }) as any;
+      stripe.customers.listPaymentMethods = (async () => ({ data: [] })) as any;
+      stripe.customers.update = (async (_id: string, params: any) => {
+        defaults.push(params.invoice_settings.default_payment_method);
+        return {};
+      }) as any;
+      stripe.subscriptions.list = (async () => ({ data: subscriptions })) as any;
+      let started = 0;
+      const now = Math.floor(Date.now() / 1000),
+        monthEnd = now + 20 * 86400,
+        yearEnd = now + 300 * 86400;
+      const item = (priceId: string) => ({
+        id: `si_${priceId}`,
+        price: { id: priceId },
+        current_period_end: priceId === 'price_yearly_mock' ? yearEnd : monthEnd,
+      });
+      stripe.subscriptions.create = (async (params: any, options: any) => {
+        starts.push({ params, key: options.idempotencyKey });
+        // Each start takes a moment, so two at once would both get through without the lock.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const subscription = {
+          id: `sub_${suffix}_${++started}`,
+          status: params.trial_period_days ? 'trialing' : 'active',
+          created: 600 + started,
+          cancel_at_period_end: false,
+          items: { data: params.items.map((entry: any) => item(entry.price)) },
+        };
+        subscriptions = [subscription, ...subscriptions];
+        return subscription;
+      }) as any;
+      stripe.subscriptions.update = (async (id: string, params: any) => {
+        moves.push(params);
+        const subscription = subscriptions.find((entry) => entry.id === id);
+        let items = subscription.items.data as any[];
+        for (const change of params.items) {
+          if (change.deleted) items = items.filter((entry) => entry.id !== change.id);
+          else if (change.id)
+            items = items.map((entry) => (entry.id === change.id ? item(change.price) : entry));
+          else items = [...items, item(change.price)];
+        }
+        subscription.items.data = items;
+        if (params.trial_end === 'now') subscription.status = 'active';
+        return subscription;
+      }) as any;
       const sessions: Record<string, any> = {};
+      let checkoutSession: any = {
+        status: 'open',
+        mode: 'setup',
+        url: 'https://checkout.stripe.com/mock-only',
+        metadata: { plan: 'monthly' },
+      };
       stripe.checkout.sessions.create = (async (params: any) => {
         checkouts++;
         sessions[params.metadata.plan] = params;
@@ -761,16 +824,14 @@ test(
           url: 'https://checkout.stripe.com/mock-only',
         };
       }) as any;
-      stripe.checkout.sessions.retrieve = (async () => ({
-        status: 'open',
-        mode: 'subscription',
-        url: 'https://checkout.stripe.com/mock-only',
-        metadata: { plan: 'monthly' },
+      stripe.checkout.sessions.retrieve = (async (id: string) => ({
+        id,
+        ...checkoutSession,
       })) as any;
       stripe.billingPortal.sessions.create = (async (params: any) => {
         portals++;
         assert.equal(params.customer, `cus_${suffix}`);
-        assert.equal(params.return_url, 'http://localhost:3100/app/settings');
+        assert.equal(params.return_url, 'http://localhost:3100/app/settings?billing=portal');
         return { url: 'https://billing.stripe.com/mock-only' };
       }) as any;
       await agent
@@ -785,44 +846,39 @@ test(
       );
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
       assert.equal(customers, 1);
-      assert.equal(checkouts, 1);
-      // Checkout shows the plan's own prices: $49 a month with its free week, and $1 a quote past
-      // the allowance.
-      assert.equal(sessions.monthly.mode, 'subscription');
-      assert.deepEqual(sessions.monthly.line_items, [
-        { price: 'price_monthly_mock', quantity: 1 },
-        { price: 'price_extra_quotes_mock' },
-      ]);
-      assert.equal(sessions.monthly.subscription_data.trial_period_days, 7, 'The free week');
-      assert.deepEqual(sessions.monthly.subscription_data.billing_mode, { type: 'flexible' });
+      assert.equal(checkouts, 1, 'An open checkout for the same plan is reused');
+      // Checkout only saves the card, and says above its button what the plan costs.
+      assert.equal(sessions.monthly.mode, 'setup');
+      assert.equal(sessions.monthly.currency, 'usd');
+      assert.equal(sessions.monthly.line_items, undefined);
+      assert.equal(sessions.monthly.subscription_data, undefined);
       assert.equal(
         sessions.monthly.custom_text.submit.message,
-        'Includes 100 quotes a month. Each one past that is $1, billed monthly. In your first 30 days, quote fees stop at $49.',
+        '$49 a month after your free week, which starts today. Includes 100 quotes a month. Each one past that is $1, billed monthly. In your first 30 days, quote fees stop at $49.',
       );
-      // Checkout can't mix a yearly price with the monthly quote price, so yearly starts alone.
       const pick = (plan: string) =>
         agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan }).expect(200);
       await pick('yearly');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
-      assert.deepEqual(sessions.yearly.line_items, [{ price: 'price_yearly_mock', quantity: 1 }]);
+      assert.match(
+        sessions.yearly.custom_text.submit.message,
+        /^\$499 a year after your free week/,
+      );
       // $2 a quote, with nothing up front. Trying plan after plan isn't stopped as abuse.
       await pick('per_quote');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
-      assert.equal(sessions.per_quote.mode, 'subscription');
-      assert.deepEqual(sessions.per_quote.line_items, [{ price: 'price_per_quote_mock' }]);
-      assert.equal(sessions.per_quote.subscription_data.trial_period_days, undefined);
-      // 1% of a job isn't a price per quote, so that plan subscribes to its $0 quote price, under
-      // the plan's terms in our words.
+      assert.equal(
+        sessions.per_quote.custom_text.submit.message,
+        '$2 for each quote shown to a customer, billed monthly. Nothing today. In your first 30 days, quote fees stop at $49.',
+      );
       await pick('per_accepted');
       await agent.post('/api/v1/billing/checkout').set('Origin', origin).send({}).expect(200);
-      assert.equal(sessions.per_accepted.mode, 'subscription');
-      assert.deepEqual(sessions.per_accepted.line_items, [{ price: 'price_per_accepted_mock' }]);
-      assert.equal(sessions.per_accepted.subscription_data.trial_period_days, undefined);
       assert.equal(
         sessions.per_accepted.custom_text.submit.message,
         'Nothing today. Each month, your card is billed 1% of the quotes customers accepted, at least $1 and at most $25 each. No accepted quotes, no bill. In your first 30 days, quote fees stop at $49.',
       );
       await pick('monthly');
+      assert.equal(starts.length, 0, 'Picking plans without a card starts nothing');
       assert.equal(
         (await agent.post('/api/v1/billing/portal').set('Origin', origin).send({}).expect(200)).body
           .data.url,
@@ -830,150 +886,173 @@ test(
       );
       assert.equal(portals, 1);
 
-      // Switching a paying subscription: up to yearly now, off it at the end of the period.
-      await mutate(
-        "UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status='active',period_end=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 20 DAY),trial_used_at=UTC_TIMESTAMP(3),last_reconciled_at=UTC_TIMESTAMP(3) WHERE business_id=?",
-        [`sub_${suffix}`, businessId],
-      );
-      const updates: any[] = [];
-      stripe.subscriptions.retrieve = (async () => ({
-        id: `sub_${suffix}`,
-        items: {
-          data: [
-            { id: 'si_fixed', price: { id: 'price_monthly_mock' } },
-            { id: 'si_usage', price: { id: 'price_extra_quotes_mock' } },
-          ],
-        },
-      })) as any;
-      stripe.subscriptions.update = (async (_id: string, params: any) => {
-        updates.push(params);
-        return {};
-      }) as any;
-      const choose = (plan: string) =>
-        agent.post('/api/v1/app/billing/plan').set('Origin', origin).send({ plan });
-      assert.equal((await choose('yearly')).body.data.plan, 'yearly');
-      assert.deepEqual(updates, [
-        {
-          items: [{ id: 'si_fixed', price: 'price_yearly_mock' }],
-          proration_behavior: 'create_prorations',
-        },
-      ]);
-      const scheduled: any[] = [];
-      let released = '';
-      stripe.subscriptionSchedules.create = (async () => ({
-        id: 'sub_sched_mock',
-        phases: [
-          {
-            items: [
-              { price: 'price_yearly_mock', quantity: 1 },
-              { price: 'price_extra_quotes_mock' },
-            ],
-            start_date: 1,
-            end_date: 2,
-          },
-        ],
-      })) as any;
-      stripe.subscriptionSchedules.update = (async (_id: string, params: any) => {
-        scheduled.push(params);
-        return {};
-      }) as any;
-      stripe.subscriptionSchedules.release = (async (id: string) => {
-        released = id;
-        return {};
-      }) as any;
-      // On yearly the usage price still bills monthly. The switch waits for the year, not its month.
-      const now = Math.floor(Date.now() / 1000),
-        monthEnd = now + 20 * 86400,
-        yearEnd = now + 300 * 86400;
-      const usageItem = {
-          id: 'si_usage',
-          price: { id: 'price_extra_quotes_mock' },
-          current_period_end: monthEnd,
-        },
-        yearlyItem = {
-          id: 'si_fixed',
-          price: { id: 'price_yearly_mock' },
-          current_period_end: yearEnd,
-        };
-      stripe.subscriptions.retrieve = (async () => ({
-        id: `sub_${suffix}`,
-        items: { data: [usageItem, yearlyItem] },
-      })) as any;
-      const booked = (await choose('per_accepted')).body.data;
-      assert.deepEqual([booked.plan, booked.nextPlan], ['yearly', 'per_accepted']);
-      assert.equal(scheduled[0].phases[0].end_date, yearEnd);
-      assert.deepEqual(scheduled[0].phases[1].items, [{ price: 'price_per_accepted_mock' }]);
-      assert.equal(scheduled[0].phases[1].proration_behavior, 'none');
-      assert.equal(updates.length, 1, 'Nothing changes on the subscription until then');
-      const kept = (await choose('yearly')).body.data;
-      assert.deepEqual([kept.plan, kept.nextPlan, released], ['yearly', null, 'sub_sched_mock']);
-
-      // Between the per-quote plans the quote meter's price is swapped, never removed, so quotes
-      // from before the switch are still billed at the price they went out at.
-      stripe.subscriptions.retrieve = (async () => ({
-        id: `sub_${suffix}`,
-        items: { data: [{ id: 'si_usage', price: { id: 'price_per_quote_mock' } }] },
-      })) as any;
-      const fromPerQuote = async (plan: string) => {
-        await mutate("UPDATE billing_accounts SET plan='per_quote' WHERE business_id=?", [
-          businessId,
-        ]);
-        assert.equal((await choose(plan)).body.data.plan, plan);
-        return updates.at(-1);
+      // A card saved in Checkout becomes the default, and the plan starts on it, with its free
+      // week. Stripe's webhook and the owner coming back can land together: one subscription.
+      checkoutSession = {
+        status: 'complete',
+        mode: 'setup',
+        metadata: { plan: 'monthly' },
+        setup_intent: { payment_method: 'pm_checkout' },
       };
-      assert.deepEqual(await fromPerQuote('per_accepted'), {
-        items: [{ id: 'si_usage', price: 'price_per_accepted_mock' }],
-        proration_behavior: 'create_prorations',
-      });
-      assert.deepEqual(await fromPerQuote('monthly'), {
-        items: [
-          { price: 'price_monthly_mock', quantity: 1 },
-          { id: 'si_usage', price: 'price_extra_quotes_mock' },
-        ],
-        proration_behavior: 'create_prorations',
-      });
-      await mutate("UPDATE billing_accounts SET plan='yearly' WHERE business_id=?", [businessId]);
-
-      // A yearly checkout leaves the subscription with its own price alone. Reconciling adds the
-      // usage price once, and the paid period it saves is the year.
-      const added: any[] = [];
-      stripe.subscriptions.update = (async (id: string, params: any, options: any) => {
-        added.push({ id, params, key: options?.idempotencyKey });
-        return {};
-      }) as any;
-      const subscriptionWith = (items: unknown[]) =>
-        (async () => ({
-          data: [
-            {
-              id: `sub_${suffix}`,
-              status: 'trialing',
-              created: 100,
-              cancel_at_period_end: false,
-              items: { data: items },
-            },
-          ],
-        })) as any;
-      stripe.subscriptions.list = subscriptionWith([yearlyItem]);
-      await reconcileStripeCustomer(`cus_${suffix}`);
-      assert.deepEqual(added, [
-        {
-          id: `sub_${suffix}`,
-          params: { items: [{ price: 'price_extra_quotes_mock' }], proration_behavior: 'none' },
-          key: `quotient-usage-price:sub_${suffix}`,
-        },
+      card = { id: 'pm_checkout', created: 500 };
+      const [back] = await Promise.all([
+        agent.post('/api/v1/app/billing/sync').set('Origin', origin).send({}).expect(200),
+        reconcileStripeCustomer(`cus_${suffix}`),
       ]);
-      stripe.subscriptions.list = subscriptionWith([usageItem, yearlyItem]);
-      await reconcileStripeCustomer(`cus_${suffix}`);
-      assert.equal(added.length, 1, 'Once it has the usage price, nothing more is added');
+      assert.deepEqual(defaults.slice(0, 1), ['pm_checkout']);
+      assert.equal(starts.length, 1, 'One subscription, however many times it runs');
+      const [{ checkout_session_id: cleared, plan_chosen_at: pickedAt }] = await rows(
+        'SELECT checkout_session_id,plan_chosen_at FROM billing_accounts WHERE business_id=?',
+        [businessId],
+      );
+      assert.equal(cleared, null);
+      assert.deepEqual(starts[0], {
+        params: {
+          customer: `cus_${suffix}`,
+          items: [
+            { price: 'price_monthly_mock', quantity: 1 },
+            { price: 'price_extra_quotes_mock' },
+          ],
+          billing_mode: { type: 'flexible' },
+          metadata: { businessId, plan: 'monthly' },
+          trial_period_days: 7,
+        },
+        key: `quotient-plan:${businessId}:monthly:${Math.floor(new Date(pickedAt).getTime() / 1000)}:pm_checkout`,
+      });
+      assert.deepEqual(
+        [back.body.data.status, back.body.data.freeWeek, back.body.data.checkoutAvailable],
+        ['trialing', false, false],
+      );
       const [paid] = await rows(
         'SELECT period_end,card_added_at FROM billing_accounts WHERE business_id=?',
         [businessId],
       );
-      assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), yearEnd);
+      assert.equal(Math.floor(new Date(paid.period_end).getTime() / 1000), monthEnd);
       assert.equal(
         new Date(paid.card_added_at).getTime(),
-        100000,
+        601000,
         'The first card is when the first subscription started',
+      );
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual(
+        [starts.length, moves.length],
+        [1, 0],
+        'Once it’s on the plan, nothing more',
+      );
+
+      // Switching takes effect now, any way round, with Stripe crediting what's left. The quote
+      // price is swapped on its item, never removed, so earlier quotes keep their price.
+      const choose = async (plan: string) => {
+        const saved = (await pick(plan)).body.data;
+        assert.equal(saved.plan, plan);
+        return moves.at(-1);
+      };
+      assert.deepEqual(await choose('yearly'), {
+        items: [{ id: 'si_price_monthly_mock', price: 'price_yearly_mock' }],
+        proration_behavior: 'create_prorations',
+      });
+      const [onYearly] = await rows('SELECT period_end FROM billing_accounts WHERE business_id=?', [
+        businessId,
+      ]);
+      assert.equal(
+        Math.floor(new Date(onYearly.period_end).getTime() / 1000),
+        yearEnd,
+        'The paid period is the year, not the quote price’s month',
+      );
+      // The free week is the subscription's, and Stripe bills no quotes in a trial, so it ends.
+      assert.deepEqual(await choose('per_accepted'), {
+        items: [
+          { id: 'si_price_yearly_mock', deleted: true },
+          { id: 'si_price_extra_quotes_mock', price: 'price_per_accepted_mock' },
+        ],
+        proration_behavior: 'create_prorations',
+        trial_end: 'now',
+      });
+      assert.deepEqual(await choose('per_quote'), {
+        items: [{ id: 'si_price_per_accepted_mock', price: 'price_per_quote_mock' }],
+        proration_behavior: 'create_prorations',
+      });
+      assert.deepEqual(await choose('monthly'), {
+        items: [
+          { price: 'price_monthly_mock', quantity: 1 },
+          { id: 'si_price_per_quote_mock', price: 'price_extra_quotes_mock' },
+        ],
+        proration_behavior: 'create_prorations',
+      });
+      const movesSoFar = moves.length;
+      await pick('monthly');
+      assert.equal(moves.length, movesSoFar, 'Picking the plan they’re on changes nothing');
+      assert.equal(
+        (await agent.get('/api/v1/app/billing')).body.data.nextPlan,
+        undefined,
+        'Nothing is booked for later',
+      );
+
+      // A plan they cancel stays stopped until they save a newer card or pick a plan again.
+      const status = async () =>
+        (
+          await rows('SELECT subscription_status FROM billing_accounts WHERE business_id=?', [
+            businessId,
+          ])
+        )[0].subscription_status;
+      const cancel = (at: number) => {
+        subscriptions = subscriptions.map((entry) =>
+          entry.ended_at ? entry : { ...entry, status: 'canceled', ended_at: at },
+        );
+      };
+      // Their last pick was an hour ago; they cancelled after it.
+      await mutate(
+        'UPDATE billing_accounts SET plan_chosen_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 HOUR) WHERE business_id=?',
+        [businessId],
+      );
+      cancel(now - 600);
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual([starts.length, await status()], [1, 'canceled']);
+      card = { id: 'pm_newer', created: now - 500 };
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual([starts.length, await status()], [2, 'active']);
+      assert.equal(starts[1].params.trial_period_days, undefined, 'The free week is used');
+      assert.match(starts[1].key, /:pm_newer$/);
+      cancel(now - 400);
+      await reconcileStripeCustomer(`cus_${suffix}`);
+      assert.deepEqual([starts.length, await status()], [2, 'canceled']);
+      // Picking a plan again starts it on the card they have. Yearly carries the monthly quote
+      // price on the same subscription.
+      await pick('yearly');
+      assert.deepEqual(
+        [starts.length, starts[2].params.items, await status()],
+        [
+          3,
+          [{ price: 'price_yearly_mock', quantity: 1 }, { price: 'price_extra_quotes_mock' }],
+          'active',
+        ],
+      );
+
+      // A card changed in the portal comes as a customer event, whose object is the customer.
+      const cardEvent = {
+        id: `evt_card_${suffix}`,
+        type: 'customer.updated',
+        data: { object: { object: 'customer', id: `cus_${suffix}` } },
+      };
+      const cardRaw = JSON.stringify(cardEvent);
+      await guest
+        .post('/api/v1/billing/webhook')
+        .set('Content-Type', 'application/json')
+        .set(
+          'stripe-signature',
+          stripe.webhooks.generateTestHeaderString({
+            payload: cardRaw,
+            secret: process.env.STRIPE_WEBHOOK_SECRET,
+          }),
+        )
+        .send(cardRaw)
+        .expect(200);
+      const [cardJob] = await rows('SELECT payload_json FROM jobs WHERE dedupe_key=?', [
+        `stripe-event:${cardEvent.id}`,
+      ]);
+      assert.equal(
+        json<{ customerId: string }>(cardJob.payload_json, { customerId: '' }).customerId,
+        `cus_${suffix}`,
       );
 
       await mutate(
@@ -1005,7 +1084,7 @@ test(
             status: 'past_due',
             created: 100,
             cancel_at_period_end: false,
-            items: { data: [] },
+            items: { data: [item('price_yearly_mock'), item('price_extra_quotes_mock')] },
           },
         ],
       })) as any;

@@ -3,7 +3,7 @@ import { Router, type RequestHandler } from 'express';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { owner } from './auth.js';
-import { mutate, rows, transaction, type Sql } from './db.js';
+import { mutate, oneAtATime, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok } from './http.js';
 import { iso } from './models.js';
 import type { RowDataPacket } from 'mysql2/promise';
@@ -247,7 +247,7 @@ async function planOrder(businessId: string, saved: unknown, connection: Sql) {
 export async function planEvent(
   connection: Sql,
   businessId: string,
-  kind: 'plan_chosen' | 'plan_scheduled',
+  kind: 'plan_chosen',
   metadata: Record<string, unknown>,
 ) {
   await mutate(
@@ -274,8 +274,6 @@ export async function getBilling(businessId: string) {
       provider,
       configured,
       plan: (account.plan as Plan | null) ?? null,
-      /** A switch that happens when the paid period ends. */
-      nextPlan: (account.next_plan as Plan | null) ?? null,
       planOrder: await planOrder(businessId, account.plan_order, connection),
       pricing: publicPricing(),
       /** The subscription's free week, if they haven't had it. */
@@ -466,20 +464,27 @@ export function dollars(cents: number): string {
   return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
 }
 /**
- * What the plan costs, in a line above Checkout's button. Stripe can't show 1% as a price. A first
- * card also gets the first-month max.
+ * What the plan costs, in a line above Checkout's button. Checkout only saves the card, so Stripe
+ * shows no price of its own. A first card also gets the first-month max.
  */
-function checkoutTerms(plan: Plan, firstCard: boolean): string {
+function checkoutTerms(plan: Plan, firstCard: boolean, freeWeek: boolean): string {
   const pricing = publicPricing(),
     { accepted, subscription } = pricing;
   const first = firstCard
     ? ` In your first 30 days, quote fees stop at ${dollars(pricing.firstMonthMaxCents)}.`
     : '';
   if (plan === 'per_quote')
-    return `${dollars(pricing.perQuoteCents)} for each quote a customer gets from you, billed monthly. Nothing today.${first}`;
+    return `${dollars(pricing.perQuoteCents)} for each quote shown to a customer, billed monthly. Nothing today.${first}`;
   if (plan === 'per_accepted')
     return `Nothing today. Each month, your card is billed ${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.${first}`;
-  return `Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.${first}`;
+  const price =
+    plan === 'monthly'
+      ? `${dollars(subscription.monthlyCents)} a month`
+      : `${dollars(subscription.yearlyCents)} a year`;
+  const starts = freeWeek
+    ? `${price} after your free week, which starts today.`
+    : `${price}, starting today.`;
+  return `${starts} Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.${first}`;
 }
 
 billingRouter.post('/billing/checkout', async (req, res) => {
@@ -536,56 +541,43 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         connection,
       );
     }
-    const existingSubscriptions = await stripe.subscriptions.list({
-      customer: customerId,
-      status: 'active',
-      limit: 1,
-    });
-    if (existingSubscriptions.data.length)
-      throw new ApiError(
-        409,
-        'SUBSCRIPTION_EXISTS',
-        'A subscription already exists. Use the billing portal to manage it.',
-      );
     // An open checkout is reused only if it's for the plan they've chosen now.
     if (account.checkout_session_id) {
       const existing = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id));
       if (
         existing.status === 'open' &&
         existing.url &&
-        existing.mode === 'subscription' &&
+        existing.mode === 'setup' &&
         existing.metadata?.plan === plan
       )
         return existing.url;
     }
-    const prices = planPrices(plan);
-    const freeWeek = isSubscription(plan) && !account.trial_used_at;
+    // Checkout only saves the card. The plan starts from it in reconcileStripeCustomer, when the
+    // owner comes back or Stripe says the card was saved, as with a card saved in the portal.
     const checkout = await stripe.checkout.sessions.create(
       {
-        mode: 'subscription',
+        mode: 'setup',
+        currency: 'usd',
         customer: customerId,
-        // Checkout can't mix billing intervals, so the yearly plan starts on its own price and
-        // reconciliation adds the monthly quote price before any quote goes out.
-        line_items: [
-          ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-          ...(plan === 'yearly' ? [] : [{ price: prices.metered }]),
-        ],
         client_reference_id: context.businessId,
         metadata: { plan },
         // A monthly bill for a business: no buy-now-pay-later or app wallets.
         allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
-        custom_text: { submit: { message: checkoutTerms(plan, !account.card_added_at) } },
-        subscription_data: {
-          // Usage from before a plan switch is billed at the old price, not dropped.
-          billing_mode: { type: 'flexible' },
-          metadata: { businessId: context.businessId, plan },
-          ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
+        custom_text: {
+          submit: {
+            message: checkoutTerms(
+              plan,
+              !account.card_added_at,
+              isSubscription(plan) && !account.trial_used_at,
+            ),
+          },
         },
+        setup_intent_data: { metadata: { businessId: context.businessId } },
         success_url: `${appOrigin()}${back}?billing=active`,
         cancel_url: `${appOrigin()}${back}`,
       },
       {
-        idempotencyKey: `quotient-checkout:${context.businessId}:${plan}:${Math.floor(Date.now() / 3600000)}`,
+        idempotencyKey: `quotient-card:${context.businessId}:${plan}:${Math.floor(Date.now() / 3600000)}`,
       },
     );
     if (!checkout.url)
@@ -607,15 +599,32 @@ function chosenPlan(account: RowDataPacket): Plan {
   return account.plan as Plan;
 }
 
+/** A subscription's items on a plan: its monthly or yearly price, if it has one, and its quote price. */
+function planItems(plan: Plan): Stripe.SubscriptionCreateParams.Item[] {
+  const prices = planPrices(plan);
+  return [
+    ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
+    { price: prices.metered },
+  ];
+}
+
+/** Whether a subscription is on exactly a plan's prices. */
+function onPlan(subscription: Stripe.Subscription, plan: Plan) {
+  const target = planPrices(plan);
+  return (
+    (planItem(subscription)?.price.id ?? null) === target.fixed &&
+    meteredItem(subscription)?.price.id === target.metered
+  );
+}
+
 /**
- * Moves a paying Stripe subscription onto a plan's prices now: adds, swaps or drops the
- * subscription price, and swaps the price on the quote meter. That item is swapped, never
- * deleted, because Stripe drops a deleted item's usage; quotes from before the switch are billed
- * at the old price.
+ * Moves a subscription onto a plan's prices now: adds, swaps or drops the subscription price, and
+ * swaps the price on the quote meter. That item is swapped, never deleted, because Stripe drops a
+ * deleted item's usage; quotes from before the switch are billed at the old price. Stripe credits
+ * what's left of a period they paid for to their next bills. The free week is the subscription's,
+ * and Stripe bills no quotes during a trial, so moving to a per-quote plan ends it.
  */
-async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: boolean) {
-  const stripe = stripeClient();
-  const subscription = await stripe.subscriptions.retrieve(String(account.stripe_subscription_id));
+async function moveSubscription(subscription: Stripe.Subscription, plan: Plan, freeWeek: boolean) {
   const current = planItem(subscription),
     currentMetered = meteredItem(subscription);
   const target = planPrices(plan);
@@ -627,8 +636,7 @@ async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: bo
   if (!currentMetered) items.push({ price: target.metered });
   else if (currentMetered.price.id !== target.metered)
     items.push({ id: currentMetered.id, price: target.metered });
-  if (!items.length && !freeWeek) return;
-  await stripe.subscriptions.update(
+  return stripeClient().subscriptions.update(
     subscription.id,
     {
       items,
@@ -638,53 +646,19 @@ async function moveSubscription(account: RowDataPacket, plan: Plan, freeWeek: bo
             trial_end:
               Math.floor(Date.now() / 1000) + publicPricing().subscription.trialDays * 86400,
           }
-        : {}),
+        : !isSubscription(plan) && subscription.status === 'trialing'
+          ? { trial_end: 'now' as const }
+          : {}),
     },
-    { idempotencyKey: `quotient-plan:${account.business_id}:${plan}:${Date.now()}` },
+    { idempotencyKey: `quotient-plan-move:${subscription.id}:${plan}:${Date.now()}` },
   );
 }
 
-/**
- * Books a switch for the end of the paid period with a Stripe schedule, so the next renewal is
- * already on the new plan's prices and nothing paid for is lost.
- */
-async function scheduleSubscription(account: RowDataPacket, plan: Plan): Promise<string> {
-  const stripe = stripeClient();
-  const subscription = await stripe.subscriptions.retrieve(String(account.stripe_subscription_id));
-  const schedule = await stripe.subscriptionSchedules.create({
-    from_subscription: subscription.id,
-  });
-  const [phase] = schedule.phases;
-  const prices = planPrices(plan);
-  await stripe.subscriptionSchedules.update(schedule.id, {
-    end_behavior: 'release',
-    phases: [
-      {
-        items: phase.items.map((item) => ({
-          price: typeof item.price === 'string' ? item.price : item.price.id,
-          ...(item.quantity ? { quantity: item.quantity } : {}),
-        })),
-        start_date: phase.start_date,
-        // Stripe ends the first phase with the quote meter's month; a yearly plan runs to its year.
-        end_date: paidPeriodEnd(subscription) ?? phase.end_date,
-      },
-      {
-        items: [
-          ...(prices.fixed ? [{ price: prices.fixed, quantity: 1 }] : []),
-          { price: prices.metered },
-        ],
-        proration_behavior: 'none',
-      },
-    ],
-  });
-  return schedule.id;
-}
-
 /** Saves the plan and its fee terms, from now on. */
-async function applyPlan(connection: Sql, account: RowDataPacket, plan: Plan, freeWeek: boolean) {
+async function applyPlan(connection: Sql, account: RowDataPacket, plan: Plan) {
   const tariff = planTariff(plan);
   await mutate(
-    `UPDATE billing_accounts SET plan=?,next_plan=NULL,plan_schedule_id=NULL,plan_chosen_at=UTC_TIMESTAMP(3),fee_basis_points=?,minimum_fee_cents=?,maximum_fee_cents=?,tariff_version=?${freeWeek ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''} WHERE business_id=?`,
+    'UPDATE billing_accounts SET plan=?,next_plan=NULL,plan_schedule_id=NULL,plan_chosen_at=UTC_TIMESTAMP(3),fee_basis_points=?,minimum_fee_cents=?,maximum_fee_cents=?,tariff_version=? WHERE business_id=?',
     [
       plan,
       tariff.basisPoints,
@@ -704,68 +678,21 @@ async function applyPlan(connection: Sql, account: RowDataPacket, plan: Plan, fr
 }
 
 /**
- * Picks or switches the plan, any time. Before a card, between the per-quote plans, and onto or
- * up a subscription, it happens now. Off a paid subscription, or from yearly to monthly, it waits
- * for the end of the period they paid for.
+ * Picks or switches the plan, any time, and it takes effect now. With a card on file, Stripe
+ * catches up at once: the plan starts, or the subscription moves onto its prices. Picking a plan
+ * again after cancelling starts it again.
  */
 export async function changePlan(businessId: string, plan: Plan): Promise<void> {
-  await transaction(async (connection) => {
+  const customerId = await transaction(async (connection) => {
     const account = await ensureBillingAccount(businessId, connection);
-    const current = PLANS.includes(account.plan) ? (account.plan as Plan) : null;
-    const onStripe =
-      billingProvider() === 'stripe' &&
-      Boolean(account.stripe_subscription_id) &&
-      isPaying(account.subscription_status);
-    // Changing their mind about a booked switch undoes it first.
-    if (account.plan_schedule_id && onStripe)
-      await stripeClient().subscriptionSchedules.release(String(account.plan_schedule_id));
-    if (account.next_plan)
-      await mutate(
-        'UPDATE billing_accounts SET next_plan=NULL,plan_schedule_id=NULL WHERE business_id=?',
-        [businessId],
-        connection,
-      );
-    if (current === plan) return;
+    if (account.plan === plan && isPaying(account.subscription_status)) return null;
+    const onStripe = billingProvider() === 'stripe' && Boolean(account.stripe_customer_id);
+    // A mistyped price fails before anything changes.
     if (onStripe) await validatePlanPrices(plan);
-    const periodEnd = account.period_end ? new Date(account.period_end) : null;
-    const waits =
-      isSubscription(current) &&
-      isPaying(account.subscription_status) &&
-      periodEnd !== null &&
-      periodEnd.getTime() > Date.now() &&
-      (!isSubscription(plan) || (current === 'yearly' && plan === 'monthly'));
-    if (waits) {
-      const scheduleId = onStripe ? await scheduleSubscription(account, plan) : null;
-      await mutate(
-        'UPDATE billing_accounts SET next_plan=?,plan_schedule_id=? WHERE business_id=?',
-        [plan, scheduleId, businessId],
-        connection,
-      );
-      await planEvent(connection, businessId, 'plan_scheduled', {
-        from: current,
-        to: plan,
-        at: periodEnd.toISOString(),
-      });
-      return;
-    }
-    const freeWeek = isSubscription(plan) && !account.trial_used_at && onStripe;
-    if (onStripe) await moveSubscription(account, plan, freeWeek);
-    await applyPlan(connection, account, plan, freeWeek);
+    await applyPlan(connection, account, plan);
+    return onStripe ? String(account.stripe_customer_id) : null;
   });
-}
-
-/** Switches booked for the end of a paid period, once it's passed. The worker runs this. */
-export async function applyDuePlanChanges(): Promise<void> {
-  const due = await rows(
-    'SELECT business_id FROM billing_accounts WHERE next_plan IS NOT NULL AND (period_end IS NULL OR period_end<=UTC_TIMESTAMP(3)) LIMIT 50',
-  );
-  for (const item of due)
-    await transaction(async (connection) => {
-      const account = await ensureBillingAccount(String(item.business_id), connection);
-      if (!PLANS.includes(account.next_plan)) return;
-      // Stripe's schedule has already moved the subscription; this records it here.
-      await applyPlan(connection, account, account.next_plan as Plan, false);
-    });
+  if (customerId) await reconcileStripeCustomer(customerId);
 }
 
 billingRouter.post('/billing/portal', async (req, res) => {
@@ -790,7 +717,7 @@ billingRouter.post('/billing/portal', async (req, res) => {
     );
   const portal = await stripeClient().billingPortal.sessions.create({
     customer: account.stripe_customer_id,
-    return_url: `${appOrigin()}/app/settings`,
+    return_url: `${appOrigin()}/app/settings?billing=portal`,
   });
   res.json(ok({ url: portal.url }));
 });
@@ -811,10 +738,19 @@ export const stripeWebhook: RequestHandler = async (req, res) => {
   } catch {
     throw new ApiError(400, 'WEBHOOK_SIGNATURE_INVALID', 'Webhook signature is invalid.');
   }
-  // Meter error notifications can be thin events without data.object.
-  const object = (event.data?.object ?? {}) as unknown as { customer?: string | { id: string } };
+  // Meter error notifications can be thin events without data.object. A customer event's object
+  // is the customer itself.
+  const object = (event.data?.object ?? {}) as unknown as {
+    object?: string;
+    id?: string;
+    customer?: string | { id: string };
+  };
   const customerId =
-    typeof object.customer === 'string' ? object.customer : (object.customer?.id ?? null);
+    object.object === 'customer'
+      ? (object.id ?? null)
+      : typeof object.customer === 'string'
+        ? object.customer
+        : (object.customer?.id ?? null);
   await transaction(async (connection) => {
     await mutate(
       'INSERT IGNORE INTO stripe_events(id,type,customer_id) VALUES (?,?,?)',
@@ -835,56 +771,146 @@ export const stripeWebhook: RequestHandler = async (req, res) => {
   res.json(ok({ received: true }));
 };
 
+/**
+ * The card invoices charge: the customer's default, or else the newest one they saved, which then
+ * becomes the default. Null when they have none.
+ */
+async function savedCard(stripe: Stripe, customerId: string) {
+  const customer = await stripe.customers.retrieve(customerId, {
+    expand: ['invoice_settings.default_payment_method'],
+  });
+  if (customer.deleted) return null;
+  const preferred = customer.invoice_settings.default_payment_method;
+  if (preferred && typeof preferred !== 'string') return preferred;
+  const [newest] = (await stripe.customers.listPaymentMethods(customerId, { limit: 1 })).data;
+  if (!newest) return null;
+  await stripe.customers.update(customerId, {
+    invoice_settings: { default_payment_method: newest.id },
+  });
+  return newest;
+}
+
+/** A card saved in Checkout becomes the one invoices charge, so a new card replaces a failing one. */
+async function useCheckoutCard(stripe: Stripe, account: RowDataPacket, customerId: string) {
+  if (!account.checkout_session_id) return;
+  const session = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id), {
+    expand: ['setup_intent'],
+  });
+  if (session.status === 'open') return;
+  const intent = session.setup_intent;
+  const card =
+    session.mode === 'setup' && intent && typeof intent !== 'string' ? intent.payment_method : null;
+  const cardId = typeof card === 'string' ? card : card?.id;
+  if (session.status === 'complete' && cardId)
+    await stripe.customers.update(customerId, {
+      invoice_settings: { default_payment_method: cardId },
+    });
+  await mutate(
+    'UPDATE billing_accounts SET checkout_session_id=NULL WHERE business_id=? AND checkout_session_id=?',
+    [account.business_id, session.id],
+  );
+}
+
+/**
+ * Starts or moves the subscription so it's on the owner's plan. A plan starts on their saved card,
+ * with its free week if they haven't had it, and only one per plan choice and card. A plan they
+ * cancelled stays stopped until they pick a plan or save a card again. Returns the subscription it
+ * started or moved.
+ */
+async function matchPlan(
+  stripe: Stripe,
+  account: RowDataPacket,
+  customerId: string,
+  subscriptions: Stripe.Subscription[],
+): Promise<Stripe.Subscription | null> {
+  if (!PLANS.includes(account.plan)) return null;
+  const plan = account.plan as Plan;
+  const freeWeek = isSubscription(plan) && !account.trial_used_at;
+  const live = subscriptions.find(
+    (item) => !item.ended_at && !['canceled', 'incomplete_expired'].includes(item.status),
+  );
+  if (live) {
+    if (onPlan(live, plan)) return null;
+    await validatePlanPrices(plan);
+    return moveSubscription(live, plan, freeWeek);
+  }
+  const card = await savedCard(stripe, customerId);
+  if (!card) return null;
+  const endedAt = Math.max(0, ...subscriptions.map((item) => Number(item.ended_at ?? 0)));
+  const pickedAt = account.plan_chosen_at
+    ? Math.floor(new Date(account.plan_chosen_at).getTime() / 1000)
+    : 0;
+  if (endedAt && endedAt >= Math.max(pickedAt, card.created)) return null;
+  await validatePlanPrices(plan);
+  return stripe.subscriptions.create(
+    {
+      customer: customerId,
+      items: planItems(plan),
+      billing_mode: { type: 'flexible' },
+      metadata: { businessId: String(account.business_id), plan },
+      ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
+    },
+    { idempotencyKey: `quotient-plan:${account.business_id}:${plan}:${pickedAt}:${card.id}` },
+  );
+}
+
+/**
+ * Makes Stripe match the plan the owner picked, then saves where their subscription stands. It's
+ * the one place a subscription starts or changes: with a plan and a saved card, there's one live
+ * subscription, on that plan's prices. Stripe's webhooks, the owner coming back from Stripe and a
+ * plan change all run it, one at a time per business, so a card saved twice can't start two.
+ */
 export async function reconcileStripeCustomer(customerId: string): Promise<void> {
   if (billingProvider() !== 'stripe') return;
-  const [account] = await rows(
-    'SELECT business_id,plan FROM billing_accounts WHERE stripe_customer_id=?',
+  const [found] = await rows(
+    'SELECT business_id FROM billing_accounts WHERE stripe_customer_id=?',
     [customerId],
   );
-  if (!account) return;
-  const stripe = stripeClient();
-  // Read current provider state instead of applying event snapshots; event delivery order is not authoritative.
-  const subscriptions = (
-    await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
-  ).data;
-  const current = [...subscriptions].sort((a, b) => {
-    const score = (status: string) =>
-      status === 'active' ? 3 : status === 'trialing' ? 2 : status === 'past_due' ? 1 : 0;
-    return score(b.status) - score(a.status) || b.created - a.created;
-  })[0];
-  // Every paying subscription has a price on the quote meter. A yearly checkout starts without
-  // one, so it's added here, before the account is marked paying and quotes can go out.
-  if (current && isPaying(current.status) && PLANS.includes(account.plan) && !meteredItem(current))
-    await stripe.subscriptions.update(
-      current.id,
-      { items: [{ price: planPrices(account.plan as Plan).metered }], proration_behavior: 'none' },
-      { idempotencyKey: `quotient-usage-price:${current.id}` },
-    );
-  await transaction(async (connection) => {
-    await rows(
-      'SELECT business_id FROM billing_accounts WHERE business_id=? FOR UPDATE',
-      [account.business_id],
-      connection,
-    );
-    const periodEnd = current ? paidPeriodEnd(current) : undefined;
-    // The first card is when their first subscription started, kept once it's known.
-    const paying = current && isPaying(current.status);
-    await mutate(
-      `UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status=?,cancel_at_period_end=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${current?.status === 'trialing' ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''}${paying ? ',card_added_at=COALESCE(card_added_at,?)' : ''} WHERE business_id=?`,
-      [
-        current?.id ?? null,
-        current?.status ?? 'cancelled',
-        current?.cancel_at_period_end ?? false,
-        periodEnd ? new Date(periodEnd * 1000) : null,
-        ...(paying
-          ? [new Date(Math.min(...subscriptions.map((item) => item.created)) * 1000)]
-          : []),
-        account.business_id,
-      ],
-      connection,
-    );
-    if (current?.status === 'active' || current?.status === 'trialing')
-      await recordMilestone(connection, String(account.business_id), 'billing_active');
+  if (!found) return;
+  await oneAtATime(`quotient-billing:${found.business_id}`, async () => {
+    const [account] = await rows('SELECT * FROM billing_accounts WHERE business_id=?', [
+      found.business_id,
+    ]);
+    const stripe = stripeClient();
+    await useCheckoutCard(stripe, account, customerId);
+    // Read current provider state instead of applying event snapshots; event delivery order is not authoritative.
+    let subscriptions = (
+      await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
+    ).data;
+    const changed = await matchPlan(stripe, account, customerId, subscriptions);
+    if (changed)
+      subscriptions = [changed, ...subscriptions.filter((item) => item.id !== changed.id)];
+    const current = [...subscriptions].sort((a, b) => {
+      const score = (status: string) =>
+        status === 'active' ? 3 : status === 'trialing' ? 2 : status === 'past_due' ? 1 : 0;
+      return score(b.status) - score(a.status) || b.created - a.created;
+    })[0];
+    await transaction(async (connection) => {
+      await rows(
+        'SELECT business_id FROM billing_accounts WHERE business_id=? FOR UPDATE',
+        [account.business_id],
+        connection,
+      );
+      const periodEnd = current ? paidPeriodEnd(current) : undefined;
+      // The first card is when their first subscription started, kept once it's known.
+      const paying = current && isPaying(current.status);
+      await mutate(
+        `UPDATE billing_accounts SET stripe_subscription_id=?,subscription_status=?,cancel_at_period_end=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3)${current?.status === 'trialing' ? ',trial_used_at=COALESCE(trial_used_at,UTC_TIMESTAMP(3))' : ''}${paying ? ',card_added_at=COALESCE(card_added_at,?)' : ''} WHERE business_id=?`,
+        [
+          current?.id ?? null,
+          current?.status ?? 'cancelled',
+          current?.cancel_at_period_end ?? false,
+          periodEnd ? new Date(periodEnd * 1000) : null,
+          ...(paying
+            ? [new Date(Math.min(...subscriptions.map((item) => item.created)) * 1000)]
+            : []),
+          account.business_id,
+        ],
+        connection,
+      );
+      if (current?.status === 'active' || current?.status === 'trialing')
+        await recordMilestone(connection, String(account.business_id), 'billing_active');
+    });
   });
 }
 

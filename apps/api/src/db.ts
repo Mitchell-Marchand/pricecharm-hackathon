@@ -88,6 +88,27 @@ export async function transaction<T>(fn: (connection: PoolConnection) => Promise
   }
 }
 
+/**
+ * Runs a task while holding a named lock, so it runs one at a time across the API and the worker.
+ * MariaDB keeps the lock with the connection, so it's held on one of its own for the whole task.
+ */
+export async function oneAtATime<T>(name: string, task: () => Promise<T>): Promise<T> {
+  const connection = await getPool().getConnection();
+  try {
+    const [held] = await connection.query<RowDataPacket[]>('SELECT GET_LOCK(?, 30) AS held', [
+      name,
+    ]);
+    if (!held[0]?.held) throw new Error(`Waited too long for ${name}.`);
+    try {
+      return await task();
+    } finally {
+      await connection.query('SELECT RELEASE_LOCK(?)', [name]);
+    }
+  } finally {
+    connection.release();
+  }
+}
+
 export async function closeDatabase(): Promise<void> {
   if (pool) {
     const active = pool;
