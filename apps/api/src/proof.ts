@@ -9,6 +9,7 @@ import { measureWalkaround } from './ai/walkaround.js';
 import { appEnv } from './config.js';
 import { closeDatabase, rows } from './db.js';
 import { json } from './models.js';
+import { pooledChat } from './channels/pooled.js';
 import { compareDraft } from './pricing/accuracy.js';
 import { median } from './pricing/rates.js';
 import { canonicalUnit } from './pricing/units.js';
@@ -148,7 +149,7 @@ async function checkedDrafts(businesses: Business[]) {
   for (const business of businesses) {
     const quotes = await rows(
       `SELECT q.draft_json,q.quote_json FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
-       WHERE q.business_id=? AND q.sent_by='owner' AND c.source<>'test'
+       WHERE q.business_id=? AND q.sent_by='owner' AND ${pooledChat('c')}
          AND q.status IN ('sent','accepted','visit_requested','lost','expired')`,
       [business.id],
     );

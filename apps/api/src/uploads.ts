@@ -101,9 +101,24 @@ export type PhotoTarget = {
 const DRAFT_PHOTO_LIMIT = 60;
 
 export async function saveImage(req: Request, businessId: string, target: PhotoTarget = {}) {
-  const conversationId = target.conversationId ?? null;
   if (!req.file) throw new ApiError(400, 'FILE_REQUIRED', 'Choose a photo to upload.');
-  if (!imageKind(req.file.buffer))
+  return storeImage(
+    req.file.buffer,
+    uploadedName(req.file, 'project-photo.jpg'),
+    businessId,
+    target,
+  );
+}
+
+/** Saves a photo, uploaded here or sent to the business on WhatsApp, within the same limits. */
+export async function storeImage(
+  bytes: Buffer,
+  filename: string,
+  businessId: string,
+  target: PhotoTarget = {},
+) {
+  const conversationId = target.conversationId ?? null;
+  if (!imageKind(bytes))
     throw new ApiError(
       422,
       'INVALID_IMAGE',
@@ -111,7 +126,7 @@ export async function saveImage(req: Request, businessId: string, target: PhotoT
     );
   let photo: Buffer, width: number, height: number;
   try {
-    const normalized = await sharp(req.file.buffer, {
+    const normalized = await sharp(bytes, {
       limitInputPixels: 16_000_000,
       animated: false,
     })
@@ -137,7 +152,6 @@ export async function saveImage(req: Request, businessId: string, target: PhotoT
     );
   const id = randomUUID(),
     storageKey = `${id}.jpg`;
-  const filename = uploadedName(req.file, 'project-photo.jpg');
   await putPhoto(storageKey, photo);
   try {
     await transaction(async (connection) => {

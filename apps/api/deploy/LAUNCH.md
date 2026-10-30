@@ -113,6 +113,8 @@ Production environment **secrets**:
 
 `CI` runs on every pull request. `Deploy API` and `Deploy web` run on pushes to `main` that change their app. Run the first deploy of each by hand from the Actions tab: **Deploy API** first, then **Deploy web**.
 
+After the first API deploy, install ffmpeg once with `sudo bash /srv/quotient-api/current/apps/api/deploy/install-ffmpeg.sh`. It takes the stills from customers' WhatsApp videos; Amazon Linux 2023 has no package for it.
+
 Each API deploy checks, tests and builds the code, copies an immutable release to the server, installs its production dependencies, runs migrations as the migration user, switches `current`, restarts PM2 and checks that `/health` reports the new release. If that check fails, it restores the previous release. Migrations aren't rolled back, so they have to stay additive. [README.md](README.md) has the details.
 
 ## 6. Check it, then go live

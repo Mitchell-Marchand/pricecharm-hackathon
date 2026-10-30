@@ -5,6 +5,7 @@ import { aiMode, aiProvider, modelFor, type AiImage } from './ai/index.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { closeDatabase, rows } from './db.js';
 import { json } from './models.js';
+import { pooledChat } from './channels/pooled.js';
 import { compareDraft, AGREE_PERCENT } from './pricing/accuracy.js';
 import { draftForBusiness } from './pricing/draft.js';
 import { businessContext, type HistoryOptions } from './pricing/history.js';
@@ -92,7 +93,7 @@ export async function liveCases(businessId: string, limit: number): Promise<Repl
   const quotes = await rows(
     `SELECT q.id,q.number,q.chat_id,q.quote_json,q.created_at,c.service_name,c.spec_json
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
-     WHERE q.business_id=? AND q.sent_by='owner' AND c.source<>'test'
+     WHERE q.business_id=? AND q.sent_by='owner' AND ${pooledChat('c')}
        AND q.status IN ('sent','accepted','visit_requested','lost','expired')
      ORDER BY q.created_at DESC LIMIT ${limit}`,
     [businessId],

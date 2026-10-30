@@ -59,7 +59,7 @@ export function restyle(card: Quote, style: LearningStyle | undefined): Quote {
   return { ...firm, style: 'range', range: rangeAround(total, spread) };
 }
 
-const money = (cents: number) =>
+export const money = (cents: number) =>
   new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',

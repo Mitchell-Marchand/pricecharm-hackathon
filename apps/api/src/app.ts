@@ -38,6 +38,7 @@ import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
 import { visitsRouter } from './metrics.js';
 import { activityRouter } from './activity.js';
+import { metaWebhook, verifyMetaWebhook } from './channels/webhook.js';
 
 /**
  * Requests one address may make to the API in a minute. The browser tests make a lot from one
@@ -117,6 +118,14 @@ export function createApp() {
     rateLimit(120, 60_000),
     express.raw({ type: 'application/json', limit: '1mb' }),
     stripeWebhook,
+  );
+  // Signed by Meta over the raw body, like Stripe's, so it comes before the JSON parser.
+  app.get('/api/v1/hooks/meta', rateLimit(30, 60_000), verifyMetaWebhook);
+  app.post(
+    '/api/v1/hooks/meta',
+    rateLimit(600, 60_000),
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    metaWebhook,
   );
   app.use(express.json({ limit: '1mb' }));
   app.use('/api/v1', rateLimit(requestsPerMinute(), 60_000));

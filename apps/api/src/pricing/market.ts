@@ -1,5 +1,6 @@
 import { rows } from '../db.js';
 import { json } from '../models.js';
+import { pooledChat } from '../channels/pooled.js';
 import type { Discount, PracticeScenario, Quote } from '../practice/types.js';
 import { undiscounted } from './history.js';
 import { median } from './rates.js';
@@ -104,7 +105,7 @@ export async function marketRate(input: {
   for (const sent of await rows(
     `SELECT q.business_id,q.quote_json,c.spec_json FROM live_quotes q
      JOIN lead_chats c ON c.id=q.chat_id JOIN businesses b ON b.id=q.business_id
-     WHERE ${OTHERS} AND c.source<>'test' AND q.sent_by='owner' AND LOWER(c.service_name)=?`,
+     WHERE ${OTHERS} AND ${pooledChat('c')} AND q.sent_by='owner' AND LOWER(c.service_name)=?`,
     [...params, service],
   )) {
     const quote = json<Quote | null>(sent.quote_json, null);
