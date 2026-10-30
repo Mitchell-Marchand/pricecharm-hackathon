@@ -105,6 +105,12 @@ export function whatsAppSignup(
       if (data.event === 'CANCEL') finish(null);
       else if (data.event === 'ERROR')
         finish(new Error(data.data?.error_message || 'Meta’s sign-up stopped. Try again.'));
+      else if (data.event === 'FINISH_ONLY_WABA')
+        finish(
+          new Error(
+            'Your WhatsApp account doesn’t have a phone number yet. Add one in Meta’s sign-up, then connect again.',
+          ),
+        );
       else if (data.data?.waba_id && data.data.phone_number_id) {
         picked = { wabaId: data.data.waba_id, phoneNumberId: data.data.phone_number_id };
         ready();
@@ -126,7 +132,7 @@ export function whatsAppSignup(
         config_id: signup.configId,
         response_type: 'code',
         override_default_response_type: true,
-        extras: { setup: {}, featureType: '', sessionInfoVersion: '3' },
+        extras: { setup: {} },
       },
     );
   });
