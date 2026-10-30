@@ -372,6 +372,7 @@ function MediaFindings({
         {reading.counts.map((item) => (
           <li key={item.label}>
             <span className="font-semibold">
+              {item.atLeast ? 'At least ' : ''}
               {item.count} {plural(item.unit, item.count)}
             </span>
             <span className="text-ink-2">

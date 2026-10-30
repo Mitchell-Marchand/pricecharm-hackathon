@@ -209,12 +209,9 @@ export async function measureVideo(id: string): Promise<void> {
         await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
       ).map((row) => String(row.name));
       const task = async () => {
+        const bytes = await getPhoto(String(video.storage_key));
         if (aiMode !== 'demo')
-          fileId = await uploadMetaFile(
-            await getPhoto(String(video.storage_key)),
-            String(video.storage_key),
-            String(video.mime_type),
-          );
+          fileId = await uploadMetaFile(bytes, String(video.storage_key), String(video.mime_type));
         return measureWalkaround({
           business: {
             name: String(business.name),
@@ -224,6 +221,7 @@ export async function measureVideo(id: string): Promise<void> {
           serviceName: String(chat.service_name),
           priceUnits: await priceUnits(businessId),
           videoFileId: fileId,
+          video: { bytes },
           frames,
           durationMs: video.duration_ms === null ? null : Number(video.duration_ms),
           saveOverlay: async (jpeg) => {

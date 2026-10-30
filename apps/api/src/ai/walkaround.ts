@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { canonicalUnit, formatNumber, formatQuantity } from '../pricing/units.js';
 import { aiMode, requestJson, type AiImage } from './index.js';
 import { segment, type SamBox, type SamObject, type Segmentation } from './meta-media.js';
+import { isFull, segmentPhoto, splitJumps, videoCutter } from './sam-pieces.js';
 
 /**
  * A customer's walk-around video or photos, read. Muse Spark watches the video (and hears what the
@@ -23,6 +24,8 @@ export type WalkaroundCount = {
   count: number;
   /** What Muse Spark counted watching it, as a check. */
   sparkCount: number | null;
+  /** More than SAM could follow even in pieces, so the count is the least there are. */
+  atLeast?: boolean;
   /** The objects graded up close, grouped: "large picture window", 4, "heavy hard-water stains". */
   kinds?: ObjectKind[];
 };
@@ -76,6 +79,8 @@ export type WalkaroundInput = {
   /** Units the owner already prices services by, like "windows" or "sq ft", by service. */
   priceUnits: Record<string, string[]>;
   videoFileId: string;
+  /** The video itself, cut into pieces when it shows more than one SAM request can follow. */
+  video?: { bytes: Buffer };
   /** Stills the customer's browser took, with where in the video each was taken. */
   frames: { id: string; ms: number; image: AiImage }[];
   durationMs: number | null;
@@ -503,11 +508,16 @@ export function notesFor(walkaround: Omit<Walkaround, 'notes'>): string[] {
   for (const item of walkaround.counts) {
     // Nothing found isn't a count to price from; the owner still sees it with Muse Spark's guess.
     if (!item.count) continue;
+    const shown = `${item.atLeast ? 'at least ' : ''}${formatQuantity(item.count, item.unit)}`;
     notes.push(
       photos
-        ? `The customer's photos show ${formatQuantity(item.count, item.unit)}, each one found and checked in the photos.`
-        : `The customer's walk-around video shows ${formatQuantity(item.count, item.unit)}, each one tracked through the video.`,
+        ? `The customer's photos show ${shown}, each one found and checked in the photos.`
+        : `The customer's walk-around video shows ${shown}, each one tracked through the video.`,
     );
+    if (item.atLeast)
+      notes.push(
+        `There are more ${item.label} than could be counted one by one, so the owner should confirm the number.`,
+      );
     if (item.kinds?.length)
       notes.push(
         `Looked at up close, the ${item.label} are: ${item.kinds
@@ -587,19 +597,25 @@ function finish(
 export async function measureWalkaround(input: WalkaroundInput): Promise<Walkaround> {
   if (aiMode === 'demo') return demoWalkaround(input);
   const read = await readVideo(input);
-  // Each phrase is its own SAM pass over the same uploaded video, all at once.
+  // Each phrase is its own SAM pass over the same uploaded video, all at once, asked again in
+  // pieces when the video shows more than one request can follow.
+  const cutter = input.video ? videoCutter(input.video) : null;
   const passes = await Promise.all(
     read.counts.map(async (item) => {
-      const segmentation = await segment(item.phrase, { videoFileId: input.videoFileId });
+      const whole = await segment(item.phrase, { videoFileId: input.videoFileId });
+      const segmentation = cutter
+        ? await cutter.segment(item.phrase, whole)
+        : { ...splitJumps(whole), full: isFull(whole) };
       return { item, segmentation, tracked: trackedObjects(segmentation) };
     }),
-  );
-  const counts: WalkaroundCount[] = passes.map(({ item, tracked }) => ({
+  ).finally(() => cutter?.close());
+  const counts: WalkaroundCount[] = passes.map(({ item, segmentation, tracked }) => ({
     label: item.label,
     phrase: item.phrase,
     unit: canonicalUnit(item.label) ?? item.label.toLowerCase(),
     count: tracked.length,
     sparkCount: item.estimate === null ? null : Math.round(item.estimate),
+    ...(segmentation.full ? { atLeast: true } : {}),
   }));
 
   // Draw what was counted on the customer's own still nearest the busiest frame. SAM looks again
@@ -635,7 +651,7 @@ export async function measureWalkaround(input: WalkaroundInput): Promise<Walkaro
     toDraw.map(async ({ label, phrase, counted, still }) => {
       if (!still) return;
       try {
-        const found = await segment(phrase, { image: still.image });
+        const found = await segmentPhoto(phrase, still.image);
         if (!found.objects.length) return;
         const storageKey = await input.saveOverlay(await drawOverlay(still.image, found.objects));
         overlays.push({ label, frameId: still.id, storageKey });
@@ -709,12 +725,14 @@ export async function measurePhotos(input: PhotoReadingInput): Promise<Walkaroun
   const counts = await Promise.all(
     read.counts.map(async (item): Promise<WalkaroundCount> => {
       const perPhoto = await Promise.all(
-        input.photos.map(async (photo) => ({
-          photo,
-          objects: (await segment(item.phrase, { image: photo.image })).objects.filter(
-            (object) => (object.confidence ?? 1) >= MIN_CONFIDENCE,
-          ),
-        })),
+        input.photos.map(async (photo) => {
+          const found = await segmentPhoto(item.phrase, photo.image);
+          return {
+            photo,
+            full: found.full,
+            objects: found.objects.filter((object) => (object.confidence ?? 1) >= MIN_CONFIDENCE),
+          };
+        }),
       );
       const grades = await tryGrading(
         input.business.trade,
@@ -757,6 +775,7 @@ export async function measurePhotos(input: PhotoReadingInput): Promise<Walkaroun
         unit: canonicalUnit(item.label) ?? item.label.toLowerCase(),
         count: Math.min(all, Math.max(most, estimate)),
         sparkCount: item.estimate === null ? null : Math.round(item.estimate),
+        ...(perPhoto.some((entry) => entry.full) ? { atLeast: true } : {}),
         ...(kinds.length ? { kinds } : {}),
       };
     }),

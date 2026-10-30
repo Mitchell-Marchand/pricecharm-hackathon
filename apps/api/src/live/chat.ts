@@ -394,7 +394,10 @@ function videoView(video: Row | undefined) {
       ? [
           ...result.counts
             .filter((item) => item.count > 0)
-            .map((item) => formatQuantity(item.count, item.unit)),
+            .map(
+              (item) =>
+                `${item.atLeast ? 'at least ' : ''}${formatQuantity(item.count, item.unit)}`,
+            ),
           ...(result.area
             ? [
                 `${result.area.surface} about ${result.area.low}–${formatQuantity(result.area.high, result.area.unit)}`,

@@ -81,6 +81,8 @@ export interface MediaReading {
     unit: string;
     count: number;
     sparkCount: number | null;
+    /** More than could be counted one by one: the count is the least there are. */
+    atLeast?: boolean;
     /** Each one looked at up close, grouped by kind. */
     kinds?: { kind: string; count: number; condition: string }[];
   }[];

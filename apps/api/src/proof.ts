@@ -261,6 +261,7 @@ async function measureVideos(folder: string) {
         serviceName: video.service,
         priceUnits: { [video.service.toLowerCase()]: units },
         videoFileId: fileId,
+        video: { bytes },
         // No stills, so nothing gets drawn: only the counts matter here.
         frames: [],
         durationMs: null,
