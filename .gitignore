@@ -13,6 +13,10 @@ __pycache__/
 /artifacts/
 /archive/
 /.claude/
+# Benchmark runs and research notes stay on this machine.
+/bench-results/
+/reports/
+/research_notes/
 
 # Next.js writes this for whichever of dev or build ran last, so it isn't tracked.
 apps/web/next-env.d.ts
