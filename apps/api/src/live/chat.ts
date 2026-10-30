@@ -44,6 +44,12 @@ import { recordActivity } from '../metrics.js';
 import { chooseAcceptLabel, DEFAULT_ACCEPT_LABEL } from './accept-wording.js';
 import { acceptedMessage, businessLogo, contactName, visitMessage } from './quote-page.js';
 import { previewView, startAfterPreview } from './previews.js';
+import {
+  photoReading,
+  photoReadingsAvailable,
+  readingPhotos,
+  readPhotos,
+} from './photo-readings.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -65,7 +71,7 @@ export async function chatEmailLink(connection: Sql | undefined, slug: string, c
   );
   return { link: `${appOrigin()}/q/${slug}#chat=${chatId}&token=${token}`, days: EMAIL_LINK_DAYS };
 }
-const MAX_MESSAGES = 60;
+export const MAX_MESSAGES = 60;
 
 /** How long the one-tap approval link in a "needs your OK" email works. */
 export const APPROVE_LINK_DAYS = 3;
@@ -181,15 +187,45 @@ export async function addMessage(
 export const greeting = (businessName: string) =>
   `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
 
-/** Starts a quote chat. The owner's own test chats are marked so they're never billed or emailed. */
-export async function startChat(business: Row, source: 'link' | 'widget' | 'test') {
+/** On WhatsApp the customer writes first, so the greeting doesn't ask what they need. */
+const channelGreeting = (businessName: string) =>
+  `Hi! I’m the quote assistant for ${businessName}. I can put a price together for you right here.`;
+
+/** Who a WhatsApp chat is with: Meta's ID for them on the business's number, and what Meta shares. */
+export type ChannelCustomer = {
+  accountId: string;
+  userId: string;
+  name: string;
+  phone: string | null;
+};
+
+/**
+ * Starts a quote chat. The owner's own test chats are marked so they're never billed or emailed.
+ * A WhatsApp chat starts with the name and number Meta passes on, so the customer is never asked
+ * for a way to reach them.
+ */
+export async function startChat(
+  business: Row,
+  source: 'link' | 'widget' | 'test' | 'whatsapp',
+  customer?: ChannelCustomer,
+) {
   const token = newToken(),
     id = randomUUID();
-  const offered = await services(String(business.id));
+  const offered = customer ? [] : await services(String(business.id));
   await transaction(async (connection) => {
     await mutate(
-      'INSERT INTO lead_chats (id,business_id,token_hash,source,expires_at) VALUES (?,?,?,?,?)',
-      [id, business.id, hashToken(token), source, new Date(Date.now() + CHAT_DAYS * 86_400_000)],
+      'INSERT INTO lead_chats (id,business_id,token_hash,source,expires_at,customer_name,customer_phone,channel_account_id,channel_user_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [
+        id,
+        business.id,
+        hashToken(token),
+        source,
+        new Date(Date.now() + CHAT_DAYS * 86_400_000),
+        customer?.name ?? '',
+        customer?.phone ?? null,
+        customer?.accountId ?? null,
+        customer?.userId ?? null,
+      ],
       connection,
     );
     await recordActivity(connection, String(business.id), 'customer_chat', {
@@ -200,7 +236,7 @@ export async function startChat(business: Row, source: 'link' | 'widget' | 'test
       businessId: String(business.id),
       chatId: id,
       sender: 'assistant',
-      text: greeting(String(business.name)),
+      text: customer ? channelGreeting(String(business.name)) : greeting(String(business.name)),
       chips: offered.slice(0, 6),
     });
   });
@@ -247,6 +283,10 @@ export async function chatView(business: Row, chat: Row) {
       (video) => [String(video.id), video],
     ),
   );
+  const videoMeasuring = [...videos.values()].some((video) => video.status === 'measuring');
+  // Photos only hold up a chat the assistant is answering; after that they're read for the owner.
+  const photosMeasuring =
+    chat.status === 'chatting' && !chat.human_handoff && (await readingPhotos(chat));
   const test = chat.source === 'test';
   // Customers only ever see a quote the business sent; a held or declined one stays private. The
   // owner testing their own link sees a held one too, with why it would wait.
@@ -254,10 +294,11 @@ export async function chatView(business: Row, chat: Row) {
     quote &&
     (['sent', 'accepted', 'visit_requested', 'lost', 'expired'].includes(String(quote.status)) ||
       (test && quote.status === 'review'));
+  // Only the checks that hold a quote: a doubt alone would still reach a real customer, as a range.
   const wouldWait =
     test && quote?.status === 'review'
       ? json<Check[]>(quote.checks_json, [])
-          .filter((check) => !check.passed)
+          .filter((check) => !check.passed && HOLDS.has(check.id))
           .map((check) => ({ id: check.id, detail: check.detail }))
       : [];
   // Only the customer's own chat reaches here, so this is when they first saw the open quote,
@@ -294,7 +335,9 @@ export async function chatView(business: Row, chat: Row) {
     })),
     /** Walk-around videos need Meta's models to watch and measure them. */
     videosAllowed: aiProvider === 'meta' || aiMode === 'demo',
-    measuring: [...videos.values()].some((video) => video.status === 'measuring'),
+    measuring: videoMeasuring || photosMeasuring,
+    /** What it's measuring is the customer's photos, not a video. Missing from older APIs. */
+    measuringPhotos: photosMeasuring && !videoMeasuring,
     contact: {
       name: String(chat.customer_name),
       email: chat.customer_email ? String(chat.customer_email) : null,
@@ -390,10 +433,12 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
     "SELECT sender,text FROM lead_messages WHERE chat_id=? AND kind='text' AND sender IN ('customer','assistant') ORDER BY created_at,id",
     [chat.id],
   );
-  const [photos] = await rows(
+  const [photoCount] = await rows(
     'SELECT COUNT(*) AS count FROM attachments WHERE business_id=? AND conversation_id=?',
     [business.id, chat.id],
   );
+  const [read] = await rows('SELECT photo_reading_json FROM lead_chats WHERE id=?', [chat.id]);
+  const photos = read ? photoReading(read) : null;
   const checklist = await questionChecklist(String(business.id));
   const contactFirst = Boolean(business.contact_first) && !hasContact(chat);
   const turn = await withChatUsage(req, business, chat, async () =>
@@ -412,16 +457,18 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
           from: message.sender as 'customer' | 'assistant',
           text: String(message.text),
         })),
-        photosReceived: Number(photos.count) + measured.length,
+        photosReceived: Number(photoCount.count) + measured.length,
         videosAllowed: aiProvider === 'meta' || aiMode === 'demo',
+        photoNotes: photos?.notes.length ? photos.notes : undefined,
         videoNotes: measured.flatMap((result) => result.notes),
         contactFirst,
       },
       await chatImages(String(business.id), String(chat.id)),
     ),
   );
-  // The size measured in a video holds until the customer says otherwise.
-  const sized = measured.findLast((result) => result.quantity);
+  // The size measured in a video, or else in the photos, holds until the customer says otherwise.
+  const sized =
+    measured.findLast((result) => result.quantity) ?? (photos?.quantity ? photos : undefined);
   const spec =
     turn.spec.quantity || !sized
       ? turn.spec
@@ -475,13 +522,26 @@ export async function afterPhoto(req: Request, photoId: string) {
     text: '',
     photoIds: [photoId],
   });
-  if (chat.status === 'chatting' && !chat.human_handoff) await runIntake(req, business, chat);
+  // Read outside the request, like a video: the chat shows it's looking, and the assistant
+  // carries on from what the photos show once they're read.
+  if (photoReadingsAvailable()) readPhotosThenAnswer(req, String(chat.id));
+  else if (chat.status === 'chatting' && !chat.human_handoff) await runIntake(req, business, chat);
   const fresh = await chatAccess(req);
   return chatView(fresh.business, fresh.chat);
 }
 
-/** Once a customer's video is measured, or couldn't be, the assistant carries on from it. */
-export async function continueAfterVideo(asker: Asker, chatId: string) {
+/** Reads the chat's new photos outside the request, then the assistant carries on from them. */
+export function readPhotosThenAnswer(asker: Asker, chatId: string) {
+  void readPhotos(asker, chatId, () => continueChat(asker, chatId)).catch((error) =>
+    reportError(error, { event: 'photo_read' }),
+  );
+}
+
+/**
+ * The assistant carries on from whatever the customer sent since it last spoke: a measured video,
+ * or a few WhatsApp messages that came in together.
+ */
+export async function continueChat(asker: Asker, chatId: string) {
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
   if (!chat || chat.status !== 'chatting' || chat.human_handoff) return;
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
@@ -527,7 +587,23 @@ export function parseContact(input: ContactInput): Contact {
   return { name: input.name.trim(), email: email?.data ?? null, phone: typedPhone || null };
 }
 
-const hasContact = (chat: Row) => Boolean(chat.customer_email || chat.customer_phone);
+/** A way to reach the customer: an email, a phone number, or the WhatsApp chat they wrote from. */
+const hasContact = (chat: Row) =>
+  Boolean(chat.customer_email || chat.customer_phone || chat.channel_user_id);
+
+/**
+ * Why the owner can't reach this WhatsApp customer there anymore, or '' when they can. WhatsApp only
+ * delivers a business's messages within a day of the customer's last one.
+ */
+export async function whatsAppClosed(chatId: string, connection?: Sql): Promise<string> {
+  const [chat] = await rows(
+    'SELECT channel_account_id,customer_phone,last_inbound_at>DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 24 HOUR) AS open FROM lead_chats WHERE id=?',
+    [chatId],
+    connection,
+  );
+  if (!chat?.channel_account_id || Number(chat.open)) return '';
+  return `It’s been more than a day since they last wrote on WhatsApp, and WhatsApp won’t deliver anything after that.${chat.customer_phone ? ` Call or text them at ${chat.customer_phone}.` : ''}`;
+}
 
 /** How the quote card names the customer: "Sam K." */
 function cardName(name: string) {
@@ -547,46 +623,6 @@ async function saveContact(connection: Sql, chatId: string, contact: Contact) {
     [cardName(contact.name), chatId],
     connection,
   );
-}
-
-/**
- * Whether this customer already left their details on a quote from the business in the last week.
- * A second one isn't billed, so one person can't run up the owner's bill.
- */
-async function repeatLead(connection: Sql, chat: Row) {
-  const email = chat.customer_email ? String(chat.customer_email) : null;
-  const phone = chat.customer_phone ? String(chat.customer_phone).replace(/\D/g, '') : null;
-  const [earlier] = await rows(
-    `SELECT COUNT(*) AS count FROM lead_chats c JOIN live_quotes q ON q.chat_id=c.id
-     JOIN quote_usage u ON u.quote_id=q.id AND u.charge='delivered'
-     WHERE c.business_id=? AND c.id<>? AND c.source<>'test'
-       AND u.created_at>=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 7 DAY)
-       AND (c.customer_email=? OR REGEXP_REPLACE(c.customer_phone,'[^0-9]','')=?)`,
-    [chat.business_id, chat.id, email, phone],
-    connection,
-  );
-  return Number(earlier.count) > 0;
-}
-
-/**
- * The owner has a lead: a customer who can see their quote and left a way to reach them. That's
- * what the per-quote plan charges for, once per quote. Owners' tests are never billed.
- */
-async function giveLead(
-  connection: Sql,
-  input: { businessId: string; chatId: string; sentBy?: 'auto' | 'owner'; byCustomer: boolean },
-) {
-  const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [input.chatId], connection);
-  const quote = await liveQuoteFor(input.chatId, connection);
-  if (!quote || chat.source === 'test' || !hasContact(chat)) return;
-  await recordLiveDelivery(connection, {
-    businessId: input.businessId,
-    quoteId: String(quote.id),
-    totalCents: Number(quote.total_cents),
-    sentBy: input.sentBy ?? (quote.sent_by === 'owner' ? 'owner' : 'auto'),
-    byCustomer: input.byCustomer,
-    repeat: await repeatLead(connection, chat),
-  });
 }
 
 /**
@@ -640,7 +676,6 @@ export async function leaveContact(
       if (purpose === 'copy' && !contact.email)
         throw new ApiError(422, 'EMAIL_REQUIRED', 'Add your email so we can send it.');
       await saveContact(connection, chatId, contact);
-      await giveLead(connection, { businessId, chatId, byCustomer: true });
       if (purpose === 'copy')
         await addMessage(connection, {
           businessId,
@@ -671,6 +706,14 @@ export async function leaveContact(
 
 type Check = { id: string; passed: boolean; detail: string };
 
+/**
+ * Checks that keep a quote with the owner: their own settings, a customer who asked for them, a
+ * job they don't do, or no price at all. Any other check that fails still sends the quote, as a
+ * range at its widest (or the owner's estimate, if that's how they quote while it learns), never
+ * as a firm price, and flags it for them.
+ */
+const HOLDS = new Set(['priced', 'service', 'scope', 'handoff', 'auto', 'limit']);
+
 /** Why the job's size keeps the draft from being held to the owner's rate, if it does. */
 function sizeProblem(service: string, spec: JobSpec | null, estimate: Estimate | null) {
   if (!spec?.quantity || !spec.unit) return 'It couldn’t tell how big the job is.';
@@ -690,9 +733,9 @@ function sizeProblem(service: string, spec: JobSpec | null, estimate: Estimate |
 }
 
 /**
- * The server's checks on the Charm's draft. Any failure sends the quote to the owner first. They
- * are about the job, not about how trained the Charm is: a service it's still learning goes out
- * in the style the owner picked, like a price range.
+ * The server's checks on the Charm's draft. A failed hold sends the quote to the owner first; any
+ * other failure sends it as a wide range and flags it. They are about the job, not about how
+ * trained the Charm is: a service it's still learning goes out in the style the owner picked.
  */
 async function checkDraft(
   business: Row,
@@ -796,7 +839,26 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
     "SELECT sender,text FROM lead_messages WHERE chat_id=? AND kind='text' ORDER BY created_at,id",
     [chatId],
   );
-  const spec = json<JobSpec | null>(chat.spec_json, null);
+  const videos = (
+    await rows(
+      'SELECT result_json FROM lead_videos WHERE chat_id=? AND result_json IS NOT NULL ORDER BY created_at',
+      [chatId],
+    )
+  ).flatMap((video) => json<Walkaround | null>(video.result_json, null) ?? []);
+  const photos = photoReading(chat);
+  const saved = json<JobSpec | null>(chat.spec_json, null);
+  // A size the photos measured, when nothing else gave one.
+  const spec =
+    saved && !saved.quantity && photos?.quantity
+      ? { ...saved, quantity: photos.quantity, unit: photos.unit }
+      : saved;
+  if (spec !== saved) {
+    // Kept on the chat, so the checks and the owner see the size the quote went on.
+    chat.spec_json = JSON.stringify(spec);
+    await mutate('UPDATE lead_chats SET spec_json=? WHERE id=?', [chat.spec_json, chatId]);
+  }
+  // Everything measured and seen in the video and photos: counts, kinds, condition, materials.
+  const media = [...videos.flatMap((video) => video.notes), ...(photos?.notes ?? [])];
   let drafted: DraftedQuote;
   let estimate: Estimate | null = null;
   let rates: Rate[] | undefined;
@@ -813,6 +875,7 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
             text: String(message.text),
           })),
         spec,
+        media,
         images: await chatImages(businessId, chatId),
       }),
     ));
@@ -836,8 +899,25 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
   );
   const settings = settingsFromRow(business);
   const progress = learned?.progress ?? 0;
-  const style = priceStyle(progress, settings);
-  const checks = await checkDraft(business, chat, drafted, totalCents, estimate, learned, style);
+  const checks = await checkDraft(
+    business,
+    chat,
+    drafted,
+    totalCents,
+    estimate,
+    learned,
+    priceStyle(progress, settings),
+  );
+  const failed = checks.filter((check) => !check.passed);
+  const held = failed.filter((check) => HOLDS.has(check.id));
+  // A doubt about the price shows the customer a range, never nothing and never a firm price.
+  const doubted = failed.length > 0 && !held.length;
+  const style = doubted
+    ? settings.learningStyle === 'estimate'
+      ? 'estimate'
+      : 'range'
+    : priceStyle(progress, settings);
+  const spread = rangeSpread(doubted ? 0 : progress, settings.trainedPercent);
   const terms = await usualTerms(businessId, String(chat.service_name));
   const test = chat.source === 'test';
   await transaction(async (connection) => {
@@ -856,7 +936,7 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       connection,
     );
     const card: Quote = {
-      ...pricedAs(style, totalCents, rangeSpread(progress, settings.trainedPercent)),
+      ...pricedAs(style, totalCents, spread),
       number,
       customer: cardName(String(chat.customer_name)),
       place: String(business.service_area ?? ''),
@@ -871,8 +951,7 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       note: '',
       issuedAt: new Date().toISOString(),
     };
-    const failed = checks.filter((check) => !check.passed);
-    let status: 'sent' | 'review' = failed.length ? 'review' : 'sent';
+    let status: 'sent' | 'review' = held.length ? 'review' : 'sent';
     let reason = failed.map((check) => check.detail).join(' ');
     const quoteId = randomUUID();
     await mutate(
@@ -928,8 +1007,11 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
         sender: 'assistant',
         kind: 'status',
         // The owner testing their own link sees what their Charm drafted, and why it would wait.
+        // On WhatsApp a quote only goes once it's sent, so it says where to send it from.
         text: test
-          ? 'Here’s the quote your Charm drafted.'
+          ? chat.channel_account_id
+            ? 'Your Charm drafted this quote and is holding it for you. Send it from PriceCharm and it’ll come here.'
+            : 'Here’s the quote your Charm drafted.'
           : !reachable
             ? `${who} wants to look this one over before it goes out. Where should they send it?`
             : chat.customer_email
@@ -946,8 +1028,9 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
 }
 
 /**
- * Shows the quote to the customer. When they've already left their details, it bills it once and
- * lets both sides know; otherwise that waits until they do.
+ * Shows the quote to the customer, which is when it's billed, once, whether or not they answer
+ * it. When they've already left their details, it lets both sides know; otherwise that waits
+ * until they do. Owners' tests are never billed.
  */
 export async function markSent(
   connection: Sql,
@@ -958,12 +1041,22 @@ export async function markSent(
     [input.quoteId, input.businessId],
     connection,
   );
-  if (!input.test)
-    await giveLead(connection, {
+  const [chat] = await rows(
+    'SELECT customer_name,customer_email,customer_phone,channel_account_id,channel_user_id FROM lead_chats WHERE id=?',
+    [quote.chat_id],
+    connection,
+  );
+  // On WhatsApp the customer sees it once WhatsApp says it reached them, so it's billed then
+  // (recordDeliveries in src/channels/conversation.ts). It still has to be allowed to go now.
+  if (!input.test && chat.channel_account_id) {
+    const access = await liveBillingAccess(input.businessId, connection, Number(quote.total_cents));
+    if (!access.canSend) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
+  } else if (!input.test)
+    await recordLiveDelivery(connection, {
       businessId: input.businessId,
-      chatId: String(quote.chat_id),
+      quoteId: input.quoteId,
+      totalCents: Number(quote.total_cents),
       sentBy: input.sentBy,
-      byCustomer: false,
     });
   const [business] = await rows(
     'SELECT * FROM businesses WHERE id=?',
@@ -985,11 +1078,6 @@ export async function markSent(
     detail: input.test ? 'test' : input.sentBy,
     value: Number(quote.total_cents),
   });
-  const [chat] = await rows(
-    'SELECT customer_name,customer_email,customer_phone FROM lead_chats WHERE id=?',
-    [quote.chat_id],
-    connection,
-  );
   const first = String(chat.customer_name).trim().split(/\s+/)[0];
   await addMessage(connection, {
     businessId: input.businessId,
@@ -1131,20 +1219,42 @@ export async function notifyOwner(
 /** Statuses a customer can still answer: open, or past its valid days without an answer. */
 const ANSWERABLE = ['sent', 'expired'];
 
-/**
- * The customer answers their quote. A yes or a visit request needs a way to reach them, which they
- * leave now if they haven't already. That's when the owner has a lead and, on the per-quote plan,
- * when it's billed. Only a yes with their details counts as the price winning.
- */
 export async function customerDecision(
   req: Request,
   decision: 'accept' | 'visit' | 'decline',
   why: { reason: LossReason; note: string } = { reason: 'other', note: '' },
   input?: ContactInput,
 ) {
+  const { chat } = await chatAccess(req);
+  await decide(String(chat.id), decision, why, input);
+  const fresh = await chatAccess(req);
+  return chatView(fresh.business, fresh.chat);
+}
+
+/**
+ * The customer answers their quote, on the chat page or on WhatsApp. A yes or a visit request
+ * needs a way to reach them, which they leave now if they haven't already. That's when the owner
+ * has a lead and, on the accepted-quote plan, when it's billed. Only a yes with their details
+ * counts as the price winning.
+ */
+export async function decide(
+  chatId: string,
+  decision: 'accept' | 'visit' | 'decline',
+  why: { reason: LossReason; note: string } = { reason: 'other', note: '' },
+  input?: ContactInput,
+) {
   const contact = input && decision !== 'decline' ? parseContact(input) : null;
   await transaction(async (connection) => {
-    const { business, chat } = await chatAccess(req, connection, true);
+    const [chat] = await rows(
+      'SELECT * FROM lead_chats WHERE id=? FOR UPDATE',
+      [chatId],
+      connection,
+    );
+    const [business] = await rows(
+      'SELECT * FROM businesses WHERE id=?',
+      [chat.business_id],
+      connection,
+    );
     const quote = await liveQuoteFor(String(chat.id), connection);
     if (!quote || !ANSWERABLE.includes(String(quote.status)))
       throw new ApiError(409, 'QUOTE_NOT_OPEN', 'This quote can’t be changed now.');
@@ -1156,11 +1266,6 @@ export async function customerDecision(
           'CONTACT_REQUIRED',
           `Add your name and a phone number or an email, so ${(await contactName(business, connection)) || business.name} can reach you.`,
         );
-      await giveLead(connection, {
-        businessId: String(business.id),
-        chatId: String(chat.id),
-        byCustomer: true,
-      });
     }
     const status = { accept: 'accepted', visit: 'visit_requested', decline: 'lost' }[decision];
     await mutate(
@@ -1227,8 +1332,6 @@ export async function customerDecision(
         connection,
       );
   });
-  const fresh = await chatAccess(req);
-  return chatView(fresh.business, fresh.chat);
 }
 
 export async function chatPhoto(req: Request) {

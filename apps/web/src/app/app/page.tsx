@@ -92,7 +92,7 @@ export default function QuotesHome() {
           </h1>
           <p className="mt-3 max-w-xl text-ink-2">
             {home.autoSend
-              ? 'Your Charm quotes customers on its own. Anything unusual waits here for you.'
+              ? 'Your Charm quotes customers on its own. Anything unusual is flagged here for you.'
               : 'Every quote waits here for your OK.'}
           </p>
         </div>

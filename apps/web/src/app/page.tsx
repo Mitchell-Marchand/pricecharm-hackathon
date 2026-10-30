@@ -135,7 +135,7 @@ export default async function LandingPage() {
                     },
                     { icon: Camera, text: 'Asks for photos on every job' },
                     { icon: Receipt, text: 'Prices it the way you do, line by line' },
-                    { icon: Hand, text: 'Sends anything unusual to you first' },
+                    { icon: Hand, text: 'Prices odd jobs as a range and tells you why' },
                   ].map(({ icon: Icon, text }) => (
                     <li key={text} className="flex gap-3">
                       <Icon className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
@@ -158,8 +158,8 @@ export default async function LandingPage() {
               },
               {
                 icon: Hand,
-                title: 'Odd jobs come to you',
-                text: 'Anything outside your usual range waits for your OK. Approve it with one tap.',
+                title: 'Odd jobs still get a price',
+                text: 'Anything outside your usual range goes out as a range, and you see why. Set a limit and bigger quotes wait for your OK.',
               },
               {
                 icon: Receipt,

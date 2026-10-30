@@ -243,7 +243,7 @@ test(
     const started = await quoteRequest(newcomer.slug, service, 'About 1,000 sq ft of siding.');
     const startEngine = json<Record<string, unknown>>(started.quote.engine_json, {});
     assert.equal(startEngine.startingPoint, true);
-    assert.equal(started.quote.status, 'review', 'A borrowed price always waits for the owner');
+    assert.equal(started.quote.status, 'review', 'With sending off, a borrowed price waits too');
     assert.equal(json<Record<string, unknown>>(started.quote.draft_json, {}).confidence, 'low');
     delete process.env.MARKET_PRICES;
   },

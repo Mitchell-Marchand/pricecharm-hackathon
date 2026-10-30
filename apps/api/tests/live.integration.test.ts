@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 import request from 'supertest';
 import { closeDatabase, mutate, rows } from '../src/db.js';
 import { json } from '../src/models.js';
@@ -214,7 +215,7 @@ test(
     await goLive(shop.owner);
 
     // 1. Automatic quotes on: the quote shows as soon as the chat has the details, before any
-    // contact details, and seeing it costs the owner nothing.
+    // contact details, and showing it is what's billed.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
@@ -231,7 +232,12 @@ test(
     );
     const ledger = (quoteId: string) =>
       rows('SELECT source,trial_covered,fee_cents FROM quote_usage WHERE quote_id=?', [quoteId]);
-    assert.equal((await ledger(automatic.view.quote.id)).length, 0, 'Not billed for a look');
+    const [usage] = await ledger(automatic.view.quote.id);
+    assert.deepEqual(
+      { ...usage, trial_covered: Boolean(usage.trial_covered), fee_cents: Number(usage.fee_cents) },
+      { source: 'live_auto', trial_covered: false, fee_cents: 200 },
+      '$2 on the per-quote plan once it shows, from the first one',
+    );
     assert.ok(
       (await emailKeys(shop.id)).every((key) => !key.includes(automatic.customer.id)),
       'Nobody is emailed about a look',
@@ -250,8 +256,8 @@ test(
       'PHONE_INVALID',
     );
 
-    // Asking for a copy makes it a lead: $2 on the per-quote plan, the quote in their inbox, and
-    // a note to the owner that it may be worth a follow-up.
+    // Asking for a copy puts the quote in their inbox and tells the owner it may be worth a
+    // follow-up, with no second charge.
     const automaticEmail = sam().email;
     const copied = await automatic.customer.call('post', '/contact', {
       name: 'Sam Kim',
@@ -263,16 +269,7 @@ test(
       copied.body.data.chat.messages.at(-1).text,
       `Sent. A copy is on its way to ${automaticEmail}.`,
     );
-    const [usage] = await ledger(automatic.view.quote.id);
-    assert.deepEqual(
-      { ...usage, trial_covered: Boolean(usage.trial_covered), fee_cents: Number(usage.fee_cents) },
-      {
-        source: 'live_auto',
-        trial_covered: false,
-        fee_cents: 200,
-      },
-      '$2 for the lead on the per-quote plan, from the first one',
-    );
+    assert.equal((await ledger(automatic.view.quote.id)).length, 1, 'Billed once, when it showed');
     const emails = await rows(
       'SELECT dedupe_key,payload_encrypted FROM email_outbox WHERE business_id=? ORDER BY created_at',
       [shop.id],
@@ -336,15 +333,14 @@ test(
       !(await emailKeys(shop.id)).includes(`live-quote:${looked.customer.id}:customer`),
       'No email to send a copy to',
     );
-    // The same person again within the week isn't billed again, however they write the number.
+    // Each quote shown is billed, even to someone who had one this week.
     const again = await reachQuote(shop.slug);
     await again.customer
       .call('post', '/visit', { name: 'Ana Ruiz', phone: '503.555.0142' })
       .expect(200);
-    assert.equal(Number((await ledger(again.view.quote.id))[0].fee_cents), 0);
+    assert.equal(Number((await ledger(again.view.quote.id))[0].fee_cents), 200);
 
-    // 2. Automatic quotes off: the quote waits for the owner, who edits and sends it. It's from the
-    // email that just got a quote, so the owner isn't billed for it twice in a week.
+    // 2. Automatic quotes off: the quote waits for the owner, who edits and sends it.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
@@ -402,7 +398,7 @@ test(
     assert.equal(customerView.quote.card.lines[0].amountCents, 26000);
     const [ownerUsage] = await ledger(listed.id);
     assert.equal(ownerUsage.source, 'live_owner', 'Owner-approved quotes count too');
-    assert.equal(Number(ownerUsage.fee_cents), 0, 'The same customer within a week');
+    assert.equal(Number(ownerUsage.fee_cents), 200, 'Billed once it shows');
     assert.equal(
       (
         await shop.owner
@@ -450,8 +446,8 @@ test(
     );
     assert.equal(listedTests.length, 1);
 
-    // 4. Automatic quotes on: a size it hasn't priced waits, and a service it's still learning goes
-    // out as a price range.
+    // 4. Automatic quotes on: a size it hasn't priced still goes out, as the widest range, and the
+    // owner sees why. A service it's still learning goes out as a price range.
     await shop.owner
       .patch('/api/v1/app/settings')
       .set('Origin', origin)
@@ -468,18 +464,52 @@ test(
       ]);
       return json<{ id: string; passed: boolean; detail: string }[]>(quote.checks_json, []);
     }
-    const big = await waitsBecause({ service: 'Driveways', size: 'About 2,000 sq ft.' });
-    const bigRequest = lastReached!;
-    const bigChat = bigRequest.customer.id;
+    const oversized = await reachQuote(shop.slug, undefined, {
+      service: 'Driveways',
+      size: 'About 2,000 sq ft.',
+    });
+    assert.equal(oversized.view.status, 'sent', 'A size it hasn’t priced still gets a price');
+    assert.equal(oversized.view.quote.card.style, 'range');
+    const [oversizedQuote] = await rows(
+      'SELECT checks_json,total_cents FROM live_quotes WHERE chat_id=?',
+      [oversized.customer.id],
+    );
+    const big = json<{ id: string; passed: boolean; detail: string }[]>(
+      oversizedQuote.checks_json,
+      [],
+    );
     assert.deepEqual(
       big.filter((check) => !check.passed).map((check) => check.id),
       ['range', 'size'],
-      'Only things about the job hold it, never how trained the Charm is',
+      'Only things about the job flag it, never how trained the Charm is',
     );
     assert.match(
       big.find((check) => check.id === 'size')?.detail ?? '',
       /much bigger than the Driveways jobs you’ve priced, which go up to 600 sq ft/,
     );
+    const { range: wide } = oversized.view.quote.card;
+    const total = Number(oversizedQuote.total_cents);
+    assert.ok(
+      wide.lowCents <= total * 0.76 && wide.highCents >= total * 1.24,
+      `A doubt gets the widest range: ${JSON.stringify(wide)} around ${total}`,
+    );
+    // An owner who sends firm prices while it learns still never gets a doubt sent as one.
+    await shop.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ learningStyle: 'firm' })
+      .expect(200);
+    const doubtedFirm = await reachQuote(shop.slug, undefined, {
+      service: 'Driveways',
+      size: 'About 2,000 sq ft.',
+    });
+    assert.equal(doubtedFirm.view.status, 'sent');
+    assert.equal(doubtedFirm.view.quote.card.style, 'range', 'A doubt never goes out firm');
+    await shop.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ learningStyle: 'range' })
+      .expect(200);
     const learning = await reachQuote(shop.slug, undefined, {
       service: 'House wash',
       size: 'About 2,000 sq ft.',
@@ -511,7 +541,25 @@ test(
     );
     assert.equal(firm.range, null, 'A trained service quotes a firm price');
 
-    // 5. The "needs your OK" email opens that one quote with an Approve button, no sign-in.
+    // 5. Over the owner's own limit, a quote waits. The "needs your OK" email opens that one quote
+    // with an Approve button, no sign-in.
+    await shop.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ limitCents: 5000 })
+      .expect(200);
+    const overLimit = await waitsBecause({ service: 'Driveways', size: 'About 600 sq ft.' });
+    assert.deepEqual(
+      overLimit.filter((check) => !check.passed).map((check) => check.id),
+      ['limit'],
+    );
+    await shop.owner
+      .patch('/api/v1/app/settings')
+      .set('Origin', origin)
+      .send({ limitCents: null })
+      .expect(200);
+    const bigRequest = lastReached!;
+    const bigChat = bigRequest.customer.id;
     const [tappedQuote] = await rows('SELECT id,total_cents FROM live_quotes WHERE chat_id=?', [
       bigChat,
     ]);
@@ -534,7 +582,7 @@ test(
     assert.equal(shown.body.data.customer, 'Sam');
     assert.equal(shown.body.data.totalCents, Number(tappedQuote.total_cents));
     assert.ok(
-      shown.body.data.reasons.some((reason: string) => /much bigger/.test(reason)),
+      shown.body.data.reasons.some((reason: string) => /over your \$50 limit/.test(reason)),
       'It says why it waited',
     );
     assert.ok(!JSON.stringify(shown.body).includes('@example.test'), 'No contact details');
@@ -574,6 +622,52 @@ test(
       (await tap(tapLink.id, { token: tapLink.token })).body.error?.code,
       'QUOTE_NOT_WAITING',
       'Once sent, a second tap does nothing',
+    );
+
+    // 6. A photo is read like a video, outside the request: the chat shows it's looking, and the
+    // assistant carries on from it once it's read.
+    const photoAgent = customerAgent();
+    const photographer = await chat(shop.slug, photoAgent);
+    await photographer.call('post', '/messages', { text: 'Driveways' }).expect(200);
+    const askedForPhoto = await photographer.call('post', '/messages', {
+      text: 'About 600 sq ft, two cars.',
+    });
+    assert.deepEqual(askedForPhoto.body.data.messages.at(-1).chips, ['Skip photos']);
+    const driveway = await sharp({
+      create: { width: 60, height: 40, channels: 3, background: '#8a8f96' },
+    })
+      .jpeg()
+      .toBuffer();
+    const uploaded = await photoAgent
+      .post(`${photographer.base}/photos`)
+      .set('Origin', origin)
+      .set('Authorization', `Bearer ${photographer.token}`)
+      .attach('file', driveway, 'driveway.jpg');
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+    assert.equal(uploaded.body.data.measuring, true, 'The chat shows it’s looking at the photo');
+    assert.equal(uploaded.body.data.measuringPhotos, true);
+    let photoView = uploaded.body.data;
+    for (let tries = 0; photoView.measuring && tries < 100; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      photoView = (await photographer.call('get', '')).body.data;
+    }
+    assert.equal(photoView.measuring, false, 'It carries on once the photo is read');
+    assert.notEqual(photoView.status, 'chatting', 'The assistant answered from the photo');
+    const [photoChat] = await rows(
+      'SELECT photo_reading_json,photo_read_until FROM lead_chats WHERE id=?',
+      [photographer.id],
+    );
+    const reading = json<{ photoIds: string[]; result: { source?: string } | null }>(
+      photoChat.photo_reading_json,
+      { photoIds: [], result: null },
+    );
+    assert.equal(reading.photoIds.length, 1);
+    assert.equal(reading.result?.source, 'photos');
+    assert.equal(photoChat.photo_read_until, null, 'And lets go of the chat');
+    assert.equal(
+      (await rows('SELECT id FROM live_quotes WHERE chat_id=?', [photographer.id])).length,
+      1,
+      'The quote came after the reading',
     );
   },
 );

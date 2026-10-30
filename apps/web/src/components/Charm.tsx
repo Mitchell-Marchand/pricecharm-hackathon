@@ -89,7 +89,7 @@ function Meter({ score, mark, size = 'md' }: { score: number; mark: number; size
 
 /** Whether the Charm is still learning, and what goes out until it isn't. */
 function standing(score: number, settings: CharmSettings) {
-  if (score >= 100) return 'Fully trained. Anything unusual still comes to you first.';
+  if (score >= 100) return 'Fully trained. Anything unusual is still flagged for you.';
   if (score >= settings.trainedPercent)
     return `Trained enough for firm prices on the work you do most. Services under ${settings.trainedPercent}% get ${LEARNING_TEXT[settings.learningStyle]}.`;
   return settings.learningStyle === 'firm'
@@ -141,7 +141,7 @@ export function CharmSwitch({
           </p>
           <p className="mt-0.5 text-[15px] text-ink-2">
             {settings.autoSend
-              ? 'Customers get a quote in about 2 minutes. Unusual jobs still come to you first.'
+              ? 'Customers get a quote in about 2 minutes. Unusual jobs are flagged for you.'
               : 'Every quote waits for your OK first. One tap from your email sends it.'}
           </p>
         </div>

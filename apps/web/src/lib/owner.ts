@@ -64,18 +64,39 @@ export interface ThreadMessage {
   createdAt?: string;
 }
 
-/** A customer's walk-around video, and what was counted and measured in it. */
-export interface QuoteVideo {
-  id: string;
+/** Something about the job's state, quality or materials that changes how much work it is. */
+export interface MediaFinding {
+  what: string;
+  detail: string;
+  severity: 'light' | 'moderate' | 'heavy' | '';
+}
+
+/** What was counted, measured and seen in a customer's video or photos. */
+export interface MediaReading {
   status: 'measuring' | 'measured' | 'failed';
-  url: string;
   failure: string;
   summary: string;
-  narration: string;
-  counts: { label: string; unit: string; count: number; sparkCount: number | null }[];
+  counts: {
+    label: string;
+    unit: string;
+    count: number;
+    sparkCount: number | null;
+    /** Each one looked at up close, grouped by kind. */
+    kinds?: { kind: string; count: number; condition: string }[];
+  }[];
   area: { surface: string; low: number; high: number; unit: string; basis: string } | null;
-  /** Stills from the video with what was counted outlined. */
+  /** Missing from older APIs. */
+  material?: string;
+  findings?: MediaFinding[];
+  /** Stills or photos with what was counted outlined. */
   overlays: { label: string; url: string }[];
+}
+
+/** A customer's walk-around video, and what was counted and measured in it. */
+export interface QuoteVideo extends MediaReading {
+  id: string;
+  url: string;
+  narration: string;
 }
 
 export interface QuoteDetail extends QuoteListItem {
@@ -98,6 +119,8 @@ export interface QuoteDetail extends QuoteListItem {
   messages: ThreadMessage[];
   /** Missing from older APIs. */
   videos?: QuoteVideo[];
+  /** What was read in the customer's photos. Missing from older APIs and before they're read. */
+  photoReading?: MediaReading | null;
   /** The before-and-after customers see with the quote, once it's drawn. Missing from older APIs. */
   preview?: { before: string; after: string } | null;
 }
@@ -163,8 +186,6 @@ export interface Billing {
   configured: boolean;
   /** Null until they choose one, which comes before the card. */
   plan: Plan | null;
-  /** A switch booked for the end of the paid period. */
-  nextPlan: Plan | null;
   /** The order to show the choices in, random per business. */
   planOrder: PlanChoice[];
   pricing: Pricing;
@@ -201,7 +222,6 @@ function complete(billing: Billing): Billing {
   return {
     ...billing,
     plan: billing.plan ?? null,
-    nextPlan: billing.nextPlan ?? null,
     planOrder: billing.planOrder?.length
       ? billing.planOrder
       : ['per_quote', 'per_accepted', 'subscription'],
@@ -225,7 +245,7 @@ export const startCheckout = (from?: 'setup') =>
     method: 'POST',
     ...json(from ? { from } : {}),
   });
-/** Picks or switches the plan. Off a paid subscription, it waits for the end of the period. */
+/** Picks or switches the plan. It takes effect now, and with a card on file the plan starts on it. */
 export const choosePlan = (plan: Plan) =>
   api<Billing>('/app/billing/plan', { method: 'POST', ...json({ plan }) }).then(complete);
 /** Deploys the agent: the quote link starts taking requests. Needs a plan and a card. */

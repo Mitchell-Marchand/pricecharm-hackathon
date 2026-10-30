@@ -281,8 +281,8 @@ function Deploy({
             {!settings.autoSend
               ? 'Your Charm drafts each quote and you send it with one tap.'
               : learning && settings.learningStyle !== 'firm'
-                ? `Your Charm quotes on its own. While it learns, customers get ${LEARNING_TEXT[settings.learningStyle]}, and anything unusual comes to you first.`
-                : 'Your Charm quotes on its own, and anything unusual comes to you first.'}
+                ? `Your Charm quotes on its own. While it learns, customers get ${LEARNING_TEXT[settings.learningStyle]}, and anything unusual is flagged for you.`
+                : 'Your Charm quotes on its own, and anything unusual is flagged for you.'}
           </p>
         )}
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -359,8 +359,8 @@ function Live({
           },
           {
             icon: MessageSquareText,
-            title: 'Unusual jobs wait for you',
-            text: 'Anything outside your usual range comes to you first. One tap to approve.',
+            title: 'Unusual jobs are flagged',
+            text: 'Anything outside your usual range goes out as a price range, and you see why.',
           },
           {
             icon: Receipt,

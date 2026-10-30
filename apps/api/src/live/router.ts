@@ -6,6 +6,7 @@ import { imageUpload, saveImage, uploadSlot } from '../uploads.js';
 import { workspaceFromRequest } from '../workspace.js';
 import { lossReasons } from './outcomes.js';
 import { kickVideos, saveVideo, videoFile, videoUpload } from './videos.js';
+import { photosLeftUnread } from './photo-readings.js';
 import { previewFile } from './previews.js';
 import { rows } from '../db.js';
 import {
@@ -18,6 +19,7 @@ import {
   customerMessage,
   leaveContact,
   publicProfile,
+  readPhotosThenAnswer,
   startChat,
 } from './chat.js';
 import { recordEvent, recordRequestEvent, type EventProps } from '../metrics.js';
@@ -98,8 +100,10 @@ chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => 
 
 chatRouter.get('/chat/:slug/:chatId', async (req, res) => {
   const { business, chat } = await chatAccess(req);
-  // A video whose measuring stopped with the server starts again when the chat checks in.
+  // A video whose measuring stopped with the server starts again when the chat checks in, and
+  // so do photos.
   await kickVideos(String(chat.id));
+  if (await photosLeftUnread(chat)) readPhotosThenAnswer(req, String(chat.id));
   res.json(ok(await chatView(business, chat)));
 });
 

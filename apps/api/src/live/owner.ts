@@ -15,9 +15,10 @@ import { owner } from '../auth.js';
 import { billingProvider, changePlan, PLANS, reconcileStripeCustomer } from '../billing.js';
 import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, liveBillingSummary } from './billing.js';
-import { chatEmailLink, markSent } from './chat.js';
+import { chatEmailLink, markSent, whatsAppClosed } from './chat.js';
 import { lossReasonLabel } from './outcomes.js';
 import { overlayFile, ownerVideos, videoFile } from './videos.js';
+import { ownerPhotoReading, photoOverlayFile } from './photo-readings.js';
 import { previewFile, previewView } from './previews.js';
 import {
   recordActivity,
@@ -174,6 +175,8 @@ async function quoteDetail(businessId: string, quoteId: string) {
     })),
     /** Walk-around videos the customer sent, with what was counted and measured in them. */
     videos: await ownerVideos(businessId, String(quote.chat_id)),
+    /** What was counted and seen in the customer's photos, once they've been read. */
+    photoReading: await ownerPhotoReading(businessId, String(quote.chat_id), String(quote.id)),
     /** The before-and-after customers see with the quote, once it's drawn, while it's turned on. */
     preview: (await rows('SELECT after_preview FROM businesses WHERE id=?', [businessId]))[0]
       ?.after_preview
@@ -190,6 +193,13 @@ ownerQuotesRouter.get('/app/quotes/:id/preview/:which', async (req, res) => {
   if (!quote) throw new ApiError(404, 'NOT_FOUND', 'Picture not found.');
   res.set('Cache-Control', 'private, max-age=86400');
   res.type('image/jpeg').send(await previewFile(quote, String(req.params.which)));
+});
+
+ownerQuotesRouter.get('/app/quotes/:id/photo-overlays/:index', async (req, res) => {
+  const index = z.coerce.number().int().min(0).max(10).parse(req.params.index);
+  const image = await photoOverlayFile(owner(req).businessId, String(req.params.id), index);
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.type('image/jpeg').send(image);
 });
 
 ownerQuotesRouter.get('/app/videos/:id', async (req, res) => {
@@ -252,6 +262,8 @@ export async function sendWaitingQuote(
     );
   } else if (Number(quote.total_cents) <= 0)
     throw new ApiError(422, 'QUOTE_EMPTY', 'Add a price before sending this quote.');
+  const closed = await whatsAppClosed(String(quote.chat_id), connection);
+  if (closed) throw new ApiError(409, 'WHATSAPP_CLOSED', closed);
   await markSent(connection, {
     businessId: String(quote.business_id),
     quoteId: String(quote.id),
@@ -334,6 +346,8 @@ ownerQuotesRouter.post('/app/quotes/:id/messages', rateLimit(30, 60_000), async 
     businessId,
   ]);
   if (!quote) throw new ApiError(404, 'QUOTE_NOT_FOUND', 'That quote isn’t here.');
+  const closed = await whatsAppClosed(String(quote.chat_id));
+  if (closed) throw new ApiError(409, 'WHATSAPP_CLOSED', closed);
   await mutate(
     'INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,created_at) VALUES (?,?,?,?,?,?,UTC_TIMESTAMP(3))',
     [randomUUID(), businessId, quote.chat_id, 'owner', 'text', text],

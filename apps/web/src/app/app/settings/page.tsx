@@ -30,21 +30,18 @@ import { planDetail, planName, type Plan } from '@/lib/plans';
 import { money, moneyInput, parseMoney, shortDate } from '@/lib/util';
 
 const TRAINED_MARKS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+const CLOSE_MARKS = [5, 10, 15, 20, 25, 30];
 
 const LEARNING_HINT: Record<LearningStyle, string> = {
   range: 'Like “$380 to $460”. You confirm the final price before starting.',
   estimate: 'One price, marked as an estimate. You confirm the final price before starting.',
-  firm: 'The price it works out, as a firm quote, even while it’s learning.',
+  firm: 'The price it works out, as a firm quote, even while it’s learning. One it isn’t sure about still goes out as a range.',
 };
 
 /** What holds a quote for the owner whatever the settings say, as the API's checks have it. */
 const CHECKS_WITH_YOU = [
   'Services you don’t offer, and jobs outside your area',
   'Jobs it can’t price from what you’ve taught it',
-  'Jobs it thinks you’d want to see first',
-  'Prices far from what you’ve charged for similar jobs',
-  'Jobs much bigger or smaller than ones you’ve priced, once it knows your rate',
-  'Jobs it isn’t sure about, when the price would be firm',
   'Anyone who asks to talk to you',
 ];
 
@@ -91,18 +88,17 @@ export default function SettingsPage() {
         setLimit(moneyInput(settings.limitCents));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
-    // Back from Stripe, billing is read from Stripe now instead of waiting for its webhook.
-    const fromCheckout = new URLSearchParams(window.location.search).get('billing') === 'active';
-    (fromCheckout ? syncBilling() : loadBilling())
+    // Back from Checkout or the portal, billing is read from Stripe now instead of waiting for its
+    // webhook. A card saved in the portal starts the plan they picked.
+    const back = new URLSearchParams(window.location.search).get('billing');
+    (back ? syncBilling() : loadBilling())
       .then((loaded) => {
         setBilling(loaded);
         setCap(moneyInput(loaded.spendingCapCents));
       })
       .catch((loadError) => setError(errorMessage(loadError)));
-    if (fromCheckout) {
-      notify('Billing is set up. Quotes can go out to customers now.');
-      window.history.replaceState(null, '', window.location.pathname);
-    }
+    if (back === 'active') notify('Billing is set up. Quotes can go out to customers now.');
+    if (back) window.history.replaceState(null, '', window.location.pathname);
   }, [notify]);
 
   /** Saves one change right away, and puts it back if it doesn't save. */
@@ -153,7 +149,7 @@ export default function SettingsPage() {
       <div className="mt-10">
         <Section
           title="Your Charm"
-          intro="How it quotes your customers. Unusual jobs, and anyone who asks for you, always come to you first."
+          intro="How it quotes your customers. Anyone who asks for you always comes to you first."
         >
           {charm === null ? (
             <div className="shimmer h-24 rounded-md" />
@@ -233,6 +229,29 @@ export default function SettingsPage() {
                 </div>
               </Field>
               <Field
+                label="A price counts as close within"
+                htmlFor="settings-close"
+                hint="How near your own price the Charm has to come for a guess to count toward training."
+              >
+                <SelectInput
+                  id="settings-close"
+                  className="max-w-48"
+                  value={charm.closePercent ?? 15}
+                  onChange={(event) =>
+                    change(
+                      { closePercent: Number(event.target.value) },
+                      (next) => `Saved. Within ${next.closePercent}% counts as close.`,
+                    )
+                  }
+                >
+                  {CLOSE_MARKS.map((mark) => (
+                    <option key={mark} value={mark}>
+                      {mark}% of your price
+                    </option>
+                  ))}
+                </SelectInput>
+              </Field>
+              <Field
                 label="Always check with me about quotes over"
                 htmlFor="settings-limit"
                 optional
@@ -261,6 +280,10 @@ export default function SettingsPage() {
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
+                <p className="mt-2 text-sm text-ink-2">
+                  Anything else it isn’t sure about, like a price far from what you usually charge,
+                  still goes out as a range, and the quote shows you why.
+                </p>
               </div>
             </div>
           )}
@@ -275,7 +298,7 @@ export default function SettingsPage() {
 
         <Section
           title="Billing"
-          intro="You pay a small fee for each quote a customer receives. Setup, practice and your own tests are free."
+          intro="Your plan, card and spending limit. Setup and practice are free."
         >
           {!billing ? (
             <div className="shimmer h-32 rounded-md" />
@@ -370,19 +393,16 @@ function BillingDetails({
   const paying = billing.status === 'active' || billing.status === 'trialing';
   const { pricing } = billing;
 
-  // With a card on file it's a switch. Without one, choosing a plan goes on to adding a card.
+  // It switches now. A card already on file starts the plan; without one, it's off to add one.
   async function choose(plan: Plan) {
     setBusy(plan);
     try {
       const saved = await choosePlan(plan);
       onChange(saved);
-      if (!paying && saved.checkoutAvailable) return go(startCheckout);
+      const started = saved.status === 'active' || saved.status === 'trialing';
+      if (!started && saved.checkoutAvailable) return go(startCheckout);
       setPicking(false);
-      notify(
-        saved.nextPlan && saved.periodEnd
-          ? `You’ll move to ${planName(saved.nextPlan, pricing)} on ${shortDate(saved.periodEnd)}.`
-          : `You’re on ${planName(plan, pricing)}.`,
-      );
+      notify(`You’re on ${planName(plan, pricing)}.`);
     } catch (planError) {
       notify(errorMessage(planError));
     } finally {
@@ -414,11 +434,6 @@ function BillingDetails({
               : `Until ${shortDate(billing.firstMonth.endsAt)}, your quote fees stop at ${money(pricing.firstMonthMaxCents)}. You’re at ${money(billing.firstMonth.feesCents)}.`}
           </p>
         ) : null}
-        {billing.nextPlan && billing.periodEnd && (
-          <p className="mt-2 text-sm text-ink-2">
-            Moving to {planName(billing.nextPlan, pricing)} on {shortDate(billing.periodEnd)}.
-          </p>
-        )}
         <p className="mt-3 text-sm text-muted">
           This month: {billing.usage.billableQuotes} paid{' '}
           {billing.usage.billableQuotes === 1 ? 'quote' : 'quotes'},{' '}

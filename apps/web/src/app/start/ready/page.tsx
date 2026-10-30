@@ -97,7 +97,7 @@ export default function ReadyStep() {
               {charm
                 ? charm.readiness.score >= charm.settings.trainedPercent ||
                   charm.settings.learningStyle === 'firm'
-                  ? `It can quote ${trade} customers for ${business} now, and anything unusual comes to you first.`
+                  ? `It can quote ${trade} customers for ${business} now. Anything unusual goes out as a range, and you see why.`
                   : `It can start quoting ${trade} customers for ${business} now. Until a service reaches ${charm.settings.trainedPercent}%, customers get ${LEARNING_TEXT[charm.settings.learningStyle]}.`
                 : `Here’s how it will handle ${trade} requests for ${business}.`}
             </p>

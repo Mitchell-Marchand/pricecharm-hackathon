@@ -130,7 +130,9 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
 
   await page.goto('/app');
   await expect(
-    page.getByText('Your Charm quotes customers on its own. Anything unusual waits here for you.'),
+    page.getByText(
+      'Your Charm quotes customers on its own. Anything unusual is flagged here for you.',
+    ),
   ).toBeVisible();
   await page.getByRole('link', { name: 'Train', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'What your Charm knows' })).toBeVisible();

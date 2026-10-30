@@ -19,11 +19,11 @@ When a history passes 50 examples, the draft gets the ones most like the request
 
 The customer chat records each job as fields: size and unit, condition, access, add-ons and timing (`lead_chats.spec_json`). Past jobs and practice customers get their size read from what was written, like "about 900 sq ft" or "24 windows" (`src/pricing/units.ts`).
 
-From every job and quote with a size, the server works out each service's usual rate: the middle price per unit, with the lowest price the owner has charged as a floor (`src/pricing/rates.ts`). When the request's size is known, the draft gets an estimate for the main work at that rate. With three or more jobs at nearby sizes, a total that lands far from the estimate goes to the owner instead of the customer.
+From every job and quote with a size, the server works out each service's usual rate: the middle price per unit, with the lowest price the owner has charged as a floor (`src/pricing/rates.ts`). When the request's size is known, the draft gets an estimate for the main work at that rate. With three or more jobs at nearby sizes, a total that lands far from the estimate goes out as a wide range and is flagged for the owner.
 
 ## Starting prices from other businesses
 
-A business that has never priced a service can get a starting point from other businesses in the same trade (`src/pricing/market.ts`). Each business's own middle rate counts once, and nothing is used until at least five businesses make up the rate. A quote priced this way always waits for the owner.
+A business that has never priced a service can get a starting point from other businesses in the same trade (`src/pricing/market.ts`). Each business's own middle rate counts once, and nothing is used until at least five businesses make up the rate. A quote priced this way goes out as a wide range and is flagged for the owner.
 
 This is off unless `MARKET_PRICES=on`. Turn it on only once the Terms and Privacy Policy that allow combined figures are live, and after any existing businesses have had the 30 days' notice the Terms promise.
 
@@ -38,11 +38,11 @@ The accept button says what the owner chose in Settings. Otherwise each quote ge
 Each service earns sending on its own separately (`src/pricing/readiness.ts`). A service is ready once:
 
 - it has three prices with a size, from past jobs, practice or real quotes, so its rate can be held to, and
-- at least two of its last three drafts came within 15% of what the owner charged. Those drafts are practice guesses and real quotes the owner reviewed. A practice customer the owner wanted to see first only counts if the AI would have priced it, and then as a miss.
+- at least two of its last three drafts came within 15% of what the owner charged, or within the percent the owner sets in Settings (5% to 30%). Those drafts are practice guesses and real quotes the owner reviewed. A practice customer the owner wanted to see first only counts if the AI would have priced it, and then as a miss.
 
-Two misses among the last three and the service goes back to waiting for the owner, until it matches them again. Nothing has to switch it back: readiness is worked out again for every quote.
+Two misses among the last three and the service goes back to learning, until it matches them again. Nothing has to switch it back: readiness is worked out again for every quote.
 
-Even for a ready service, a quote waits when the size is unknown, or far outside the sizes the owner has priced (under half the smallest, or over one and a half times the largest).
+Customers always see a price. A quote only waits for the owner when the owner turned off sending on its own, it's over the owner's limit, the customer asked for them, it isn't a service they offer or is out of scope, or there's no price at all (`HOLDS` in `src/live/chat.ts`). Any other doubt (the AI would rather see it first or isn't sure, the size is unknown or far outside the sizes the owner has priced, or the total is far from similar jobs or the usual rate) sends the quote as a range at its widest, or as an estimate if that's how the owner quotes while it learns. It never goes out as a firm price, and the owner's quote page says why.
 
 At signup, quotes go out on their own only if at least one service is already ready. The owner can still turn sending on or off in Settings, and it only ever applies to ready services.
 
@@ -56,7 +56,7 @@ Owners can also drop in old quotes and invoices, as many as they like (`src/job-
 
 One score, 0 to 100%, for how close the agent is to quoting the owner's work without them (`agentReadiness` in `src/pricing/readiness.ts`). It follows the rule above exactly, so 100% means every service sends on its own:
 
-- Each service's progress is half sized jobs (3 needed) and half close guesses (2 of the last 3 within 15%).
+- Each service's progress is half sized jobs (3 needed) and half close guesses (2 of the last 3 within the owner's percent, 15% unless they change it).
 - Services are weighted by how often they come up: one for being offered, plus each past job and each real request in the last 90 days. A service they rarely do barely moves it.
 - It also names the one step that would raise it most, "Add a House wash job with its size" or "Practice a Driveways job", and by how much.
 
@@ -116,10 +116,20 @@ Real owners' data takes time to build up. Until it has, `bash scripts/bench.sh` 
 - a discount for two services;
 - how they round, and whether they put extras on their own lines.
 
-Each owner goes through setup like a real one: three past jobs, then setup's five practice customers, answered by their rules. Then each owner's Charm prices new jobs it has never seen, next to the same model with none of the owner's prices, and both are compared with what the owner's rules say.
+Each owner goes through setup like a real one: ten past jobs, then setup's six practice customers, answered by their rules. Then each owner's Charm prices new jobs it has never seen, next to the same model with none of the owner's prices, and both are compared with what the owner's rules say.
 
 ```sh
 bash scripts/bench.sh --owners 30 --tests 6 --curve --json bench.json
 ```
 
 `--curve` also prices every job from the past jobs alone, to show what practice adds. `--json` saves every owner's rules and every price for a closer look. It runs on a fresh `quoting_bench` database in the local container, with the AI keys in `apps/api/.env`. It costs two model calls a job (three with `--curve`), so a full run is a few hundred. The numbers are about simulated owners and say so wherever they're used; the proof report is the one for real owners.
+
+Working on formula pricing, `--formula-only` skips the Charm's usual draft and the generic AI, for about half the calls. `--json` also keeps every answer the model gave, and `--replay <run.json>` runs again on those answers instead of the model, so a change to how prices are worked out from them is scored for free. A call the saved run never made fails rather than reaching the model; add `--fill` to send just those calls to the model, so only what a change asks anew is paid for. The report lists each kind of call with its failures, so timeouts and the quicker last try at a formula show up.
+
+To see whether a change helped, run the old and new code on the same fresh seed and line the runs up job for job:
+
+```sh
+npm run bench:compare --workspace @pricecharm/api -- old.json new.json
+```
+
+It counts the jobs the change fixed and broke, with an exact McNemar test on the split, and the owners who came out better or worse. One 30-owner seed moves about 5 points either way by chance, so a single run can't settle a small change; a paired comparison can.

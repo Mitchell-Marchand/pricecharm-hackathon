@@ -17,7 +17,7 @@ import { loadPricingData } from '../pricing/history.js';
 import { deletePhoto, getPhoto, putPhoto } from '../storage.js';
 import { imageKind } from '../uploads.js';
 import { withAiUsage, withCustomerAiUsage } from '../usage.js';
-import { addMessage, continueAfterVideo, type Asker } from './chat.js';
+import { addMessage, continueChat, type Asker } from './chat.js';
 
 /**
  * Customers' walk-around videos. One comes in with a few stills the customer's browser took from
@@ -81,13 +81,34 @@ export async function saveVideo(req: Request, business: Row, chat: Row): Promise
   const files = req.files as Record<string, Express.Multer.File[]> | undefined;
   const video = files?.video?.[0];
   if (!video) throw new ApiError(400, 'FILE_REQUIRED', 'Choose a video to send.');
-  const kind = videoKind(video.buffer);
-  if (!kind) throw new ApiError(422, 'INVALID_VIDEO', 'That file isn’t a video we can read.');
   const fields = uploadFields.parse(req.body);
+  return storeVideo(business, chat, {
+    bytes: video.buffer,
+    durationMs: fields.durationMs ?? null,
+    stills: (files?.stills ?? []).map((file, index) => ({
+      bytes: file.buffer,
+      ms: fields.stillTimes[index] ?? 0,
+    })),
+    requester: String(req.ip || req.socket.remoteAddress || ''),
+  });
+}
+
+/** A video with how long it runs, the stills taken from it, and who sent it for their AI allowance. */
+export type VideoInput = {
+  bytes: Buffer;
+  durationMs: number | null;
+  stills: { bytes: Buffer; ms: number }[];
+  requester: string;
+};
+
+/** Saves a video from the chat page or WhatsApp, and posts it in the chat. */
+export async function storeVideo(business: Row, chat: Row, input: VideoInput): Promise<string> {
+  const kind = videoKind(input.bytes);
+  if (!kind) throw new ApiError(422, 'INVALID_VIDEO', 'That file isn’t a video we can read.');
   const stills: StoredStill[] = [];
-  for (const [index, file] of (files?.stills ?? []).entries()) {
-    if (!imageKind(file.buffer)) continue;
-    const jpeg = await sharp(file.buffer, { limitInputPixels: 16_000_000, animated: false })
+  for (const still of input.stills) {
+    if (!imageKind(still.bytes)) continue;
+    const jpeg = await sharp(still.bytes, { limitInputPixels: 16_000_000, animated: false })
       .rotate()
       .resize({ width: 1440, height: 1440, fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 80, mozjpeg: true })
@@ -96,11 +117,11 @@ export async function saveVideo(req: Request, business: Row, chat: Row): Promise
     if (!jpeg) continue;
     const key = `${randomUUID()}.jpg`;
     await putPhoto(key, jpeg);
-    stills.push({ key, ms: fields.stillTimes[index] ?? 0 });
+    stills.push({ key, ms: still.ms });
   }
   const id = randomUUID(),
     storageKey = `${id}.${kind}`;
-  await putPhoto(storageKey, video.buffer);
+  await putPhoto(storageKey, input.bytes);
   try {
     await transaction(async (connection) => {
       await rows('SELECT id FROM lead_chats WHERE id=? FOR UPDATE', [chat.id], connection);
@@ -119,10 +140,10 @@ export async function saveVideo(req: Request, business: Row, chat: Row): Promise
           chat.id,
           storageKey,
           kind === 'mov' ? 'video/quicktime' : 'video/mp4',
-          video.size,
-          fields.durationMs ?? null,
+          input.bytes.length,
+          input.durationMs,
           JSON.stringify(stills),
-          String(req.ip || req.socket.remoteAddress || '').slice(0, 64),
+          input.requester.slice(0, 64),
         ],
         connection,
       );
@@ -143,7 +164,7 @@ export async function saveVideo(req: Request, business: Row, chat: Row): Promise
 }
 
 /** The units this owner prices each service by, from their own past prices. */
-async function priceUnits(businessId: string) {
+export async function priceUnits(businessId: string) {
   const units: Record<string, string[]> = {};
   for (const rate of fitRates((await loadPricingData(businessId)).points))
     (units[rate.service.trim().toLowerCase()] ??= []).push(rate.unit);
@@ -261,7 +282,7 @@ export async function measureVideo(id: string): Promise<void> {
       if (fileId) await deleteMetaFile(fileId).catch(() => {});
     }
   // Measured or not, the assistant picks the chat back up. Only then does the chat stop waiting.
-  await continueAfterVideo(asker, String(chat.id)).catch((error) =>
+  await continueChat(asker, String(chat.id)).catch((error) =>
     reportError(error, { event: 'video_continue' }),
   );
   await mutate(
@@ -309,6 +330,8 @@ export async function ownerVideos(businessId: string, chatId: string) {
       narration: result?.narration ?? '',
       counts: result?.counts ?? [],
       area: result?.area ?? null,
+      material: result?.material ?? '',
+      findings: result?.findings ?? [],
       overlays: (result?.overlays ?? []).map((overlay, index) => ({
         label: overlay.label,
         url: `/api/v1/app/videos/${video.id}/overlays/${index}`,

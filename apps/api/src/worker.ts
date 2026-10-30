@@ -9,7 +9,6 @@ import { validateRuntimeConfiguration } from './config.js';
 import { closeDatabase, mutate, rows, transaction } from './db.js';
 import { deleteBusinessAccount } from './accounts.js';
 import {
-  applyDuePlanChanges,
   billingProvider,
   dispatchFee,
   reconcileStripeCustomer,
@@ -23,6 +22,7 @@ import { cleanupStaleJobImports } from './job-imports.js';
 import { cleanupUnattachedJobPhotos } from './past-jobs.js';
 import { followUpQuotes } from './live/followup.js';
 import { pruneVisits, queueWeeklyReport } from './metrics.js';
+import { deliverWaiting } from './channels/conversation.js';
 
 type Job = RowDataPacket & {
   id: string;
@@ -122,7 +122,6 @@ async function maintenance(): Promise<void> {
     }
   });
   await cleanupUnattachedJobPhotos();
-  await applyDuePlanChanges();
   await cleanupStaleJobImports();
   await followUpQuotes();
   await pruneVisits();
@@ -233,6 +232,10 @@ export async function startWorker(): Promise<void> {
   while (!stopping) {
     try {
       await scheduleMaintenance();
+      // WhatsApp replies can't wait behind the queue, so they're checked on every turn.
+      await deliverWaiting().catch((error: unknown) =>
+        reportError(error, { event: 'whatsapp_delivery' }),
+      );
       if (!(await runOneJob())) await pause(2000);
       unavailable = false;
     } catch (error) {
