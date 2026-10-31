@@ -58,6 +58,15 @@ export const readyLine = (contactFirst = false) =>
 const LATER =
   /\b(?:be in touch|get back to|reach out|follow up|contact you|call you|text you|email you|shortly|soon)\b/i;
 /** A last word can't ask for more or promise a reply later: the quote comes next, in the chat. */
+/**
+ * People don't type em dashes in a chat, and customers read them as a machine writing. A dash
+ * between words becomes a comma; one between numbers ("2–3 days") stays.
+ */
+export const plainDashes = (text: string) =>
+  text.replace(/\s*[—–]\s*/g, (dash, offset: number) =>
+    /\d$/.test(text.slice(0, offset)) && /^\d/.test(text.slice(offset + dash.length)) ? dash : ', ',
+  );
+
 export const fitsReady = (reply: string) => !reply.trim().endsWith('?') && !LATER.test(reply);
 
 const intakeJson = {
@@ -156,7 +165,7 @@ ${
   const reply =
     result.ready && !result.outOfScope && !fitsReady(result.reply)
       ? readyLine(input.contactFirst)
-      : result.reply;
+      : plainDashes(result.reply);
   return { ...result, reply, serviceName, spec: cleanSpec(result.spec) };
 }
 

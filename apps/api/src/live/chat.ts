@@ -510,6 +510,10 @@ export async function customerMessage(req: Request, text: string) {
   ]);
   if (Number(count.count) >= MAX_MESSAGES)
     throw new ApiError(422, 'CHAT_LONG', 'This chat is full. Start a new one to keep going.');
+  const [previous] = await rows(
+    'SELECT sender FROM lead_messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 1',
+    [chat.id],
+  );
   await addMessage(undefined, {
     businessId: String(business.id),
     chatId: String(chat.id),
@@ -517,8 +521,21 @@ export async function customerMessage(req: Request, text: string) {
     text,
   });
   if (chat.status === 'chatting' && !chat.human_handoff) await runIntake(req, business, chat);
-  else if (chat.source !== 'test' && chat.status !== 'chatting' && chat.status !== 'contact')
-    await notifyOwner(String(business.id), String(chat.id), 'message');
+  else if (chat.status !== 'chatting' && chat.status !== 'contact') {
+    if (chat.source !== 'test') await notifyOwner(String(business.id), String(chat.id), 'message');
+    // Said once for a run of messages, so they know someone will answer, not the assistant.
+    if (previous?.sender !== 'customer') {
+      const owner = (await contactName(business)) || String(business.name);
+      await addMessage(undefined, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        sender: 'assistant',
+        kind: 'status',
+        text: `Got it. ${owner} will see this and get back to you.`,
+        reply: true,
+      });
+    }
+  }
   const fresh = await chatAccess(req);
   return chatView(fresh.business, fresh.chat);
 }
@@ -957,7 +974,8 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       ...pricedAs(style, totalCents, spread),
       number,
       customer: cardName(String(chat.customer_name)),
-      place: String(business.service_area ?? ''),
+      // Where the customer is isn't asked for, and the business's own area reads as their name.
+      place: '',
       lines: drafted.lines.map((line, index) => ({ id: `l${index}`, ...line })),
       discount: drafted.discount,
       // A formula prices the job but doesn't say when; the owner's usual answer does.

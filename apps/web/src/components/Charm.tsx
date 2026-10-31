@@ -16,7 +16,7 @@ import {
   type ServiceReadiness,
 } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
-import { cx } from '@/lib/util';
+import { article, cx } from '@/lib/util';
 
 const STORE = 'pricecharm:readiness';
 
@@ -46,19 +46,23 @@ export function useCharm(refreshKey: unknown = 0) {
   return [charm, setCharm] as const;
 }
 
-/** Points gained since this browser last showed the score, so training feels like it's going somewhere. */
-function useGained(score: number | null) {
+/**
+ * Points gained since this browser last showed this business's score, so training feels like it's
+ * going somewhere. Kept per business, so a second account in the same browser starts fresh.
+ */
+function useGained(score: number | null, businessId: string | undefined) {
   const [gained, setGained] = useState(0);
   useEffect(() => {
-    if (score === null) return;
+    if (score === null || !businessId) return;
     try {
-      const last = Number(localStorage.getItem(STORE));
+      const key = `${STORE}:${businessId}`;
+      const last = Number(localStorage.getItem(key));
       if (last && score > last) setGained(score - last);
-      localStorage.setItem(STORE, String(score));
+      localStorage.setItem(key, String(score));
     } catch {
       // Private browsing: no running tally, and nothing else changes.
     }
-  }, [score]);
+  }, [score, businessId]);
   return gained;
 }
 
@@ -106,7 +110,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 export function stepText(step: ReadinessStep, service?: ServiceReadiness) {
   const count = step.count ?? 1;
   const started = step.action === 'job' ? service?.sizedPrices : service?.checked;
-  const how = count > 1 ? (started === 0 ? String(count) : `${count} more`) : 'a';
+  const how = count > 1 ? (started === 0 ? String(count) : `${count} more`) : article(step.service);
   const jobs = `${step.service} ${count > 1 ? 'jobs' : 'job'}`;
   return step.action === 'job' ? `Add ${how} ${jobs} with a size` : `Practice ${how} ${jobs}`;
 }
@@ -275,7 +279,7 @@ function ServiceRow({
           {/* While it's short of jobs, practice still counts, so both are offered. */}
           {step.action === 'job' && (
             <StepButton
-              label={`Add a ${service.service} job`}
+              label={`Add ${article(service.service)} ${service.service} job`}
               onClick={onStep && (() => onStep(step))}
               href={stepHref}
             >
@@ -283,7 +287,7 @@ function ServiceRow({
             </StepButton>
           )}
           <StepButton
-            label={`Practice a ${service.service} job`}
+            label={`Practice ${article(service.service)} ${service.service} job`}
             onClick={onStep && (() => onStep({ ...step, action: 'practice' }))}
             href={stepHref}
             disabled={Boolean(busy)}
@@ -327,7 +331,7 @@ export function CharmCard({
   const notify = useToast();
   const { readiness, services, settings } = charm;
   const { score } = readiness;
-  const gained = useGained(score);
+  const gained = useGained(score, charm.businessId);
   const steps = readiness.steps ?? (readiness.next ? [readiness.next] : []);
   const stepFor = (service: string) =>
     steps.find((step) => step.service.toLowerCase() === service.toLowerCase());

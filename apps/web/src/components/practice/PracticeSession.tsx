@@ -528,6 +528,7 @@ export function PracticeSession({
             suggestions: run.suggestions,
           }}
           sending={sending}
+          sendingNote="Checking it against your Charm’s guess. This takes about 30 seconds."
           error={sendError}
           onClose={() => setBuilderOpen(false)}
           onSend={(quote) => void sendQuote(quote)}

@@ -65,17 +65,26 @@ export function slugify(name: string): string {
   );
 }
 
+/** "a" or "an" before a word: "an Exterior windows job", "a Deck job". */
+export function article(word: string): 'a' | 'an' {
+  return /^[aeiou]/i.test(word.trim()) && !/^(u[nr]i|use|usu|one)/i.test(word.trim()) ? 'an' : 'a';
+}
+
 export function lowerFirst(text: string): string {
   return text ? text[0].toLowerCase() + text.slice(1) : text;
 }
 
+/** Empty for no date yet. */
 export function addDays(iso: string, days: number): string {
+  if (!iso) return '';
   const date = new Date(iso);
   date.setDate(date.getDate() + days);
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** Empty for no date yet. */
 export function shortDate(iso: string): string {
+  if (!iso) return '';
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

@@ -70,7 +70,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   const pass = useRef('');
 
   const [lines, setLines] = useState<Line[]>(() => [
-    { id: 'hello', from: 'bot', text: greeting(demo.business) },
+    { id: 'hello', from: 'bot', text: greeting(demo.business, demo.owner) },
   ]);
   const [mode, setMode] = useState<'live' | 'scripted'>('live');
   const [busy, setBusy] = useState(false);
@@ -320,7 +320,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     timers.current.forEach((id) => window.clearTimeout(id));
     timers.current = [];
     pass.current = '';
-    setLines([{ id: uid('d'), from: 'bot', text: greeting(demo.business) }]);
+    setLines([{ id: uid('d'), from: 'bot', text: greeting(demo.business, demo.owner) }]);
     setMode('live');
     setBusy(false);
     setDraft('');
@@ -447,6 +447,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
       </div>
 
       <footer className="flex flex-col gap-2 border-t border-line bg-surface px-3 py-3">
+        {human.slow && <p className="text-sm text-muted">Running a quick security check…</p>}
         <div ref={human.slot} />
         {chips.length > 0 && !busy && !done && !quote && (
           <div className="flex flex-wrap gap-2">

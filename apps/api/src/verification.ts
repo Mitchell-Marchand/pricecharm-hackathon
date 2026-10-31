@@ -145,7 +145,7 @@ export async function createOwnerToken(
         to: input.email,
         subject: code ? `${code} is your PriceCharm code` : 'Reset your PriceCharm password',
         text: code
-          ? `Your PriceCharm code is ${code}. Enter it on the page where you signed up to confirm your email.\n\nOr confirm with this link:\n${link}\n\nIf you did not sign up for PriceCharm, you can ignore this email.`
+          ? `Your PriceCharm code is ${code}. Enter it in PriceCharm to confirm your email.\n\nOr confirm with this link:\n${link}\n\nIf you did not sign up for PriceCharm, you can ignore this email.`
           : `Reset your password using this single-use link:\n${link}\n\nIf you did not request this, you can ignore this email.`,
       },
       sql,

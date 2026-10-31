@@ -10,6 +10,7 @@ import { Button } from '@/components/ui';
 import { buttonClass } from '@/components/button-class';
 import { errorMessage } from '@/lib/api';
 import { loadPractice, morePractice, withRun, type PracticeState } from '@/lib/practice';
+import { article } from '@/lib/util';
 
 /**
  * Practice after setup, from the Train page: one customer at a time, as many as the owner likes,
@@ -90,7 +91,9 @@ export function MorePractice({
             {fresh && (
               <>
                 <h1 className="t-h1 mt-4">
-                  {run?.focus ? `Practice a ${run.focus} job` : 'Practice with a customer'}
+                  {run?.focus
+                    ? `Practice ${article(run.focus)} ${run.focus} job`
+                    : 'Practice with a customer'}
                 </h1>
                 <p className="mt-3 text-lg text-ink-2">
                   Same as in setup. Answer like it&apos;s a real lead, then quote it or ask to see

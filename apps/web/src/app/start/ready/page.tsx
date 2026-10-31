@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, CircleCheckBig } from 'lucide-react';
 import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
+import { ConfirmEmail } from '@/components/owner/ConfirmEmail';
 import { JobSheet, newJob, type Editing } from '@/components/jobs/PastJobs';
 import { KnowsSummary } from '@/components/knows/CharmKnows';
 import { Logo } from '@/components/Logo';
@@ -13,7 +14,7 @@ import { SetupLoading } from '@/components/SetupLoading';
 import { TryCharm } from '@/components/TryCharm';
 import { useToast } from '@/components/Toast';
 import { Button } from '@/components/ui';
-import { loadProfile, type CharmSettings, type Profile } from '@/lib/account';
+import { loadMe, loadProfile, type CharmSettings, type Me, type Profile } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { loadKnows, type Knows } from '@/lib/knows';
 import { useOnboarding } from '@/lib/onboarding';
@@ -35,6 +36,7 @@ export default function ReadyStep() {
   const [adding, setAdding] = useState<Editing | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [changes, setChanges] = useState(0);
+  const [me, setMe] = useState<Me | null>(null);
   const [charm, setCharm] = useCharm(changes);
   const refresh = useCallback(() => {
     loadProfile()
@@ -46,8 +48,15 @@ export default function ReadyStep() {
     setChanges((current) => current + 1);
   }, []);
   useEffect(refresh, [refresh]);
+  const trying = !!state && !state.draft && pathname === '/start/try';
+  // The confirmation email's code goes in here, right after they sign up.
+  useEffect(() => {
+    if (trying)
+      loadMe()
+        .then(setMe)
+        .catch(() => setMe(null));
+  }, [trying]);
   if (!state) return <SetupLoading />;
-  const trying = !state.draft && pathname === '/start/try';
   const business = state.business.name || 'Your business';
   const trade = tradeName(state.business.tradeId, state.business.customTrade).toLowerCase();
   const tradeHints = state.business.tradeId ? TRADES_BY_ID[state.business.tradeId] : null;
@@ -121,6 +130,20 @@ export default function ReadyStep() {
                 </>
               )}
             </div>
+            {trying && me && !me.user.emailVerified && (
+              <div className="mt-8 max-w-xl">
+                <ConfirmEmail
+                  email={me.user.email}
+                  onConfirmed={() =>
+                    setMe((current) =>
+                      current
+                        ? { ...current, user: { ...current.user, emailVerified: true } }
+                        : current,
+                    )
+                  }
+                />
+              </div>
+            )}
           </div>
           <div
             className="relative mx-auto h-[430px] w-full max-w-[360px]"

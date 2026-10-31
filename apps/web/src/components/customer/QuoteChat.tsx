@@ -20,6 +20,7 @@ import {
   decide,
   greeting,
   loadChat,
+  loadViewer,
   leaveContact,
   LOSS_REASONS,
   openedForm,
@@ -44,6 +45,8 @@ import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { useVisualViewport } from '@/lib/use-visual-viewport';
 import { cx, readPhoto } from '@/lib/util';
 import { MAX_VIDEO_BYTES, MAX_VIDEO_SECONDS, readVideo } from '@/lib/video';
+
+const MAX_PHOTOS_AT_ONCE = 6;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ASKS_FOR_PHOTO = /\b(photo|picture|pic)s?\b/i;
@@ -86,7 +89,22 @@ export function QuoteChat({
   const [contact, setContact] = useState<Contact>({ name: '', email: '', phone: '' });
   const [form, setForm] = useState<Form | null>(null);
   const [freshQuote, setFreshQuote] = useState(false);
-  const human = useHumanCheck('quote_chat', !access);
+  // The owner trying their own link gets a test chat, which skips the check, and is told it's a
+  // test before they start.
+  const [signedIn, setSignedIn] = useState(owner);
+  const viewer = useRef<Promise<boolean> | null>(null);
+  const ownerViewing = useCallback(() => {
+    viewer.current ??= owner
+      ? Promise.resolve(true)
+      : loadViewer(slug)
+          .then((found) => found.owner)
+          .catch(() => false);
+    return viewer.current;
+  }, [owner, slug]);
+  useEffect(() => {
+    void ownerViewing().then(setSignedIn);
+  }, [ownerViewing]);
+  const human = useHumanCheck('quote_chat', !access && !signedIn);
   const scroller = useRef<HTMLDivElement>(null);
   const composer = useRef<HTMLInputElement>(null);
   const filePicker = useRef<HTMLInputElement>(null);
@@ -161,14 +179,30 @@ export function QuoteChat({
     };
   }, [access, waiting, measuring, slug, update]);
 
+  // One start for everything sent before the chat exists, like several photos picked at once.
+  const starting = useRef<Promise<ChatAccess> | null>(null);
   async function ensureChat(): Promise<ChatAccess> {
     if (access) return access;
-    const started = await startChat(slug, source, await human.headers());
-    const next = { chatId: started.chat.id, token: started.token };
-    saveAccess(slug, next);
-    setAccess(next);
-    setChat(started.chat);
-    return next;
+    starting.current ??= (async () => {
+      const started = await startChat(
+        slug,
+        source,
+        (await ownerViewing()) ? {} : await human.headers(),
+      );
+      const next = { chatId: started.chat.id, token: started.token };
+      saveAccess(slug, next);
+      setAccess(next);
+      setChat(started.chat);
+      return next;
+    })();
+    try {
+      return await starting.current;
+    } catch (startError) {
+      // Signed out since the page opened: the next try asks again, and runs the check.
+      starting.current = null;
+      viewer.current = null;
+      throw startError;
+    }
   }
 
   async function send(text: string) {
@@ -202,9 +236,11 @@ export function QuoteChat({
       const current = await ensureChat();
       const known = new Set(chat?.messages.flatMap((message) => message.photos.map((p) => p.id)));
       const view = await sendPhoto(slug, current, blob);
+      // The newest one: when several go in a row, this render's chat can be a photo behind.
       const added = view.messages
         .flatMap((message) => message.photos)
-        .find((photo) => !known.has(photo.id));
+        .filter((photo) => !known.has(photo.id))
+        .at(-1);
       if (added) localPhotos.current.set(added.id, dataUrl);
       update(view);
     } catch (photoError) {
@@ -307,6 +343,7 @@ export function QuoteChat({
   }
 
   function startOver() {
+    starting.current = null;
     saveAccess(slug, null);
     setAccess(null);
     setChat(null);
@@ -398,7 +435,7 @@ export function QuoteChat({
           </button>
         )}
       </header>
-      {(chat ? chat.test : owner) && (
+      {(chat ? chat.test : signedIn) && (
         <p className="bg-canary-soft px-4 py-2 text-xs text-ink">
           You&apos;re signed in, so this is a test. Nothing is emailed or billed.
         </p>
@@ -411,7 +448,9 @@ export function QuoteChat({
       >
         <div className="flex flex-col gap-3">
           {!chat && !restoring && (
-            <AssistantBubble profile={profile}>{greeting(profile.name)}</AssistantBubble>
+            <AssistantBubble profile={profile}>
+              {greeting(profile.name, profile.ownerFirstName)}
+            </AssistantBubble>
           )}
           {messages.map((message, index) => (
             <div key={message.id} className="contents">
@@ -569,6 +608,7 @@ export function QuoteChat({
             {error}
           </p>
         )}
+        {human.slow && <p className="text-sm text-muted">Running a quick security check…</p>}
         <div ref={human.slot} />
 
         {(chips.length > 0 || asksForPhoto) && !busy && (
@@ -764,11 +804,15 @@ export function QuoteChat({
           ref={filePicker}
           type="file"
           accept="image/*"
+          multiple
           className="hidden"
           onChange={(event) => {
-            const file = event.target.files?.[0];
+            // A few at once, sent one after another; the reading waits for all of them.
+            const files = [...(event.target.files ?? [])].slice(0, MAX_PHOTOS_AT_ONCE);
             event.target.value = '';
-            if (file) void addPhoto(file);
+            void (async () => {
+              for (const file of files) await addPhoto(file);
+            })();
           }}
         />
         <input

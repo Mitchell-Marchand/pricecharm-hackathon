@@ -102,9 +102,9 @@ export async function readPastJob(input: {
     'read_past_job',
     `Read the attached quote or invoice from a ${input.trade} business and fill in one past job for the owner to check.
 - found: false when the file isn't a quote or invoice for work this business did. Then leave every field empty or null.
-- If it covers several separate jobs, use the main one and say so in issues.
+- Lines for the same visit, like screens cleaned along with the windows, are one job: priceCents is their total and description names each part with its price. Only separate jobs, on different dates or at different places, are more than one; then use the main one and say so in issues.
 - serviceName: exactly one of the business's services listed in the input, or an empty string if none fits.
-- description: one or two plain sentences about the work, such as what was done and how big it was. No names, street addresses, phone numbers, emails or account numbers.
+- description: one or two plain sentences about the work, such as what was done, how big it was and any extras. No names, street addresses, phone numbers, emails or account numbers.
 - priceCents: what the customer paid for the job, in cents. Leave out tax when it's listed separately. Null if the total isn't clear.
 - size: the measured size or count if it's stated, like "900 sq ft" or "24 windows". duration: how long it took, if stated. when: the month and year of the job, like "June 2026".
 - materialsCents: materials cost if it's listed separately, else null.

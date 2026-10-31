@@ -101,9 +101,16 @@ const dollars = (cents: number) =>
 /** "per window", "per sq ft" */
 const perUnit = (unit: string) => `per ${unit.replace(/s$/, '') || unit}`;
 
-/** A rate in words: "about $0.46 per sq ft, lowest $250", for "500 to 1,200 sq ft". */
-export function rateWords(rate: Rate): { price: string; sizes: string } {
-  const floor = rate.points > 1 ? `, lowest ${dollars(rate.floorCents)}` : '';
+/**
+ * A rate in words: "about $0.46 per sq ft, lowest $250", for "500 to 1,200 sq ft". `floorCents`
+ * is the least a job costs when something other than the rate decides it (the owner's formula),
+ * or null when nothing holds small jobs up.
+ */
+export function rateWords(
+  rate: Rate,
+  floorCents: number | null = rate.points > 1 ? rate.floorCents : null,
+): { price: string; sizes: string } {
+  const floor = floorCents ? `, lowest ${dollars(floorCents)}` : '';
   return {
     price: `about ${dollars(rate.centsPerUnit)} ${perUnit(rate.unit)}${floor}`,
     sizes:

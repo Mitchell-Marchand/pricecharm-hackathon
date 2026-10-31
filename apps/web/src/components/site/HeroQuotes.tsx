@@ -25,6 +25,8 @@ export function HeroQuotes() {
   const [hovering, setHovering] = useState(false);
   const [still, setStill] = useState(false);
   const [moved, setMoved] = useState(false);
+  const [today, setToday] = useState('');
+  useEffect(() => setToday(new Date().toISOString()), []);
 
   useEffect(() => setStill(prefersReducedMotion()), []);
   useEffect(() => {
@@ -95,7 +97,7 @@ export function HeroQuotes() {
         )}
       >
         <QuoteForm
-          quote={heroQuote(demo)}
+          quote={heroQuote(demo, today)}
           business={demo.business}
           stamp="accepted"
           animate={moved}

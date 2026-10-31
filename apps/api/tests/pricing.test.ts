@@ -9,6 +9,7 @@ import {
   estimateFor,
   estimateGap,
   fitRates,
+  rateWords,
   withinEstimate,
   type PricePoint,
 } from '../src/pricing/rates.js';
@@ -80,6 +81,9 @@ test('a rate card comes from the owner’s own prices, with a floor for small jo
     describeRate(driveways),
     'Driveways: about $0.42 per sq ft, lowest $150 (3 prices, 300 to 1,000 sq ft)',
   );
+  // Once a formula prices the quotes, "lowest" is its minimum, or nothing when it has none.
+  assert.equal(rateWords(driveways, 20000).price, 'about $0.42 per sq ft, lowest $200');
+  assert.equal(rateWords(driveways, null).price, 'about $0.42 per sq ft');
 
   // A practice quote's rate line is worked out from the size it was priced at, not guessed.
   assert.equal(chargesLine(45000, 15, 'windows'), 'Charges about $30 per window');

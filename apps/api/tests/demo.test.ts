@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { DEMOS } from '@pricecharm/trades/demos';
-import { fitsReady, readyLine } from '../src/ai/intake.js';
+import { fitsReady, plainDashes, readyLine } from '../src/ai/intake.js';
 import { hasContactDetails } from '../src/demo.js';
 
 test('the last word before a quote says it’s coming now, not that someone will be in touch', () => {
@@ -15,6 +15,13 @@ test('the last word before a quote says it’s coming now, not that someone will
     'Thanks! Anything else I should know?',
   ])
     assert.equal(fitsReady(text), false, text);
+});
+
+test('chat replies use commas where the model writes dashes, and keep number ranges', () => {
+  assert.equal(plainDashes('Thanks — how many windows?'), 'Thanks, how many windows?');
+  assert.equal(plainDashes('Great—one story or two?'), 'Great, one story or two?');
+  assert.equal(plainDashes('About $150 — does that work?'), 'About $150, does that work?');
+  assert.equal(plainDashes('It takes 2–3 days.'), 'It takes 2–3 days.');
 });
 
 test('demo replies and quote lines can’t carry links, emails or phone numbers', () => {

@@ -25,6 +25,7 @@ export function QuoteBuilder({
   initial,
   subtitle = 'Price it the way you normally would. Your Charm learns from every line.',
   sending,
+  sendingNote,
   error,
   onClose,
   onSend,
@@ -35,6 +36,8 @@ export function QuoteBuilder({
   initial?: QuoteDraft;
   subtitle?: string;
   sending: boolean;
+  /** What's happening while it sends, when that takes a while. */
+  sendingNote?: string;
   error: string;
   onClose: () => void;
   onSend: (quote: QuoteDraft) => void;
@@ -53,6 +56,7 @@ export function QuoteBuilder({
           customer={customer}
           initial={initial}
           sending={sending}
+          sendingNote={sendingNote}
           error={error}
           onSend={onSend}
         />
@@ -65,12 +69,14 @@ function BuilderForm({
   customer,
   initial,
   sending,
+  sendingNote,
   error,
   onSend,
 }: {
   customer: Customer;
   initial?: QuoteDraft;
   sending: boolean;
+  sendingNote?: string;
   error: string;
   onSend: (quote: QuoteDraft) => void;
 }) {
@@ -371,7 +377,7 @@ function BuilderForm({
               <TextArea
                 id="quote-included"
                 rows={3}
-                placeholder={'Hot-water surface clean\nPre-treat dark stains'}
+                placeholder={'Cleanup when we’re done\nMaterials'}
                 value={included}
                 onChange={(event) => setIncluded(event.target.value)}
               />
@@ -380,7 +386,7 @@ function BuilderForm({
               <TextArea
                 id="quote-excluded"
                 rows={3}
-                placeholder="Sealing"
+                placeholder="Anything not listed above"
                 value={excluded}
                 onChange={(event) => setExcluded(event.target.value)}
               />
@@ -427,6 +433,11 @@ function BuilderForm({
           <Button variant="quote" size="lg" onClick={submit} disabled={!ready || sending}>
             <Send aria-hidden /> {sending ? 'Sending…' : 'Send quote'}
           </Button>
+          {sending && sendingNote && (
+            <p className="max-w-[240px] text-right text-xs text-muted" role="status">
+              {sendingNote}
+            </p>
+          )}
           {error && (
             <p className="max-w-[240px] text-right text-xs text-stop" role="alert">
               {error}

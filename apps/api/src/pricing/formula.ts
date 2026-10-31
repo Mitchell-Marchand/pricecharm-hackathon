@@ -171,6 +171,24 @@ export function priceShape(points: Point[]): PriceShape {
 const rounded = (cents: number, to: number) =>
   cents <= 0 ? 0 : to > 0 ? Math.max(to, Math.round(cents / to) * to) : Math.round(cents);
 
+/**
+ * The least a job of this service costs, or null when the owner has no minimum. A minimum the
+ * owner showed on one service applies to the others unless they set their own, but not the
+ * smallest band's price on a service priced by bands: that's just its price.
+ */
+export function minimumFor(formula: PriceFormula, service: FormulaService): number | null {
+  return (
+    service.minimumCents ??
+    formula.minimumCents ??
+    (formula.services
+      .filter((item) => item.shape !== 'bands')
+      .map((item) => item.minimumCents)
+      .filter((cents): cents is number => Boolean(cents))
+      .sort((a, b) => a - b)[0] ||
+      null)
+  );
+}
+
 /** The quote the formula gives for a job, or null when the formula can't price it. */
 export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote | null {
   const service = formula.services.find((item) => same(item.name, parts.service));
@@ -228,17 +246,7 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   // Nothing goes on a quote for $0, but the main work always has its line.
   for (let index = lines.length - 1; index > 0; index--)
     if (lines[index].amountCents <= 0) lines.splice(index, 1);
-  // A minimum the owner showed on one service applies to the others unless they set their own,
-  // but not the smallest band's price on a service priced by bands: that's just its price.
-  const minimum =
-    service.minimumCents ??
-    formula.minimumCents ??
-    (formula.services
-      .filter((item) => item.shape !== 'bands')
-      .map((item) => item.minimumCents)
-      .filter((cents): cents is number => Boolean(cents))
-      .sort((a, b) => a - b)[0] ||
-      null);
+  const minimum = minimumFor(formula, service);
   const subtotal = lines.reduce((sum, line) => sum + line.amountCents, 0);
   if (minimum && subtotal < minimum) lines[0].amountCents += minimum - subtotal;
   const discount: Discount | null =

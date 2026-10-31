@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type Turnstile = {
   render(container: HTMLElement, options: Record<string, unknown>): string;
@@ -52,12 +52,14 @@ const unfinished = () =>
 /**
  * Cloudflare Turnstile. It's usually invisible and only shows a checkbox in `slot` when Cloudflare
  * isn't sure. `headers()` runs the check and resolves to the header for the protected request, or
- * to nothing when there's no site key.
+ * to nothing when there's no site key. `slow` is true once a check has taken more than a few
+ * seconds, so the page can say what it's waiting on.
  */
 export function useHumanCheck(action: HumanCheckAction, enabled = true) {
   const slot = useRef<HTMLDivElement>(null);
   const widget = useRef<{ turnstile: Turnstile; id: string; container: HTMLElement } | null>(null);
   const waiting = useRef<{ resolve(token: string): void; reject(error: Error): void } | null>(null);
+  const [slow, setSlow] = useState(false);
 
   // The slot can unmount and come back (a form that closes and reopens), so render into
   // whichever element is there now.
@@ -104,23 +106,29 @@ export function useHumanCheck(action: HumanCheckAction, enabled = true) {
     const current = await ready();
     if (!current) return {};
     waiting.current?.reject(unfinished());
-    const token = await new Promise<string>((resolve, reject) => {
-      const timer = window.setTimeout(() => reject(unfinished()), 120_000);
-      waiting.current = {
-        resolve: (value) => {
-          window.clearTimeout(timer);
-          resolve(value);
-        },
-        reject: (error) => {
-          window.clearTimeout(timer);
-          reject(error);
-        },
-      };
-      current.turnstile.reset(current.id);
-      current.turnstile.execute(current.id);
-    });
-    return { 'X-Turnstile-Token': token };
+    const noticed = window.setTimeout(() => setSlow(true), 3_000);
+    try {
+      const token = await new Promise<string>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(unfinished()), 120_000);
+        waiting.current = {
+          resolve: (value) => {
+            window.clearTimeout(timer);
+            resolve(value);
+          },
+          reject: (error) => {
+            window.clearTimeout(timer);
+            reject(error);
+          },
+        };
+        current.turnstile.reset(current.id);
+        current.turnstile.execute(current.id);
+      });
+      return { 'X-Turnstile-Token': token };
+    } finally {
+      window.clearTimeout(noticed);
+      setSlow(false);
+    }
   }, [ready]);
 
-  return { slot, headers };
+  return { slot, headers, slow };
 }

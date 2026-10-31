@@ -73,7 +73,12 @@ export default function QuotesHome() {
   // Missing from an API older than this page, as when web and API deploy a moment apart.
   const charm: CharmView | null =
     home.readiness && home.settings && home.services
-      ? { readiness: home.readiness, settings: home.settings, services: home.services }
+      ? {
+          businessId: home.business.id,
+          readiness: home.readiness,
+          settings: home.settings,
+          services: home.services,
+        }
       : null;
   const link = `${window.location.origin}/q/${home.business.slug}`;
   const firstName = me.user.firstName || me.user.name.split(' ')[0];

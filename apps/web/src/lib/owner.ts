@@ -34,7 +34,8 @@ export interface QuoteListItem {
 }
 
 export interface Home {
-  business: { name: string; slug: string };
+  /** id is missing from an API older than this page. */
+  business: { id?: string; name: string; slug: string };
   counts: { needsOk: number; sentThisMonth: number; acceptedThisMonth: number };
   waiting: QuoteListItem[];
   autoSend: boolean;

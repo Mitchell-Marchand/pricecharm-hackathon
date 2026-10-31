@@ -81,6 +81,8 @@ export const OLD_SETTINGS: CharmSettings = {
 
 /** The Charm card's data. */
 export interface CharmView {
+  /** Missing from an API older than this page. */
+  businessId?: string;
   readiness: AgentReadiness;
   services: ServiceReadiness[];
   settings: CharmSettings;

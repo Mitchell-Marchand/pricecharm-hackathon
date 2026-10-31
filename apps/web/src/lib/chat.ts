@@ -69,8 +69,9 @@ export interface ChatView {
 export type ChatAccess = { chatId: string; token: string };
 
 /** Shown before the chat starts. The API opens every chat with the same words. */
-export const greeting = (businessName: string) =>
-  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
+/** The first hello, naming the person behind the business when there is one, since later lines do. */
+export const greeting = (businessName: string, ownerName?: string) =>
+  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes${ownerName ? `, then ${ownerName} takes it from there` : ''}. What do you need done?`;
 
 const storageKey = (slug: string) => `pricecharm:chat:${slug}`;
 

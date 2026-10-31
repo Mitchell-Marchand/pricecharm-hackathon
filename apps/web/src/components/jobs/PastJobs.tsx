@@ -19,7 +19,7 @@ import {
   type PastJob,
   type SizeSlot,
 } from '@/lib/jobs';
-import { cx, money, moneyInput, parseMoney } from '@/lib/util';
+import { article, cx, money, moneyInput, parseMoney } from '@/lib/util';
 
 const MAX_PHOTOS = 8;
 /** Jobs with a size a service needs before its guesses can be checked against your prices. */
@@ -197,7 +197,7 @@ function EmptySlot({
       <button
         type="button"
         onClick={onAdd}
-        aria-label={`Add a ${slot} ${service} job`}
+        aria-label={`Add ${article(slot)} ${slot} ${service} job`}
         className="flex w-full items-center gap-3 rounded-md border border-dashed border-line-strong bg-surface px-4 py-3.5 text-left transition-colors hover:border-ink/40"
       >
         <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
@@ -344,7 +344,7 @@ export function PastJobsEditor({
                     <button
                       type="button"
                       onClick={() => setEditing(newJob(service))}
-                      aria-label={`Add a ${service} job`}
+                      aria-label={`Add ${article(service)} ${service} job`}
                       className="text-sm font-semibold text-accent hover:underline"
                     >
                       Add a job

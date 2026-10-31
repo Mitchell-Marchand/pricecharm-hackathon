@@ -14,6 +14,7 @@ import { refreshFormula } from '../pricing/formula-draft.js';
 import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
 import { chargesLine } from '../pricing/rates.js';
 import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
+import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
 import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
@@ -636,7 +637,9 @@ async function insightsFor(
     ...new Set(
       asked.flatMap((key) => {
         const fact = scenario.facts.find((item) => item.key === key);
-        return fact ? [fact.label] : [];
+        // The AI sometimes writes the whole phrase, "Asks about the window count", as the label.
+        const label = fact?.label.replace(/^\s*asks about\s+/i, '').trim();
+        return label ? [label] : [];
       }),
     ),
   ];
@@ -649,21 +652,29 @@ async function insightsFor(
     // With a size it's simple division, the same size the rate card reads. The AI only words it
     // when there's no size to divide by.
     const spec = specFromScenario(scenario);
+    // A price the same as the least they've charged for another job is likely their minimum,
+    // which says nothing about a rate, so it's said as it is.
+    const others = (await loadPricingData(businessId, { excludeRunId: runId })).points;
+    const atMinimum =
+      others.length > 0 && main.amountCents <= Math.min(...others.map((point) => point.cents));
     let rate = '';
     try {
       rate =
         aiMode === 'demo'
           ? demoRateLine(scenario, main.amountCents)
-          : spec.quantity && spec.unit
-            ? `${chargesLine(main.amountCents, spec.quantity, spec.unit)} for ${lowerFirst(scenario.serviceName)}`
-            : await withAiUsage(businessId, `practice:${runId}`, () =>
-                describeRate({
-                  trade,
-                  serviceName: scenario.serviceName,
-                  mainLine: { label: main.label, amountCents: main.amountCents },
-                  sizeAnswer: scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
-                }),
-              );
+          : spec.quantity && spec.unit && atMinimum
+            ? `Charges ${money(main.amountCents)} for ${lowerFirst(scenario.serviceName)}, ${formatQuantity(spec.quantity, spec.unit)}`
+            : spec.quantity && spec.unit
+              ? `${chargesLine(main.amountCents, spec.quantity, spec.unit)} for ${lowerFirst(scenario.serviceName)}`
+              : await withAiUsage(businessId, `practice:${runId}`, () =>
+                  describeRate({
+                    trade,
+                    serviceName: scenario.serviceName,
+                    mainLine: { label: main.label, amountCents: main.amountCents },
+                    sizeAnswer:
+                      scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
+                  }),
+                );
     } catch (error) {
       // Out of AI allowance is expected; the plain line below covers it.
       if (!(error instanceof ApiError)) reportError(error, { event: 'practice_rate' });

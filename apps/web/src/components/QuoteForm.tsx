@@ -113,10 +113,14 @@ export function QuoteForm({
         </header>
 
         <div className={cx('mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-6', pad)}>
-          <FormField
-            label="For"
-            value={[quote.customer, quote.place].filter(Boolean).join(' · ')}
-          />
+          {quote.customer || quote.place ? (
+            <FormField
+              label="For"
+              value={[quote.customer, quote.place].filter(Boolean).join(' · ')}
+            />
+          ) : (
+            <span />
+          )}
           <FormField label="Date" value={shortDate(quote.issuedAt)} />
         </div>
 
@@ -196,9 +200,12 @@ export function QuoteForm({
 
         {!compact && (
           <>
+            {/* A blank the owner never set says nothing, so it's left off. */}
             <div className={cx('mt-5 grid grid-cols-3 gap-x-4', pad)}>
-              <FormField label="Can start" value={quote.start} />
-              <FormField label="Takes about" value={quote.duration.replace(/^about\s+/i, '')} />
+              {quote.start.trim() && <FormField label="Can start" value={quote.start} />}
+              {quote.duration.trim() && (
+                <FormField label="Takes about" value={quote.duration.replace(/^about\s+/i, '')} />
+              )}
               <FormField label="Good until" value={addDays(quote.issuedAt, quote.validDays)} />
             </div>
             {(quote.included.length > 0 || quote.excluded.length > 0) && (

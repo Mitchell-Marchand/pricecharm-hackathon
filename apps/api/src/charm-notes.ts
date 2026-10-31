@@ -7,7 +7,8 @@ import { json } from './models.js';
 import { recordRequestEvent } from './metrics.js';
 import { editInsight, forgetInsight } from './practice/engine.js';
 import type { Insight, PracticeScenario } from './practice/types.js';
-import { refreshFormula } from './pricing/formula-draft.js';
+import { minimumFor } from './pricing/formula.js';
+import { currentFormula, refreshFormula } from './pricing/formula-draft.js';
 import { loadPricingData } from './pricing/history.js';
 import { fitRates, rateWords, type PricePoint } from './pricing/rates.js';
 import { requireWorkspace, workspace } from './workspace.js';
@@ -38,6 +39,33 @@ const learnedId = (text: string) =>
 /** A practice correction is one line in a run's insights. */
 const practiceNoteId = (runId: string, insightId: string) => `practice.${runId}.${insightId}`;
 
+const FILLER = new Set(
+  'a an the is it its are do does did you your we our there this that of to for in on at or and how many much what which any be with need needs want done too house home job place'.split(
+    ' ',
+  ),
+);
+const SAME_WORD: Record<string, string> = { single: 'one', stories: 'story', storey: 'story' };
+
+/** A question's words that say what it's about: "Is it single-story or two-story?" → one, story, two. */
+function questionWords(question: string) {
+  return new Set(
+    question
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .map((word) => SAME_WORD[word] ?? word.replace(/(?<=..)s$/, ''))
+      .filter((word) => word && !FILLER.has(word)),
+  );
+}
+
+/**
+ * The same question when they're about the same words, or one's are all in the other's and it
+ * says enough to tell.
+ */
+function sameQuestion(a: Set<string>, b: Set<string>) {
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  return (small.size >= 2 || small.size === big.size) && [...small].every((word) => big.has(word));
+}
+
 /** The questions the customer chat works from, in order: photos, the owner's, then practice's. */
 export async function questionList(businessId: string, connection?: Sql) {
   const own = await rows(
@@ -53,7 +81,10 @@ export async function questionList(businessId: string, connection?: Sql) {
     own.filter((row) => row.kind === 'skip').map((row) => sameText(String(row.text))),
   );
   // The first few it learned, less any the owner took out. Taking one out doesn't bring in another.
+  // Practice customers each word their questions their own way, so the same question asked two
+  // ways ("Is it single-story or two-story?", "Is the house one story or two?") is kept once.
   const learned: string[] = [];
+  const seen: Set<string>[] = [];
   const runs = await rows(
     "SELECT scenario_json,asked_json FROM practice_runs WHERE business_id=? AND status='finished' ORDER BY position",
     [businessId],
@@ -63,8 +94,11 @@ export async function questionList(businessId: string, connection?: Sql) {
     const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
     for (const key of json<string[]>(run.asked_json, [])) {
       const question = scenario.facts?.find((fact) => fact.key === key)?.question;
-      if (question && !learned.some((item) => sameText(item) === sameText(question)))
-        learned.push(question);
+      if (!question) continue;
+      const words = questionWords(question);
+      if (seen.some((other) => sameQuestion(other, words))) continue;
+      seen.push(words);
+      learned.push(question);
     }
   }
   const asked = new Set(questions.map((item) => sameText(item.text)));
@@ -119,6 +153,10 @@ const joinList = (items: string[]) =>
 async function serviceRates(businessId: string) {
   const data = await loadPricingData(businessId);
   const rates = fitRates(data.points);
+  // Once their formula prices their quotes, small jobs go as low as its minimum, not as low as
+  // the cheapest job they happen to have done.
+  const learned = await currentFormula(businessId, data).catch(() => null);
+  const formula = learned?.fits ? learned.formula : null;
   return data.history.business.services.map((service) => {
     const rate = rates
       .filter((item) => sameText(item.service) === sameText(service))
@@ -135,7 +173,8 @@ async function serviceRates(businessId: string) {
       const count = points.filter((point) => point.source === source).length;
       return count ? [`${count} ${count === 1 ? one : many}`] : [];
     });
-    const { price, sizes } = rateWords(rate);
+    const rule = formula?.services.find((item) => sameText(item.name) === sameText(service));
+    const { price, sizes } = rule ? rateWords(rate, minimumFor(formula!, rule)) : rateWords(rate);
     return {
       service,
       price: price.charAt(0).toUpperCase() + price.slice(1),

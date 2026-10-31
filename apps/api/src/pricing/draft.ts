@@ -3,7 +3,7 @@ import { DRAFT_PROMPT_VERSION, draftQuote, type DraftRequest } from '../ai/quote
 import { rows } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import type { PastJob } from '../past-jobs.js';
-import type { DraftEngine, DraftedQuote } from '../practice/types.js';
+import { subtotal, type DraftEngine, type DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
 import { currentFormula, priceFromFormula } from './formula-draft.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
@@ -218,6 +218,20 @@ export async function draftForBusiness(input: {
           images: [...customerImages, ...reference.map((photo) => photo.image)],
           model: input.model,
         });
+  // A service they haven't priced yet still doesn't go under the least they've charged for any
+  // job: a guess below every price they've ever given reads as them overcharging.
+  const ownPrices = data.points.filter(
+    (point) => point.service.trim().toLowerCase() === serviceName.trim().toLowerCase(),
+  );
+  const lowest = Math.min(...data.points.map((point) => point.cents).filter((cents) => cents > 0));
+  const short = !ownPrices.length && Number.isFinite(lowest) ? lowest - subtotal(drafted) : 0;
+  if (drafted.decision === 'quote' && drafted.lines.length && short > 0)
+    drafted = {
+      ...drafted,
+      lines: drafted.lines.map((line, index) =>
+        index === 0 ? { ...line, amountCents: line.amountCents + short } : line,
+      ),
+    };
   // A price from other businesses is a first guess. The owner always sees it before it goes out.
   if (startingPoint) drafted = { ...drafted, confidence: 'low' };
 

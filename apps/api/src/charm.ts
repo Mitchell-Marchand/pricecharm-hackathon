@@ -90,6 +90,7 @@ export async function saveCharmSettings(
 export async function charmView(businessId: string) {
   const services = await businessReadiness(businessId);
   return {
+    businessId,
     readiness: agentReadiness(services, await serviceWorkload(businessId)),
     services,
     settings: await charmSettings(businessId),

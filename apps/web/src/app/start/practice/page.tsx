@@ -16,7 +16,7 @@ import {
   withRun,
   type PracticeState,
 } from '@/lib/practice';
-import { cx } from '@/lib/util';
+import { article, cx } from '@/lib/util';
 
 function PracticeProgress({
   index,
@@ -132,7 +132,9 @@ export default function PracticeStep() {
                 {(run?.messages.length ?? 0) <= 1 && (
                   <>
                     <h1 className="t-h1 mt-4">
-                      {run?.focus ? `Practice a ${run.focus} job` : 'One more practice customer'}
+                      {run?.focus
+                        ? `Practice ${article(run.focus)} ${run.focus} job`
+                        : 'One more practice customer'}
                     </h1>
                     <p className="mt-3 text-lg text-ink-2">
                       Answer it like a real lead. If your price comes within{' '}

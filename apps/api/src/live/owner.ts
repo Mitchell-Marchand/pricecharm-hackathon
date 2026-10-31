@@ -75,12 +75,14 @@ function listItem(row: Record<string, any>) {
 
 ownerQuotesRouter.get('/app/home', async (req, res) => {
   const { businessId } = owner(req);
+  // Test quotes waiting for an OK are in the list below, so they count there, but not in what
+  // went out this month.
   const [counts] = await rows(
     `SELECT COALESCE(SUM(q.status='review'),0) review,
-      COALESCE(SUM(q.status IN ('sent','accepted','visit_requested') AND q.sent_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) sent,
-      COALESCE(SUM(q.status IN ('accepted') AND q.decided_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) accepted
+      COALESCE(SUM(c.source<>'test' AND q.status IN ('sent','accepted','visit_requested') AND q.sent_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) sent,
+      COALESCE(SUM(c.source<>'test' AND q.status IN ('accepted') AND q.decided_at>=DATE_FORMAT(UTC_DATE(),'%Y-%m-01')),0) accepted
       FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
-      WHERE q.business_id=? AND c.source<>'test' AND NOT ${ASKING_FOR_CONTACT}`,
+      WHERE q.business_id=? AND NOT ${ASKING_FOR_CONTACT}`,
     [businessId],
   );
   const waiting = await rows(
@@ -93,7 +95,7 @@ ownerQuotesRouter.get('/app/home', async (req, res) => {
   const services = await businessReadiness(businessId);
   res.json(
     ok({
-      business: { name: business.name, slug: business.slug },
+      business: { id: businessId, name: business.name, slug: business.slug },
       counts: {
         needsOk: Number(counts.review),
         sentThisMonth: Number(counts.sent),

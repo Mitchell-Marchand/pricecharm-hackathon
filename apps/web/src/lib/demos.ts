@@ -22,8 +22,11 @@ export const HERO_EXAMPLES = DEMOS.filter((demo): demo is Demo & { hero: HeroExa
   Boolean(demo.hero),
 );
 
-/** The hero example as a full quote card. */
-export function heroQuote(demo: Demo & { hero: HeroExample }): Quote {
+/**
+ * The hero example as a full quote card, dated `issuedAt`. The home page is built ahead of time,
+ * so the date is filled in once it's open in the browser, or it wouldn't match the server's.
+ */
+export function heroQuote(demo: Demo & { hero: HeroExample }, issuedAt: string): Quote {
   return {
     number: demo.hero.number,
     customer: demo.hero.customer.name,
@@ -36,7 +39,7 @@ export function heroQuote(demo: Demo & { hero: HeroExample }): Quote {
     excluded: demo.excluded,
     validDays: 14,
     note: '',
-    issuedAt: new Date().toISOString(),
+    issuedAt,
   };
 }
 
