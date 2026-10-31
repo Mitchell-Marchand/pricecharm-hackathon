@@ -444,7 +444,7 @@ export function videoCutter(video: { bytes: Buffer }) {
       try {
         return await segment(phrase, { videoFileId: fileId });
       } finally {
-        await deleteMetaFile(fileId).catch(() => {});
+        void deleteMetaFile(fileId).catch(() => {});
         await fs.rm(out, { force: true });
       }
     });

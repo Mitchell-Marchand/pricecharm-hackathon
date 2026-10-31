@@ -53,23 +53,68 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   const body = await response.json().catch(() => null);
   const ms = Date.now() - started;
   if (ms > 4000) track('api_slow', { endpoint, method, ms, status: response.status });
-  if (!response.ok)
-    track('api_error', {
-      endpoint,
-      method,
-      status: response.status,
-      code: body?.error?.code || 'REQUEST_FAILED',
-    });
-  if (!response.ok)
-    throw new ApiError(
-      response.status,
-      body?.error?.code || 'REQUEST_FAILED',
-      body?.error?.code === 'VALIDATION_ERROR'
-        ? validationMessage(body.error.details)
-        : body?.error?.message || 'The request could not be completed. Please try again.',
-      body?.error?.details,
-    );
+  if (!response.ok) throw failure(response.status, body, endpoint, method);
   return body.data as T;
+}
+
+/**
+ * Sends a form with a big file, saying how much has gone as it goes: a walk-around video can take
+ * a while on a phone. fetch can't report an upload's progress, so this uses XMLHttpRequest.
+ */
+export function upload<T>(
+  path: string,
+  body: FormData,
+  headers: Record<string, string>,
+  onProgress: (sent: number, total: number) => void,
+): Promise<T> {
+  const endpoint = screenPath(path.split('?')[0]);
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', `/api/v1${path}`);
+    request.withCredentials = true;
+    if (trackingAllowed()) request.setRequestHeader('X-PC-Session', sessionId());
+    for (const [name, value] of Object.entries(headers)) request.setRequestHeader(name, value);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded, event.total);
+    };
+    request.onerror = () => {
+      track('network_error', { endpoint, method: 'POST' });
+      reject(new NetworkError('POST', null));
+    };
+    request.onload = () => {
+      let parsed: {
+        data?: T;
+        error?: { code?: string; message?: string; details?: unknown };
+      } | null = null;
+      try {
+        parsed = JSON.parse(request.responseText);
+      } catch {
+        // Not JSON, like a proxy's error page: it's reported by its status below.
+      }
+      if (request.status >= 200 && request.status < 300 && parsed) resolve(parsed.data as T);
+      else reject(failure(request.status, parsed, endpoint, 'POST'));
+    };
+    request.send(body);
+  });
+}
+
+/** What the API turned down, as an error the page can show, noted for the record. */
+function failure(
+  status: number,
+  body: { error?: { code?: string; message?: string; details?: unknown } } | null,
+  endpoint: string,
+  method: string,
+) {
+  const code = body?.error?.code || 'REQUEST_FAILED';
+  track('api_error', { endpoint, method, status, code });
+  return new ApiError(
+    status,
+    code,
+    code === 'VALIDATION_ERROR'
+      ? validationMessage(body?.error?.details)
+      : body?.error?.message || 'The request could not be completed. Please try again.',
+    body?.error?.details,
+  );
 }
 
 type Rejection = { field: string; message: string };

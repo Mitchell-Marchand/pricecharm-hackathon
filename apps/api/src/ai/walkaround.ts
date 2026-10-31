@@ -73,6 +73,19 @@ export type Walkaround = {
   notes: string[];
 };
 
+/** How far a reading has got, for the customer waiting in the chat. */
+export type ReadingProgress = {
+  step: 'preparing' | 'watching' | 'counting' | 'checking' | 'replying';
+  /** What the video or photos show, in a sentence or two, once Muse Spark has said. */
+  seen?: string;
+  /** What's being counted: "windows". */
+  counting?: string[];
+  /** What was counted, before each one is looked at up close: "15 windows". */
+  found?: string[];
+};
+/** Saves how far a reading has got. What it leaves out stays as it was. */
+export type ReportProgress = (update: Partial<ReadingProgress>) => Promise<void>;
+
 export type WalkaroundInput = {
   business: { name: string; trade: string; services: string[] };
   serviceName: string;
@@ -86,6 +99,7 @@ export type WalkaroundInput = {
   durationMs: number | null;
   /** Saves a drawn still and returns its storage key. */
   saveOverlay: (jpeg: Buffer) => Promise<string>;
+  progress?: ReportProgress;
 };
 
 const readJson = {
@@ -496,6 +510,13 @@ function pricedSize(read: Read, counts: WalkaroundCount[], units: string[]) {
   );
 }
 
+/** What was counted, in a few words each: "15 windows", "at least 16 windows". */
+export function countWords(counts: WalkaroundCount[]): string[] {
+  return counts
+    .filter((item) => item.count > 0)
+    .map((item) => `${item.atLeast ? 'at least ' : ''}${formatQuantity(item.count, item.unit)}`);
+}
+
 /**
  * What the chat assistant reads: the findings, in words a customer could confirm. Only SAM's count
  * goes in. Muse Spark's rough one is for the owner, and two numbers would leave the assistant
@@ -594,15 +615,56 @@ function finish(
   return { ...walkaround, notes: notesFor(walkaround) };
 }
 
+/** Things an owner prices by that SAM can find in a walk-around, and the noun it finds each by. */
+const FINDABLE: Record<string, string> = {
+  windows: 'window',
+  doors: 'door',
+  trees: 'tree',
+  stumps: 'stump',
+  shrubs: 'shrub',
+  cars: 'car',
+};
+
+/** What SAM can start looking for before Muse Spark has watched: what the owner prices by. */
+export function earlyPhrase(input: Pick<WalkaroundInput, 'serviceName' | 'priceUnits'>) {
+  for (const unit of input.priceUnits[input.serviceName.trim().toLowerCase()] ?? [])
+    if (FINDABLE[unit]) return { unit, phrase: FINDABLE[unit] };
+  return null;
+}
+
 export async function measureWalkaround(input: WalkaroundInput): Promise<Walkaround> {
   if (aiMode === 'demo') return demoWalkaround(input);
+  const progress = input.progress ?? (async () => {});
+  // SAM's pass over the whole video takes longest, so when the owner prices this service by
+  // something it can find, like windows, it starts looking while Muse Spark watches. The pass is
+  // used if Muse Spark counts the same thing; otherwise SAM looks again with Muse Spark's words.
+  const guess = earlyPhrase(input);
+  const early = guess
+    ? segment(guess.phrase, { videoFileId: input.videoFileId }).catch(() => null)
+    : null;
+  await progress({ step: 'watching' });
   const read = await readVideo(input);
+  await progress({
+    step: read.counts.length ? 'counting' : 'checking',
+    seen: read.summary,
+    counting: read.counts.map((item) => item.label),
+  });
   // Each phrase is its own SAM pass over the same uploaded video, all at once, asked again in
   // pieces when the video shows more than one request can follow.
   const cutter = input.video ? videoCutter(input.video) : null;
+  let earlyTaken = false;
   const passes = await Promise.all(
-    read.counts.map(async (item) => {
-      const whole = await segment(item.phrase, { videoFileId: input.videoFileId });
+    read.counts.map(async (counted) => {
+      const reuse =
+        !!guess &&
+        !earlyTaken &&
+        (counted.phrase.toLowerCase() === guess.phrase ||
+          canonicalUnit(counted.label) === guess.unit);
+      if (reuse) earlyTaken = true;
+      const item = reuse ? { ...counted, phrase: guess.phrase } : counted;
+      const whole =
+        (reuse ? await early : null) ??
+        (await segment(item.phrase, { videoFileId: input.videoFileId }));
       const segmentation = cutter
         ? await cutter.segment(item.phrase, whole)
         : { ...splitJumps(whole), full: isFull(whole) };
@@ -617,6 +679,7 @@ export async function measureWalkaround(input: WalkaroundInput): Promise<Walkaro
     sparkCount: item.estimate === null ? null : Math.round(item.estimate),
     ...(segmentation.full ? { atLeast: true } : {}),
   }));
+  if (counts.length) await progress({ step: 'checking', found: countWords(counts) });
 
   // Draw what was counted on the customer's own still nearest the busiest frame. SAM looks again
   // at that still, so the outlines sit exactly on it, and what it finds there is graded up close.
@@ -683,6 +746,7 @@ export type PhotoReadingInput = {
   photos: { id: string; image: AiImage }[];
   /** Saves a drawn photo and returns its storage key. */
   saveOverlay: (jpeg: Buffer) => Promise<string>;
+  progress?: ReportProgress;
 };
 
 /** Muse Spark looks at all the customer's photos together and says what's worth measuring. */
@@ -720,7 +784,14 @@ Never guess at what the photos don't show. Leave it empty instead.`,
  */
 export async function measurePhotos(input: PhotoReadingInput): Promise<Walkaround> {
   if (aiMode === 'demo') return demoPhotos(input);
+  const progress = input.progress ?? (async () => {});
+  await progress({ step: 'watching' });
   const read = await readPhotos(input);
+  await progress({
+    step: read.counts.length ? 'counting' : 'checking',
+    seen: read.summary,
+    counting: read.counts.map((item) => item.label),
+  });
   const overlays: WalkaroundOverlay[] = [];
   const counts = await Promise.all(
     read.counts.map(async (item): Promise<WalkaroundCount> => {
@@ -780,6 +851,8 @@ export async function measurePhotos(input: PhotoReadingInput): Promise<Walkaroun
       };
     }),
   );
+  // Each one was looked at up close while it was counted, so there's no separate step for that.
+  if (counts.length) await progress({ found: countWords(counts) });
   const first = input.photos[0];
   if (read.area.phrase && read.area.surface && first)
     try {

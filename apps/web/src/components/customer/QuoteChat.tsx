@@ -43,6 +43,7 @@ import { useHumanCheck } from '@/lib/human-check';
 import { quoteFootnote } from '@/lib/quote';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { useVisualViewport } from '@/lib/use-visual-viewport';
+import { ReadingSteps } from './ReadingSteps';
 import { cx, readPhoto } from '@/lib/util';
 import { MAX_VIDEO_BYTES, MAX_VIDEO_SECONDS, readVideo } from '@/lib/video';
 
@@ -55,7 +56,8 @@ const ASKS_FOR_PHOTO = /\b(photo|picture|pic)s?\b/i;
 const isPhone = (value: string) =>
   /^\+?[\d\s().-]+$/.test(value) && /^\d{7,15}$/.test(value.replace(/\D/g, ''));
 
-type Pending = { text?: string; photo?: string; video?: string };
+/** `sent` and `total` are how much of a video has gone up, once it's on its way. */
+type Pending = { text?: string; photo?: string; video?: string; sent?: number; total?: number };
 /** Why the customer is leaving their details, on a quote they can see. */
 type Form = 'yes' | 'visit' | 'copy' | 'question';
 
@@ -171,7 +173,7 @@ export function QuoteChat({
           .then(update)
           .catch(() => {});
     };
-    const timer = window.setInterval(refresh, measuring ? 4_000 : 15_000);
+    const timer = window.setInterval(refresh, measuring ? 2_500 : 15_000);
     document.addEventListener('visibilitychange', refresh);
     return () => {
       window.clearInterval(timer);
@@ -268,7 +270,9 @@ export function QuoteChat({
       stickToBottom();
       const current = await ensureChat();
       const known = new Set(chat?.messages.flatMap((message) => message.video?.id ?? []));
-      const view = await sendVideo(slug, current, file, stills, durationMs);
+      const view = await sendVideo(slug, current, file, stills, durationMs, (sent, total) =>
+        setPending((shown) => (shown?.video ? { ...shown, sent, total } : shown)),
+      );
       const added = view.messages.find((message) => message.video && !known.has(message.video.id));
       if (added?.video) localVideos.current.set(added.video.id, URL.createObjectURL(file));
       update(view);
@@ -572,7 +576,7 @@ export function QuoteChat({
                         className="w-full rounded-[12px] opacity-70"
                       />
                     )}
-                    <p className="px-1 text-xs">Sending your video…</p>
+                    <UploadProgress sent={pending.sent} total={pending.total} />
                   </div>
                 ) : pending.photo ? (
                   <img
@@ -592,6 +596,13 @@ export function QuoteChat({
               initials={profile.initials}
               tone="blue"
               logo={profile.logo}
+            />
+          )}
+          {measuring && !busy && (
+            <ReadingSteps
+              profile={profile}
+              photos={!!chat?.measuringPhotos}
+              progress={chat?.progress ?? null}
             />
           )}
         </div>
@@ -725,10 +736,8 @@ export function QuoteChat({
           <p className="py-2 text-sm text-muted">Putting your quote together…</p>
         )}
 
-        {measuring && (
-          <p className="py-2 text-sm text-muted">
-            {chat?.measuringPhotos ? 'Looking over your photos…' : 'Watching your video…'}
-          </p>
+        {measuring && !busy && (
+          <p className="py-1 text-center text-sm text-muted">You can reply once it’s done.</p>
         )}
 
         {status === 'closed' && <p className="py-1 text-sm text-muted">This request is closed.</p>}
@@ -903,11 +912,22 @@ function Message({
         <CustomerBubble photo>
           <div className="flex w-56 max-w-full flex-col gap-1.5">
             {access && (
-              <ChatVideo
-                url={videoPath(slug, access, message.video.id)}
-                access={access}
-                local={localVideos.get(message.video.id)}
-              />
+              <div className="relative">
+                <ChatVideo
+                  url={videoPath(slug, access, message.video.id)}
+                  access={access}
+                  local={localVideos.get(message.video.id)}
+                />
+                {message.video.status === 'measuring' && (
+                  <div
+                    // Above the video: iOS draws a video over anything without a z-index.
+                    className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-[12px]"
+                    aria-hidden
+                  >
+                    <div className="scan absolute inset-x-0 top-0" />
+                  </div>
+                )}
+              </div>
             )}
             {message.video.status === 'measured' && message.video.found.length > 0 && (
               <p className="px-1 text-xs">Counted: {message.video.found.join(' · ')}</p>
@@ -952,6 +972,29 @@ function Message({
       </div>
     );
   return <AssistantBubble profile={profile}>{message.text}</AssistantBubble>;
+}
+
+/** How much of a video has gone up, in megabytes, with a bar. Phones can take a while. */
+function UploadProgress({ sent, total }: { sent?: number; total?: number }) {
+  const share = total ? Math.min(1, (sent ?? 0) / total) : 0;
+  const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0);
+  return (
+    <div className="flex flex-col gap-1.5 px-1 pb-0.5">
+      <p className="text-xs">
+        {!total
+          ? 'Sending your video…'
+          : share < 1
+            ? `Sending your video… ${mb(sent ?? 0)} of ${mb(total)} MB`
+            : 'Sent. Saving it…'}
+      </p>
+      <div className="h-1 overflow-hidden rounded-full bg-on-accent/25">
+        <div
+          className="h-full rounded-full bg-on-accent transition-[width] duration-300 ease-out"
+          style={{ width: `${Math.round(share * 100)}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 /** The quote's before-and-after. Like photos, the pictures need the chat's token to load. */
@@ -1011,7 +1054,8 @@ function ChatVideo({ url, access, local }: { url: string; access: ChatAccess; lo
   }, [url, access, local]);
   return src ? (
     <video
-      src={src}
+      // Without a start time iOS shows a blank box until it's played; with one it shows that frame.
+      src={`${src}#t=0.001`}
       controls
       playsInline
       muted

@@ -1,12 +1,12 @@
-import {
-  decodeMaskToRaster,
-  frameIndexOf,
-  parseVideoStream,
-  recordsOfKind,
-  type ResponsesEvent,
-} from '@meta-sam/parser';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { z } from 'zod';
 import { AiError, recordProviderUsage } from './index.js';
+import { parseSegmentation, type Segmentation } from './sam-parse.js';
+
+export { parseSegmentation } from './sam-parse.js';
+export type { SamBox, SamObject, Segmentation } from './sam-parse.js';
 
 /**
  * Meta's media endpoints: the Files API for videos, and SAM 3.1, which finds every match for a
@@ -49,56 +49,25 @@ export async function deleteMetaFile(fileId: string) {
   await response.body?.cancel();
 }
 
-export type SamBox = { left: number; top: number; right: number; bottom: number };
-/** One object on one frame. `pixels` is its mask's area in the frame's own pixels. */
-export type SamObject = {
-  id: string;
-  frame: number;
-  box: SamBox;
-  confidence: number | null;
-  pixels: number;
-  mask: { raster: Uint8Array; width: number; height: number; bounds: SamBox };
-};
-export type Segmentation = { width: number; height: number; objects: SamObject[] };
+/** An answer this long, a whole video's, is read on a worker thread so the API keeps answering. */
+const OFF_THREAD_CHARS = 50_000;
+// The worker is TypeScript when the API runs from source (dev and tests), JavaScript once built.
+const workerFile = new URL(
+  `./sam-parse-worker${path.extname(fileURLToPath(import.meta.url))}`,
+  import.meta.url,
+);
 
-/** Reads SAM 3.1's special-token text into objects, using Meta's own parser for the grammar. */
-export async function parseSegmentation(text: string): Promise<Segmentation> {
-  const lane = { item_id: 'sam', output_index: 0, content_index: 0 };
-  async function* events(): AsyncIterable<ResponsesEvent> {
-    if (text) yield { type: 'response.output_text.delta', delta: text, ...lane };
-    yield { type: 'response.output_text.done', text, ...lane };
-    yield { type: 'response.completed' };
-  }
-  const result = await parseVideoStream(events()).finalResult;
-  const size = /;w=(\d+);h=(\d+)/.exec(text);
-  const confidence = new Map<string, number>();
-  for (const box of recordsOfKind(result.records, 'box'))
-    if (box.confidence !== undefined)
-      confidence.set(`${frameIndexOf(box) ?? 0}:${box.objectId}`, box.confidence);
-  const objects = recordsOfKind(result.records, 'mask').map((record): SamObject => {
-    const raster = decodeMaskToRaster(record.mask);
-    const frame = frameIndexOf(record) ?? 0;
-    let on = 0;
-    for (const value of raster) on += value;
-    const { left, top, right, bottom } = record.bounds;
-    // The raster covers the object's box, sometimes at a smaller scale than the frame.
-    const scale =
-      ((right - left) * (bottom - top)) / Math.max(1, record.mask.width * record.mask.height);
-    return {
-      id: record.objectId,
-      frame,
-      box: { left, top, right, bottom },
-      confidence: record.confidence ?? confidence.get(`${frame}:${record.objectId}`) ?? null,
-      pixels: Math.round(on * scale),
-      mask: {
-        raster,
-        width: record.mask.width,
-        height: record.mask.height,
-        bounds: { left, top, right, bottom },
-      },
-    };
+/** Reads a SAM answer on a worker thread: a whole video's takes seconds of steady work. */
+export function parseOffThread(text: string): Promise<Segmentation> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(workerFile, {
+      workerData: text,
+      execArgv: workerFile.pathname.endsWith('.ts') ? ['--import', 'tsx'] : [],
+    });
+    worker.once('message', resolve);
+    worker.once('error', reject);
+    worker.once('exit', (code) => reject(new Error(`The SAM reader stopped with code ${code}.`)));
   });
-  return { width: Number(size?.[1] ?? 0), height: Number(size?.[2] ?? 0), objects };
 }
 
 /**
@@ -162,7 +131,10 @@ export async function segment(
     .filter((item) => item.type === 'output_text')
     .map((item) => item.text ?? '')
     .join('');
-  const segmentation = await parseSegmentation(text);
+  const segmentation =
+    text.length > OFF_THREAD_CHARS
+      ? await parseOffThread(text).catch(() => parseSegmentation(text))
+      : await parseSegmentation(text);
   await recordProviderUsage({
     provider: 'meta',
     model: 'sam-3.1',

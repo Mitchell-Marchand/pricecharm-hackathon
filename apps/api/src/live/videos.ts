@@ -6,7 +6,12 @@ import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
 import { aiMode, type AiImage } from '../ai/index.js';
 import { deleteMetaFile, uploadMetaFile } from '../ai/meta-media.js';
-import { measureWalkaround, type Walkaround } from '../ai/walkaround.js';
+import {
+  measureWalkaround,
+  type ReadingProgress,
+  type ReportProgress,
+  type Walkaround,
+} from '../ai/walkaround.js';
 import { mutate, rows, transaction } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
@@ -192,6 +197,19 @@ export async function measureVideo(id: string): Promise<void> {
   let outcome: { status: 'measured' | 'failed'; failure: string | null } | null = video.result_json
     ? { status: 'measured', failure: null }
     : null;
+  // Each step is saved as it starts, so the customer's chat can show how far it has got.
+  const shown: ReadingProgress = outcome
+    ? { ...json<Partial<ReadingProgress>>(video.progress_json, {}), step: 'replying' }
+    : { step: 'preparing' };
+  const progress: ReportProgress = async (update) => {
+    Object.assign(shown, update);
+    await mutate('UPDATE lead_videos SET progress_json=? WHERE id=? AND read_token=?', [
+      JSON.stringify(shown),
+      id,
+      token,
+    ]).catch(() => {});
+  };
+  await progress({});
   if (!outcome)
     try {
       const stills = json<StoredStill[]>(video.frames_json, []);
@@ -224,6 +242,7 @@ export async function measureVideo(id: string): Promise<void> {
           video: { bytes },
           frames,
           durationMs: video.duration_ms === null ? null : Number(video.duration_ms),
+          progress,
           saveOverlay: async (jpeg) => {
             const key = `${randomUUID()}.jpg`;
             await putPhoto(key, jpeg);
@@ -277,9 +296,11 @@ export async function measureVideo(id: string): Promise<void> {
       };
       await recordEvent(undefined, businessId, 'video_failed', {}, { ref: id });
     } finally {
-      if (fileId) await deleteMetaFile(fileId).catch(() => {});
+      // Not waited for: the customer's answer shouldn't sit behind Meta tidying up.
+      if (fileId) void deleteMetaFile(fileId).catch(() => {});
     }
   // Measured or not, the assistant picks the chat back up. Only then does the chat stop waiting.
+  await progress({ step: 'replying' });
   await continueChat(asker, String(chat.id)).catch((error) =>
     reportError(error, { event: 'video_continue' }),
   );

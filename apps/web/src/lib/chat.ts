@@ -1,4 +1,4 @@
-import { api, json } from './api';
+import { api, json, upload } from './api';
 import type { Quote } from './quote';
 
 /** A business's logo, trimmed and at most 512 px on its longer side. */
@@ -64,6 +64,19 @@ export interface ChatView {
   measuring?: boolean;
   /** What's being measured is the customer's photos. Missing from older APIs. */
   measuringPhotos?: boolean;
+  /** How far that has got, once it has started. Missing from older APIs. */
+  progress?: ReadingProgress | null;
+}
+
+/** A video or photo reading's step, and what it has seen so far. */
+export interface ReadingProgress {
+  step: 'preparing' | 'watching' | 'counting' | 'checking' | 'replying';
+  /** What the video or photos show, in a sentence or two. */
+  seen?: string;
+  /** What's being counted: "windows". */
+  counting?: string[];
+  /** What was counted, before each one is looked at up close: "15 windows". */
+  found?: string[];
 }
 
 export type ChatAccess = { chatId: string; token: string };
@@ -148,6 +161,7 @@ export function sendVideo(
   video: File,
   stills: { blob: Blob; ms: number }[],
   durationMs: number | null,
+  onProgress: (sent: number, total: number) => void,
 ) {
   const body = new FormData();
   if (durationMs !== null) body.append('durationMs', String(durationMs));
@@ -160,11 +174,7 @@ export function sendVideo(
     'video',
     new File([video], type === 'video/quicktime' ? 'walkaround.mov' : 'walkaround.mp4', { type }),
   );
-  return api<ChatView>(`${base(slug, access)}/videos`, {
-    method: 'POST',
-    headers: auth(access),
-    body,
-  });
+  return upload<ChatView>(`${base(slug, access)}/videos`, body, auth(access), onProgress);
 }
 
 export const videoPath = (slug: string, access: ChatAccess, videoId: string) =>

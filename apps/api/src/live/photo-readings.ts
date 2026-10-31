@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
 import { aiMode, aiProvider } from '../ai/index.js';
-import { measurePhotos, type Walkaround } from '../ai/walkaround.js';
+import {
+  measurePhotos,
+  type ReadingProgress,
+  type ReportProgress,
+  type Walkaround,
+} from '../ai/walkaround.js';
 import { mutate, rows } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
@@ -60,15 +65,33 @@ async function claim(chatId: string): Promise<string | null> {
   return claimed.affectedRows ? token : null;
 }
 
+/** Saves how far the reading holding the chat has got, so the chat can show it. */
+function progressFor(chatId: string, token: string): ReportProgress {
+  const shown: ReadingProgress = { step: 'watching' };
+  return async (update) => {
+    Object.assign(shown, update);
+    await mutate('UPDATE lead_chats SET photo_progress_json=? WHERE id=? AND photo_read_token=?', [
+      JSON.stringify(shown),
+      chatId,
+      token,
+    ]).catch(() => {});
+  };
+}
+
+/** How far the chat's photo reading has got, while one holds it. */
+export function photoProgress(chat: Row): ReadingProgress | null {
+  return json<ReadingProgress | null>(chat.photo_progress_json, null);
+}
+
 async function release(chatId: string, token: string) {
   await mutate(
-    'UPDATE lead_chats SET photo_read_token=NULL,photo_read_until=NULL WHERE id=? AND photo_read_token=?',
+    'UPDATE lead_chats SET photo_read_token=NULL,photo_read_until=NULL,photo_progress_json=NULL WHERE id=? AND photo_read_token=?',
     [chatId, token],
   );
 }
 
 /** Reads the chat's photos if some aren't read yet. Says whether it read them. */
-async function readOnce(ip: string, chatId: string): Promise<boolean> {
+async function readOnce(ip: string, chatId: string, progress: ReportProgress): Promise<boolean> {
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
   if (!chat) return false;
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
@@ -77,6 +100,8 @@ async function readOnce(ip: string, chatId: string): Promise<boolean> {
   const photos = await unreadPhotos(chat);
   if (!photos) return false;
   const photoIds = photos.map((photo) => String(photo.id));
+  // Each pass starts over: it reads all the chat's photos again.
+  await progress({ step: 'watching', seen: undefined, counting: undefined, found: undefined });
   let stored: Stored;
   try {
     const services = (
@@ -91,6 +116,7 @@ async function readOnce(ip: string, chatId: string): Promise<boolean> {
         },
         serviceName: String(chat.service_name),
         priceUnits: await priceUnits(businessId),
+        progress,
         photos: await Promise.all(
           photos.map(async (photo) => ({
             id: String(photo.id),
@@ -158,9 +184,14 @@ export async function readPhotos(
   const token = await claim(chatId);
   if (!token) return false;
   let read = false;
+  const progress = progressFor(chatId, token);
   try {
-    for (let pass = 0; pass < PHOTOS_READ && (await readOnce(ip, chatId)); pass++) read = true;
-    if (read && then) await then();
+    for (let pass = 0; pass < PHOTOS_READ && (await readOnce(ip, chatId, progress)); pass++)
+      read = true;
+    if (read && then) {
+      await progress({ step: 'replying' });
+      await then();
+    }
   } catch (error) {
     reportError(error, { event: 'photo_read' });
   } finally {

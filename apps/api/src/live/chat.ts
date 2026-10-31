@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
 import { aiMode, aiProvider, type AiImage } from '../ai/index.js';
 import { intakeTurn } from '../ai/intake.js';
-import type { Walkaround } from '../ai/walkaround.js';
+import { countWords, type ReadingProgress, type Walkaround } from '../ai/walkaround.js';
 import { hashToken, newToken } from '../auth.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { isDisposableEmail } from '../email-domains.js';
@@ -51,6 +51,7 @@ import {
 } from './quote-page.js';
 import { previewView, startAfterPreview } from './previews.js';
 import {
+  photoProgress,
   photoReading,
   photoReadingsAvailable,
   readingPhotos,
@@ -283,11 +284,15 @@ export async function chatView(business: Row, chat: Row) {
   );
   const quote = await liveQuoteFor(String(chat.id));
   const videos = new Map(
-    (await rows('SELECT id,status,result_json FROM lead_videos WHERE chat_id=?', [chat.id])).map(
-      (video) => [String(video.id), video],
-    ),
+    (
+      await rows(
+        'SELECT id,status,result_json,progress_json FROM lead_videos WHERE chat_id=? ORDER BY created_at',
+        [chat.id],
+      )
+    ).map((video) => [String(video.id), video]),
   );
-  const videoMeasuring = [...videos.values()].some((video) => video.status === 'measuring');
+  const measuringVideo = [...videos.values()].find((video) => video.status === 'measuring');
+  const videoMeasuring = !!measuringVideo;
   // Photos only hold up a chat the assistant is answering; after that they're read for the owner.
   const photosMeasuring =
     chat.status === 'chatting' && !chat.human_handoff && (await readingPhotos(chat));
@@ -342,6 +347,12 @@ export async function chatView(business: Row, chat: Row) {
     measuring: videoMeasuring || photosMeasuring,
     /** What it's measuring is the customer's photos, not a video. Missing from older APIs. */
     measuringPhotos: photosMeasuring && !videoMeasuring,
+    /** How far that has got, once it has started. */
+    progress: measuringVideo
+      ? json<ReadingProgress | null>(measuringVideo.progress_json, null)
+      : photosMeasuring
+        ? photoProgress(chat)
+        : null,
     contact: {
       name: String(chat.customer_name),
       email: chat.customer_email ? String(chat.customer_email) : null,
@@ -392,12 +403,7 @@ function videoView(video: Row | undefined) {
     status: String(video.status) as 'measuring' | 'measured' | 'failed',
     found: result
       ? [
-          ...result.counts
-            .filter((item) => item.count > 0)
-            .map(
-              (item) =>
-                `${item.atLeast ? 'at least ' : ''}${formatQuantity(item.count, item.unit)}`,
-            ),
+          ...countWords(result.counts),
           ...(result.area
             ? [
                 `${result.area.surface} about ${result.area.low}–${formatQuantity(result.area.high, result.area.unit)}`,

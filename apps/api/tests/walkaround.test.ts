@@ -185,6 +185,105 @@ test('a walk-around is watched by Muse Spark, counted by SAM and drawn on the cu
   assert.ok(result.notes.some((note) => note.includes('screens done too')));
 });
 
+test('a whole video’s SAM answer reads the same on a worker thread', async () => {
+  const text = videoOutput();
+  const here = await media.parseSegmentation(text);
+  const there = await media.parseOffThread(text);
+  assert.deepEqual(
+    there.objects.map((object) => [object.id, object.frame, object.pixels, object.box]),
+    here.objects.map((object) => [object.id, object.frame, object.pixels, object.box]),
+  );
+  assert.ok(there.objects[0].mask.raster instanceof Uint8Array);
+  assert.deepEqual([...there.objects[0].mask.raster], [...here.objects[0].mask.raster]);
+});
+
+/** Muse Spark's reading of a video, counting one kind of thing. */
+function videoRead(label: string, phrase: string) {
+  return JSON.stringify({
+    summary: 'Front of a two-story house.',
+    narration: '',
+    serviceName: 'Exterior windows',
+    counts: [{ label, phrase, estimate: 2 }],
+    area: { surface: '', phrase: '', low: null, high: null, unit: '', basis: '' },
+    condition: '',
+    access: '',
+    extras: [],
+  });
+}
+
+/** A Meta that answers SAM from videoOutput() and holds Muse Spark until SAM has been asked. */
+function earlyMeta(read: string) {
+  const asked: string[] = [];
+  let samAsked = () => {};
+  const sam = new Promise<void>((resolve) => (samAsked = resolve));
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.model !== 'sam-3.1') {
+      await sam;
+      return responses(read);
+    }
+    const [phrase, part] = body.input[0].content;
+    if (part.type === 'input_video') {
+      asked.push(phrase.text);
+      samAsked();
+      return responses(phrase.text === 'window' ? videoOutput() : '');
+    }
+    return responses('');
+  };
+  return asked;
+}
+
+const earlyInput = (progress: (update: object) => Promise<void>) => ({
+  business: { name: 'Clear View', trade: 'Window cleaning', services: ['Exterior windows'] },
+  serviceName: 'Exterior windows',
+  priceUnits: { 'exterior windows': ['windows'] },
+  videoFileId: 'file-walkaround',
+  frames: [],
+  durationMs: null,
+  progress,
+  saveOverlay: async () => 'unused.jpg',
+});
+
+test('SAM starts on what the owner prices by while Muse Spark watches, and says each step', async () => {
+  assert.deepEqual(
+    walkaround.earlyPhrase({
+      serviceName: 'Exterior windows',
+      priceUnits: earlyInput(async () => {}).priceUnits,
+    }),
+    { unit: 'windows', phrase: 'window' },
+  );
+  assert.equal(
+    walkaround.earlyPhrase({ serviceName: 'Driveway', priceUnits: { driveway: ['sq ft'] } }),
+    null,
+  );
+
+  // Muse Spark calls them window panes; they're the windows SAM already went looking for.
+  const asked = earlyMeta(videoRead('windows', 'window pane'));
+  const steps: object[] = [];
+  const result = await walkaround.measureWalkaround(
+    earlyInput(async (update) => void steps.push(update)),
+  );
+  assert.deepEqual(asked, ['window']);
+  assert.deepEqual(result.counts, [
+    { label: 'windows', phrase: 'window', unit: 'windows', count: 2, sparkCount: 2 },
+  ]);
+  assert.deepEqual(steps, [
+    { step: 'watching' },
+    { step: 'counting', seen: 'Front of a two-story house.', counting: ['windows'] },
+    { step: 'checking', found: ['2 windows'] },
+  ]);
+});
+
+test('an early SAM pass Muse Spark didn’t ask for is set aside, and SAM looks for what it did', async () => {
+  const asked = earlyMeta(videoRead('trees', 'tree'));
+  const result = await walkaround.measureWalkaround(earlyInput(async () => {}));
+  assert.deepEqual(asked.sort(), ['tree', 'window']);
+  assert.deepEqual(
+    result.counts.map((item) => [item.label, item.count]),
+    [['trees', 0]],
+  );
+});
+
 test('a SAM failure fails the measuring instead of inventing a count', async () => {
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(String(init?.body));

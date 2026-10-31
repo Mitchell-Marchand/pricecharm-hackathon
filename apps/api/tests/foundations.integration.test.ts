@@ -100,5 +100,16 @@ test(
       [other.id],
     );
     assert.equal(Number(otherCount.count), 1, 'One business’s calls never use up another’s');
+
+    // The photo is read, and answered, outside the request. Let that finish before the database
+    // closes, or its last query opens a new connection that keeps the test running.
+    for (let tries = 0; tries < 100; tries++) {
+      const [chat] = await rows(
+        'SELECT photo_reading_json IS NOT NULL AND photo_read_until IS NULL AS done FROM lead_chats WHERE id=?',
+        [started.body.data.chat.id],
+      );
+      if (Number(chat.done)) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   },
 );

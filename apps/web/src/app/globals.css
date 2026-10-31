@@ -491,6 +491,44 @@
   animation: shimmer 1.4s linear infinite;
 }
 
+/* A video or photo reading's bar: from where its step starts toward where it ends (ReadingSteps). */
+@keyframes reading-bar {
+  from {
+    width: var(--from);
+  }
+  to {
+    width: var(--to);
+  }
+}
+.reading-bar {
+  animation: reading-bar linear forwards;
+}
+/* A light passing down the customer's video while it's watched. */
+@keyframes scan {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(250%);
+  }
+}
+.scan {
+  height: 40%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(255 255 255 / 0.22) 80%,
+    rgb(255 255 255 / 0.75) 99%,
+    transparent
+  );
+  animation: scan 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan {
+    display: none;
+  }
+}
+
 /* Sheets: bottom sheet on phones, side panel on larger screens. */
 dialog.sheet {
   margin: 0;
