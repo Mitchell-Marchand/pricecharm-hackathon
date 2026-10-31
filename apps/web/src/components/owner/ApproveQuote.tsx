@@ -152,7 +152,7 @@ export function ApproveQuote({ quoteId }: { quoteId: string }) {
       )}
 
       <div className="mt-6">
-        <QuoteForm quote={view.card} business={view.business} stamp="draft" compact />
+        <QuoteForm quote={view.card} business={view.business} compact />
       </div>
 
       <div className="mt-6 flex flex-col gap-3">

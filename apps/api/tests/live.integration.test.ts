@@ -362,6 +362,11 @@ test(
       waiting.body.data.chat.messages.at(-1).text,
       /We’ll email you as soon as Maya sends it/,
     );
+    // Reopening the chat shows no more: no quote, no reason it waits, no picture of it done.
+    const reopened = (await held.customer.call('get', '')).body.data;
+    assert.equal(reopened.quote, null, 'A held quote never reaches a real customer');
+    assert.deepEqual(reopened.wouldWait, []);
+    assert.equal((await held.customer.call('get', '/preview/before')).status, 404);
     const home = (await shop.owner.get('/api/v1/app/home')).body.data;
     assert.equal(home.counts.needsOk, 1);
     assert.match(home.waiting[0].reviewReason, /You approve each quote for now/);
@@ -417,6 +422,11 @@ test(
     assert.equal(trial.view.test, true);
     assert.equal(trial.view.waitingForOwner, true);
     assert.ok(trial.view.quote, 'The owner sees the quote their Charm drafted');
+    assert.match(
+      trial.view.messages.at(-1).text,
+      /will look this over and get back to you/,
+      'And the chat says what a real customer would get',
+    );
     assert.deepEqual(
       trial.view.wouldWait.map((check: { id: string }) => check.id),
       ['auto'],

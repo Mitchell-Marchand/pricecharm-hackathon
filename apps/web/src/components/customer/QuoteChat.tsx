@@ -146,6 +146,8 @@ export function QuoteChat({
   const quoteId = chat?.quote?.id ?? null;
   // Past its valid days, a quote can still be answered.
   const quoteOpen = ['sent', 'expired'].includes(chat?.quote?.status ?? '');
+  // In the owner's test, a quote waiting for them shows apart from the chat: a customer never sees it.
+  const ownerOnly = !!chat?.test && chat.quote?.status === 'review';
   useLayoutEffect(() => {
     if (!quoteId || shownQuote.current === quoteId || !card.current) return;
     shownQuote.current = quoteId;
@@ -467,21 +469,22 @@ export function QuoteChat({
                 localVideos={localVideos.current}
               />
               {index === cardAfter && chat?.quote && (
-                <div ref={card} className="pr-3 pb-3">
-                  {chat.test && chat.quote.status === 'review' && (
+                <div
+                  ref={card}
+                  className={cx(
+                    'pb-3',
+                    // The copies under the quote stick out to its right.
+                    ownerOnly ? 'rounded-md border border-line bg-canary-soft p-3 pr-6' : 'pr-3',
+                  )}
+                >
+                  {ownerOnly && (
                     <WouldWait quoteId={chat.quote.id} reasons={chat.wouldWait ?? []} />
                   )}
                   <QuoteForm
                     quote={chat.quote.card}
                     business={profile.name}
                     logo={profile.logo}
-                    stamp={
-                      chat.quote.status === 'accepted'
-                        ? 'accepted'
-                        : chat.quote.status === 'review'
-                          ? 'draft'
-                          : undefined
-                    }
+                    stamp={chat.quote.status === 'accepted' ? 'accepted' : undefined}
                     animate={freshQuote}
                     footnote={quoteFootnote(chat.quote.card, {
                       photos: messages.some((message) => message.photos.length > 0),
@@ -849,8 +852,9 @@ function WouldWait({
   reasons: { id: string; detail: string }[];
 }) {
   return (
-    <div className="mb-3 rounded-md border border-line bg-canary-soft p-3 text-sm">
-      <p className="font-semibold">A real customer would wait for your OK on this one.</p>
+    <div className="mb-3 text-sm">
+      <p className="font-semibold">Only you can see this quote.</p>
+      <p className="mt-1 text-ink-2">A real customer would wait for your OK on this one.</p>
       {reasons.length > 0 && (
         <ul className="mt-1.5 flex list-disc flex-col gap-0.5 pl-5 text-ink-2">
           {reasons.map((reason) => (

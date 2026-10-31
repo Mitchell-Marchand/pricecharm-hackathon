@@ -307,3 +307,26 @@ test('a count that is only the least there are says so to the chat', () => {
   assert.ok(notes.some((note) => note.includes('at least 16 windows')));
   assert.ok(notes.some((note) => note.includes('confirm the number')));
 });
+
+test('pieces cut at 30 frames a second go back on the video’s own frames', () => {
+  const seen = (id: string, frame: number, pixels: number) => ({
+    ...object(id, frame, box(10, 10, 20)),
+    pixels,
+  });
+  // Filmed at 60: frame 5 of the cut is frame 10 of the video.
+  assert.deepEqual(
+    pieces.onFrames([seen('a', 5, 100)], 2).map((item) => item.frame),
+    [10],
+  );
+  // Filmed at 15: two of the cut's frames are one of the video's, and the fuller sighting stays.
+  const merged = pieces.onFrames([seen('a', 3, 300), seen('a', 4, 100), seen('b', 4, 50)], 0.5);
+  assert.deepEqual(
+    merged.map((item) => [item.id, item.frame, item.pixels]),
+    [
+      ['a', 2, 300],
+      ['b', 2, 50],
+    ],
+  );
+  const same = [seen('a', 1, 10)];
+  assert.equal(pieces.onFrames(same, 1), same);
+});

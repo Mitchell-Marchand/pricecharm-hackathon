@@ -6,12 +6,11 @@ import type { Logo } from '@/lib/chat';
 import { discountCents, rangeOf, total, type Quote } from '@/lib/quote';
 import { addDays, cx, lowerFirst, money, prefersReducedMotion, shortDate } from '@/lib/util';
 
-export type Stamp = 'practice' | 'sent' | 'accepted' | 'draft';
+export type Stamp = 'practice' | 'sent' | 'accepted';
 const STAMP_TEXT: Record<Stamp, string> = {
   practice: 'Practice',
   sent: 'Sent',
   accepted: 'Accepted',
-  draft: 'Draft',
 };
 
 function useCountUp(target: number, animate: boolean): number {

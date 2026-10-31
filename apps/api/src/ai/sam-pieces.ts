@@ -448,8 +448,23 @@ export function videoCutter(video: { bytes: Buffer }) {
         await fs.rm(out, { force: true });
       }
     });
-    return { ...joinPieces(pieces, { width: first.width, height: first.height, scale }), full };
+    const joined = joinPieces(pieces, { width: first.width, height: first.height, scale });
+    // Back on the video's own frames, as SAM numbered them in its pass over the whole video.
+    return { ...joined, objects: onFrames(joined.objects, 1 / timing), full };
   }
+}
+
+/** Objects moved onto another frame rate. Two sightings that land on one frame keep the fuller. */
+export function onFrames(objects: SamObject[], factor: number) {
+  if (factor === 1) return objects;
+  const kept = new Map<string, SamObject>();
+  for (const object of objects) {
+    const frame = Math.round(object.frame * factor);
+    const key = `${object.id}@${frame}`;
+    const seen = kept.get(key);
+    if (!seen || object.pixels > seen.pixels) kept.set(key, { ...object, frame });
+  }
+  return [...kept.values()].sort((a, b) => a.frame - b.frame);
 }
 
 /** Every match for one phrase in a photo, past SAM's limit: a full photo is asked again in halves. */

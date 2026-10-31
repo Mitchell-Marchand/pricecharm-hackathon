@@ -27,8 +27,8 @@ import {
 import { restyle, type Quote } from '@/lib/quote';
 import { cx, shortDate } from '@/lib/util';
 
+// A quote waiting for the owner carries no stamp: nothing on the paper is a customer's to see yet.
 const STAMPS: Partial<Record<QuoteDetail['status'], Stamp>> = {
-  review: 'draft',
   sent: 'sent',
   accepted: 'accepted',
   visit_requested: 'sent',
@@ -386,6 +386,7 @@ function MediaFindings({
             </span>
             {item.kinds && item.kinds.length > 0 && (
               <ul className="mt-1 flex flex-col gap-0.5 pl-4 text-sm text-ink-2">
+                <LookedAt kinds={item.kinds} count={item.count} source={source} />
                 {item.kinds.map((kind) => (
                   <li key={kind.kind}>
                     {kind.kind} × {kind.count}
@@ -447,6 +448,27 @@ function MediaFindings({
         </div>
       )}
     </section>
+  );
+}
+
+/** Says how many were looked at up close, when that isn't every one counted. */
+function LookedAt({
+  kinds,
+  count,
+  source,
+}: {
+  kinds: { count: number }[];
+  count: number;
+  source: 'video' | 'photos';
+}) {
+  const looked = kinds.reduce((sum, kind) => sum + kind.count, 0);
+  if (looked === count) return null;
+  return (
+    <li className="text-muted">
+      {looked < count
+        ? `${looked} of them looked at up close:`
+        : `${looked} looked at up close${source === 'photos' ? ', some in more than one photo' : ''}:`}
+    </li>
   );
 }
 

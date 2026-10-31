@@ -188,14 +188,17 @@ test('the owner trying their own link always sees the quote, and why it would wa
   await expect(page.getByText(/confirms the final price/)).toHaveCount(0);
   await expect(page.getByText(/will look this over/)).toHaveCount(0);
 
-  // Checking each quote first: it still shows the draft, and why a customer would wait.
+  // Checking each quote first: the chat says what a customer would get, and the quote shows
+  // apart from it, unstamped, with why a customer would wait.
   await shop.autoSend(false);
   await page.getByRole('button', { name: 'Try another request' }).click();
   await tryHouseWash();
-  await expect(page.getByText('Here’s the quote your Charm drafted.')).toBeVisible();
+  await expect(page.getByText(/will look this over and get back to you/)).toBeVisible();
+  await expect(page.getByText('Only you can see this quote.')).toBeVisible();
   await expect(page.getByText('A real customer would wait for your OK on this one.')).toBeVisible();
   await expect(page.getByText('You approve each quote for now.')).toBeVisible();
-  await expect(page.getByRole('article', { name: /from Moss & Stone/ })).toContainText('Draft');
+  await expect(page.getByRole('article', { name: /from Moss & Stone/ })).toBeVisible();
+  await expect(page.getByText('Draft', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Open it in your quotes' })).toBeVisible();
   await shop.context.close();
 });

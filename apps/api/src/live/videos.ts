@@ -8,6 +8,7 @@ import { aiMode, type AiImage } from '../ai/index.js';
 import { deleteMetaFile, uploadMetaFile } from '../ai/meta-media.js';
 import {
   measureWalkaround,
+  ownWords,
   type ReadingProgress,
   type ReportProgress,
   type Walkaround,
@@ -346,7 +347,8 @@ export async function ownerVideos(businessId: string, chatId: string) {
       url: `/api/v1/app/videos/${video.id}`,
       failure: video.failure ? String(video.failure) : '',
       summary: result?.summary ?? '',
-      narration: result?.narration ?? '',
+      // Readings from before narration came in the customer's own words still read that way.
+      narration: ownWords(result?.narration ?? ''),
       counts: result?.counts ?? [],
       area: result?.area ?? null,
       material: result?.material ?? '',

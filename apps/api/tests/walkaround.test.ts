@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { before, beforeEach, test } from 'node:test';
 import sharp from 'sharp';
 
@@ -441,4 +445,161 @@ test('a grading sheet numbers each find on one image', async () => {
   assert.equal(meta.width, 4 * 256);
   assert.equal(meta.height, 2 * 256);
   assert.equal(await walkaround.gradingSheet([]), null);
+});
+
+const hasFfmpeg = (() => {
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test(
+  'each window counted in a video is graded on its own best sighting, and drawn on a frame from the video',
+  { skip: !hasFfmpeg && 'needs ffmpeg' },
+  async () => {
+    const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'walkaround-test-'));
+    const file = path.join(folder, 'video.mp4');
+    execFileSync('ffmpeg', [
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=320x334:rate=30:duration=1',
+      '-pix_fmt',
+      'yuv420p',
+      file,
+    ]);
+    const video = await fs.readFile(file);
+    await fs.rm(folder, { recursive: true, force: true });
+    // The browser's still is smaller, so a drawing the size of the video's frames came from them.
+    const still = await sharp({
+      create: { width: 160, height: 167, channels: 3, background: '#d9d4c7' },
+    })
+      .jpeg()
+      .toBuffer();
+    let sheets = 0;
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith('/files')) return Response.json({ id: 'file-piece' });
+      const body = JSON.parse(String(init?.body));
+      if (body.model === 'sam-3.1') {
+        const [, part] = body.input[0].content;
+        return responses(part.type === 'input_video' ? videoOutput() : `<0f>${A}\n`);
+      }
+      if (JSON.stringify(body).includes('numbered tiles')) {
+        sheets++;
+        return responses(
+          JSON.stringify({
+            tiles: [
+              { tile: 1, kind: 'standard double-hung', condition: 'light dust' },
+              { tile: 2, kind: 'not one', condition: '' },
+            ],
+          }),
+        );
+      }
+      return responses(
+        JSON.stringify({
+          summary: 'The front of a house.',
+          narration: 'Customer says the back ones haven’t been done in years.',
+          serviceName: 'exterior windows',
+          counts: [{ label: 'windows', phrase: 'window', estimate: 2 }],
+          area: { surface: '', phrase: '', low: null, high: null, unit: '', basis: '' },
+          condition: '',
+          access: '',
+          extras: [],
+        }),
+      );
+    };
+    const saved: Buffer[] = [];
+    const result = await walkaround.measureWalkaround({
+      business: { name: 'Clear View', trade: 'Window cleaning', services: ['Exterior windows'] },
+      serviceName: 'Exterior windows',
+      priceUnits: {},
+      videoFileId: 'file-walkaround',
+      video: { bytes: video },
+      frames: [
+        {
+          id: 'still-0',
+          ms: 0,
+          image: { mimeType: 'image/jpeg', dataBase64: still.toString('base64') },
+        },
+      ],
+      durationMs: 1000,
+      saveOverlay: async (jpeg) => {
+        saved.push(jpeg);
+        return `overlay-${saved.length}.jpg`;
+      },
+    });
+
+    // Both windows SAM followed are graded, though the drawn frame shows one. The grader says one
+    // isn't really a window, so it isn't counted, and the kinds add up to the count.
+    const [windows] = result.counts;
+    assert.equal(sheets, 1);
+    assert.equal(windows.count, 1);
+    assert.deepEqual(windows.kinds, [
+      { kind: 'standard double-hung', count: 1, condition: 'light dust' },
+    ]);
+    assert.equal(result.quantity, 1);
+    assert.ok(
+      result.notes.includes(
+        'Looked at up close, the windows are: standard double-hung ×1 (light dust).',
+      ),
+    );
+    assert.equal((await sharp(saved[0]).metadata()).width, 320);
+    // The after picture still starts from the customer's own still.
+    assert.equal(result.overlays[0].frameId, 'still-0');
+    assert.equal(result.narration, 'The back ones haven’t been done in years.');
+  },
+);
+
+test('what the customer said keeps their words, without a report’s lead-in', () => {
+  assert.equal(
+    walkaround.ownWords(
+      'Customer says there is a little window downstairs, and the bathroom one is dirty.',
+    ),
+    'There is a little window downstairs, and the bathroom one is dirty.',
+  );
+  assert.equal(
+    walkaround.ownWords('The customer mentions that the screens are torn.'),
+    'The screens are torn.',
+  );
+  assert.equal(walkaround.ownWords('There are a lot upstairs.'), 'There are a lot upstairs.');
+  assert.equal(walkaround.ownWords(''), '');
+});
+
+test('the chat is told how many were looked at up close when it isn’t all of them', () => {
+  const notes = walkaround.notesFor({
+    source: 'video',
+    summary: '',
+    narration: '',
+    serviceName: 'Interior windows',
+    counts: [
+      {
+        label: 'windows',
+        phrase: 'window',
+        unit: 'windows',
+        count: 15,
+        sparkCount: 12,
+        kinds: [
+          { kind: 'small picture window', count: 2, condition: '' },
+          { kind: 'large picture window', count: 1, condition: '' },
+        ],
+      },
+    ],
+    area: null,
+    quantity: 15,
+    unit: 'windows',
+    condition: '',
+    access: '',
+    extras: [],
+    overlays: [],
+  });
+  assert.ok(
+    notes.includes(
+      'Looked at up close, 3 of the windows are: small picture window ×2, large picture window ×1.',
+    ),
+  );
 });

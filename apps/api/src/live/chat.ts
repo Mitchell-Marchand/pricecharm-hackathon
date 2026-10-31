@@ -1048,17 +1048,16 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
         chatId,
         sender: 'assistant',
         kind: 'status',
-        // The owner testing their own link sees what their Charm drafted, and why it would wait.
-        // On WhatsApp a quote only goes once it's sent, so it says where to send it from.
-        text: test
-          ? chat.channel_account_id
+        // The owner testing their own link gets what a customer would, and sees the quote apart
+        // from the chat. On WhatsApp a quote only goes once it's sent, so it says where from.
+        text:
+          test && chat.channel_account_id
             ? 'Your Charm drafted this quote and is holding it for you. Send it from PriceCharm and it’ll come here.'
-            : 'Here’s the quote your Charm drafted.'
-          : !reachable
-            ? `${who} wants to look this one over before it goes out. Where should they send it?`
-            : chat.customer_email
-              ? `Thanks! ${who} will look this over and send your quote shortly. We’ll email you when it’s ready.`
-              : `Thanks! ${who} will look this over and get back to you with your quote shortly.`,
+            : !reachable
+              ? `${who} wants to look this one over before it goes out. Where should they send it?`
+              : chat.customer_email
+                ? `Thanks! ${who} will look this over and send your quote shortly. We’ll email you when it’s ready.`
+                : `Thanks! ${who} will look this over and get back to you with your quote shortly.`,
       });
       if (!test && reachable) await notifyOwner(businessId, chatId, 'review', connection);
     }
