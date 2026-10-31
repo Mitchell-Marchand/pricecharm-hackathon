@@ -27,6 +27,7 @@ import {
   pastJobs,
   seeded,
   simulatedOwners,
+  BLIND_TRADES,
   CLASSIC_TRADES,
   HELD_OUT_TRADES,
   isSealed,
@@ -64,7 +65,9 @@ import { accuracy, closer, share } from './proof.js';
  * service, built by someone who never saw the pricing code). Nothing is tuned on it: it runs only
  * with --sealed, at milestones, and every sealed run is written to bench-results/sealed-runs.log
  * with when, what and which code, so it's always plain how often it's been looked at.
- * --trades sealed is every trade, held-out ones included.
+ * --trades sealed is every trade, held-out ones included. --trades blind is the practice trades
+ * built the same blind way, for working on how pricing carries over to trades it wasn't built
+ * around without opening the sealed ones.
  *
  * --trades picks the businesses: classic (the default) is window cleaning, pressure washing and
  * gutters, as every run before November 2026 was; wide adds nine more trades that price their own
@@ -535,8 +538,10 @@ async function main() {
         ? WIDE_TRADES
         : tradesOption === 'sealed'
           ? [...WIDE_TRADES, ...HELD_OUT_TRADES]
-          : (tradesOption.split(',').map((id) => id.trim()) as TradeId[]);
-  const known = [...WIDE_TRADES, ...HELD_OUT_TRADES];
+          : tradesOption === 'blind'
+            ? BLIND_TRADES
+            : (tradesOption.split(',').map((id) => id.trim()) as TradeId[]);
+  const known = [...WIDE_TRADES, ...HELD_OUT_TRADES, ...BLIND_TRADES];
   const unknown = tradeIds.filter((id) => !known.includes(id));
   if (unknown.length)
     throw new Error(`No simulated owners for ${unknown.join(', ')}. Try ${known.join(', ')}.`);

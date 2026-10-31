@@ -13,7 +13,16 @@ import { between, pick, whole, type Rng } from './random.js';
 
 export type WideTrade = Exclude<
   TradeId,
-  'window-cleaning' | 'pressure-washing' | 'gutters' | 'painting' | 'pest' | 'pools'
+  | 'window-cleaning'
+  | 'pressure-washing'
+  | 'gutters'
+  | 'painting'
+  | 'pest'
+  | 'pools'
+  | 'flooring'
+  | 'hvac'
+  | 'landscaping'
+  | 'events'
 >;
 
 /** What every owner draws first, the same way in every trade. */

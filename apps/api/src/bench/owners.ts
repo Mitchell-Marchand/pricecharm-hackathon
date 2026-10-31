@@ -10,6 +10,7 @@ import { quoteTotal, type Discount } from '../practice/types.js';
  */
 
 import { between, pick, seeded, whole, type Rng } from './random.js';
+import { BLIND } from './blind-trades.js';
 import { HELD_OUT } from './held-out-trades.js';
 import { WIDE, type Trade } from './wide-trades.js';
 
@@ -30,7 +31,11 @@ export type TradeId =
   | 'handyman'
   | 'painting'
   | 'pest'
-  | 'pools';
+  | 'pools'
+  | 'flooring'
+  | 'hvac'
+  | 'landscaping'
+  | 'events';
 
 /** The trades the benchmark started with, and its default, so earlier seeds stay comparable. */
 export const CLASSIC_TRADES: TradeId[] = ['window-cleaning', 'pressure-washing', 'gutters'];
@@ -56,6 +61,13 @@ export const WIDE_TRADES: TradeId[] = [
  */
 export const HELD_OUT_TRADES: TradeId[] = ['painting', 'pest', 'pools'];
 
+/**
+ * Trades for working on how the pricing carries over to businesses it wasn't built around: built
+ * the same way as the held-out ones, from their own research by someone who never saw the pricing
+ * code, but open, so the held-out ones can stay sealed.
+ */
+export const BLIND_TRADES: TradeId[] = ['flooring', 'hvac', 'landscaping', 'events'];
+
 /** Seeds 9001–9100 and the held-out trades: the test set nothing is tuned on. */
 export function isSealed(seed: number, trades: TradeId[]) {
   return (seed >= 9001 && seed <= 9100) || trades.some((id) => HELD_OUT_TRADES.includes(id));
@@ -65,6 +77,7 @@ export function isSealed(seed: number, trades: TradeId[]) {
 const BUILT: Record<Exclude<TradeId, 'window-cleaning' | 'pressure-washing' | 'gutters'>, Trade> = {
   ...WIDE,
   ...HELD_OUT,
+  ...BLIND,
 };
 type Built = keyof typeof BUILT;
 
