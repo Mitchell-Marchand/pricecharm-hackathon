@@ -25,7 +25,7 @@ From every job and quote with a size, the server works out each service's usual 
 
 A business that has never priced a service can get a starting point from other businesses in the same trade (`src/pricing/market.ts`). Each business's own middle rate counts once, and nothing is used until at least five businesses make up the rate. A quote priced this way goes out as a wide range and is flagged for the owner.
 
-This is off unless `MARKET_PRICES=on`. Turn it on only once the Terms and Privacy Policy that allow combined figures are live, and after any existing businesses have had the 30 days' notice the Terms promise.
+It runs when `MARKET_PRICES=on`, which production has had since 2026-10-31: the Terms and Privacy Policy that allow combined figures went live on 2026-10-30, before any real businesses signed up. WhatsApp chats and owners' tests never count (`src/channels/pooled.ts`).
 
 ## Outcomes
 
