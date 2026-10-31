@@ -238,15 +238,23 @@ test(
         ],
       });
       assert.equal(response.status, 200, JSON.stringify(response.body));
+      await answered(id, from.userId);
+      return sent.slice(before);
+    }
+    /**
+     * Waits until a message is handled and its replies have gone. They go after it's marked
+     * handled, and the sender is let go once they have, so a slow machine can't see one without.
+     */
+    async function answered(id: string, sender: string) {
       for (let tries = 0; tries < 200; tries++) {
         const [inbox] = await rows('SELECT status FROM channel_inbox WHERE platform_message_id=?', [
           id,
         ]);
         const [held] = await rows(
-          'SELECT lease_token FROM channel_senders WHERE account_id=? AND sender=?',
-          [accountId, from.userId],
+          'SELECT lease_token FROM channel_senders WHERE sender=? AND lease_token IS NOT NULL',
+          [sender],
         );
-        if (inbox?.status === 'handled' && !held?.lease_token) return sent.slice(before);
+        if (inbox?.status === 'handled' && !held) return;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       assert.fail(`${id} was never answered`);
@@ -527,14 +535,7 @@ test(
         contacts: [{ profile: { name: kim.name }, wa_id: kim.phone, user_id: kim.userId }],
         messages: [{ from: kim.phone, from_user_id: kim.userId, id, timestamp: '1', ...message }],
       }).expect(200);
-      for (let tries = 0; tries < 200; tries++) {
-        const [inbox] = await rows('SELECT status FROM channel_inbox WHERE platform_message_id=?', [
-          id,
-        ]);
-        if (inbox?.status === 'handled') return;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      assert.fail(`${id} was never answered`);
+      await answered(id, kim.userId);
     };
     // Only Kim's: earlier customers' chats can still be finishing in the background, and anything
     // they send now goes out on this number too.

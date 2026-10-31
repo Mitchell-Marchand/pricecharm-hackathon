@@ -62,7 +62,11 @@ jobs:
       - run: npm run typecheck --workspace @pricecharm/api
       - name: Migrate the CI database
         run: npm run migrate --workspace @pricecharm/api
-      - run: npm test --workspace @pricecharm/api
+      # The tests take about two minutes. A stuck one fails on its own after two, and this is the
+      # backstop, so a hang never holds the deploy to its limit.
+      - name: Test the API
+        run: npm test --workspace @pricecharm/api
+        timeout-minutes: 5
       - run: npm run build --workspace @pricecharm/api
       - name: Package an immutable release
         # The server installs production dependencies from the root lockfile, so the release keeps
