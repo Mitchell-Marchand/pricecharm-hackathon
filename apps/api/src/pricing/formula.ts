@@ -94,13 +94,30 @@ function straightLine(points: Point[]) {
   return { slope, intercept: meanCents - slope * meanSize };
 }
 
+/** How far over straight scaling a job smaller than any they've priced can go. */
+const SMALL_JOB_LEAN = 1.05;
+
+/**
+ * A job smaller than any they've priced, from the price at the smallest size. Small jobs cost more
+ * per unit when part of the price is just turning up, so it follows the line through their prices
+ * back, never under scaling straight down, and only a little over it: a line through a few prices
+ * can't say much about sizes past them.
+ */
+function smaller(cents: number, from: number, slope: number, size: number) {
+  const scaled = (cents * size) / from;
+  return slope > 0
+    ? Math.max(scaled, Math.min(cents - slope * (from - size), scaled * SMALL_JOB_LEAN))
+    : scaled;
+}
+
 /**
  * The main work at a size, from the prices the owner charged at the sizes they've priced:
  * - between two of them, on a straight line, or at the nearer one's price when they price by
  *   size bands, or on the one line closest to all of them when they price by eye;
  * - past the biggest, carrying on at their rate across everything they've priced;
- * - below the smallest, scaled down from the smallest, or the lowest band's price when they
- *   price by bands (a minimum still applies on top).
+ * - below the smallest, scaled down from the smallest, a little over when their prices show a
+ *   part every job pays, or the lowest band's price when they price by bands (a minimum still
+ *   applies on top).
  * With no prices at sizes, it's the rate.
  */
 export function mainWork(service: FormulaService, size: number): number | null {
@@ -111,7 +128,7 @@ export function mainWork(service: FormulaService, size: number): number | null {
     const { slope, intercept } = straightLine(points);
     const at = (value: number) => intercept + slope * value;
     if (slope > 0 && at(first.size) > 0)
-      return size >= first.size ? at(size) : (at(first.size) * size) / first.size;
+      return size >= first.size ? at(size) : smaller(at(first.size), first.size, slope, size);
   }
   if (first && last && points.length >= 2 && size >= first.size && size <= last.size) {
     const upper = points.findIndex((point) => point.size >= size);
@@ -133,10 +150,11 @@ export function mainWork(service: FormulaService, size: number): number | null {
   }
   // An owner who prices by bands often charges the lowest band as their minimum, and the AI may
   // have read it that way, so below the sizes priced it's the lower of the two.
-  if (first && size < first.size)
-    return service.shape === 'bands'
-      ? Math.min(first.cents, service.minimumCents ?? first.cents)
-      : (first.cents * size) / first.size;
+  if (first && size < first.size && service.shape === 'bands')
+    return Math.min(first.cents, service.minimumCents ?? first.cents);
+  if (first && last && points.length >= 2 && size < first.size)
+    return smaller(first.cents, first.size, straightLine(points).slope, size);
+  if (first && size < first.size) return (first.cents * size) / first.size;
   if (service.rateCents) return service.rateCents * size;
   if (first) return (first.cents * size) / first.size;
   return null;

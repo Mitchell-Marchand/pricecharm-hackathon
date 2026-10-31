@@ -117,6 +117,7 @@ export default function PracticeStep() {
         run={run}
         onRun={(changed) => setPractice((current) => current && withRun(current, changed))}
         onState={apply}
+        closePercent={practice?.closePercent}
         className="pt-8 pb-10"
         intro={
           <>

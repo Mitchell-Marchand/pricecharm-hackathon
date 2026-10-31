@@ -12,6 +12,7 @@ import { AGREE_PERCENT, closePercentFor } from '../pricing/accuracy.js';
 import { draftForBusiness } from '../pricing/draft.js';
 import { refreshFormula } from '../pricing/formula-draft.js';
 import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
+import { marketPricesEnabled, marketRate } from '../pricing/market.js';
 import { chargesLine } from '../pricing/rates.js';
 import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
 import { formatQuantity } from '../pricing/units.js';
@@ -41,6 +42,20 @@ const centsFormat = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 0,
 });
 const money = (cents: number) => centsFormat.format(cents / 100);
+/**
+ * Other businesses' combined rate for a practice job's service, next to the owner's own rate on
+ * it. The card shows it only when the owner charged this much less, so they can see when they
+ * charge less than most, and never to tell them they charge too much.
+ */
+type PracticeMarket = {
+  trade: string;
+  unit: string;
+  businesses: number;
+  centsPerUnit: number;
+  ownerCentsPerUnit: number;
+};
+const UNDER_MARKET = 0.9;
+
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 const joinList = (items: string[]) =>
   items.length < 3 ? items.join(' and ') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
@@ -321,6 +336,7 @@ function runView(run: Row, messages: Row[]) {
   const position = Number(run.position);
   const quote = json<Quote | null>(run.quote_json, null);
   const shadow = run.outcome ? json<Shadow | null>(run.shadow_json, null) : null;
+  const market = json<PracticeMarket | null>(run.market_json, null);
   return {
     id: String(run.id),
     position,
@@ -360,6 +376,7 @@ function runView(run: Row, messages: Row[]) {
     insights: json<(Insight & { edited?: boolean })[]>(run.insights_json, []).map(
       ({ id, text }) => ({ id, text }),
     ),
+    market: market && market.ownerCentsPerUnit < market.centsPerUnit * UNDER_MARKET ? market : null,
     finished: run.status === 'finished',
   };
 }
@@ -710,6 +727,34 @@ async function insightsFor(
   return items.map((text, index) => ({ id: `${runId.slice(0, 8)}-${index}`, text }));
 }
 
+/** Other businesses' combined rate for this job's service, only where the Terms allow it. */
+async function marketBeside(
+  businessId: string,
+  context: { tradeId: string | null; trade: string },
+  scenario: PracticeScenario,
+  quote: QuoteDraft,
+): Promise<PracticeMarket | null> {
+  const spec = specFromScenario(scenario);
+  const main = quote.lines[0];
+  if (!marketPricesEnabled() || !context.tradeId || !spec.quantity || !spec.unit || !main)
+    return null;
+  const market = await marketRate({
+    businessId,
+    tradeId: context.tradeId,
+    serviceName: scenario.serviceName,
+    unit: spec.unit,
+  });
+  return market
+    ? {
+        trade: context.trade,
+        unit: market.unit,
+        businesses: market.businesses,
+        centsPerUnit: market.centsPerUnit,
+        ownerCentsPerUnit: main.amountCents / spec.quantity,
+      }
+    : null;
+}
+
 async function finishRun(
   businessId: string,
   runId: string,
@@ -770,6 +815,13 @@ async function finishRun(
     outcome,
     context.trade,
   );
+  const market =
+    'quote' in outcome
+      ? await marketBeside(businessId, context, scenario, outcome.quote).catch((error) => {
+          reportError(error, { event: 'practice_market' });
+          return null;
+        })
+      : null;
   await transaction(async (connection) => {
     await addMessage(
       connection,
@@ -780,8 +832,8 @@ async function finishRun(
       'quote' in outcome ? scenario.acceptReply : scenario.siteVisitReply,
     );
     await mutate(
-      "UPDATE practice_runs SET insights_json=?,status='finished',finished_at=UTC_TIMESTAMP(3) WHERE id=?",
-      [JSON.stringify(insights), runId],
+      "UPDATE practice_runs SET insights_json=?,market_json=?,status='finished',finished_at=UTC_TIMESTAMP(3) WHERE id=?",
+      [JSON.stringify(insights), market && JSON.stringify(market), runId],
       connection,
     );
   });

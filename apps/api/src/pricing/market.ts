@@ -19,7 +19,28 @@ export function marketPricesEnabled(): boolean {
   return process.env.MARKET_PRICES === 'on';
 }
 
-export type MarketRate = { centsPerUnit: number; unit: string; businesses: number };
+export type MarketRate = {
+  centsPerUnit: number;
+  /** A little above the middle: the rate 60% of the businesses charge or less. */
+  upperCentsPerUnit: number;
+  unit: string;
+  businesses: number;
+};
+
+/**
+ * A first price for a service the owner has never priced starts this far up other businesses'
+ * rates, not at the middle: a guess under their own price reads as them overcharging.
+ */
+const UPPER_SHARE = 0.6;
+
+/** The value this share of them are at or under, between the two nearest. */
+function quantile(values: number[], share: number) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = (sorted.length - 1) * share;
+  const low = Math.floor(at);
+  const high = Math.min(low + 1, sorted.length - 1);
+  return sorted[low] + (sorted[high] - sorted[low]) * (at - low);
+}
 
 /**
  * One rate from many businesses' own rates: each business's middle rate counts once, however
@@ -42,7 +63,12 @@ export function combineRates(
   const [chosen] = [...byUnit.entries()].sort((a, b) => b[1].size - a[1].size);
   if (!chosen || chosen[1].size < MARKET_MIN_BUSINESSES) return null;
   const perBusiness = [...chosen[1].values()].map((values) => median(values));
-  return { centsPerUnit: median(perBusiness), unit: chosen[0], businesses: perBusiness.length };
+  return {
+    centsPerUnit: median(perBusiness),
+    upperCentsPerUnit: quantile(perBusiness, UPPER_SHARE),
+    unit: chosen[0],
+    businesses: perBusiness.length,
+  };
 }
 
 const OTHERS = "b.trade_id=? AND b.id<>? AND b.status='active' AND b.deletion_requested_at IS NULL";

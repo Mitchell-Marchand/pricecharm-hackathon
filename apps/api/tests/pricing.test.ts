@@ -166,6 +166,8 @@ test('other businesses’ rates only combine when there are enough of them', () 
     45,
     "Not 500, which twenty of one business's jobs would give",
   );
+  // A first price starts a little above the middle: 35, 40, 45, 50, 500 gives 47.
+  assert.equal(combined.upperCentsPerUnit, 47);
   assert.equal(combineRates(many, 'windows'), null);
 });
 

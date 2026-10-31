@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
-import { closeDatabase, rows } from '../src/db.js';
+import { closeDatabase, mutate, rows } from '../src/db.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
 const origin = 'http://localhost:3100';
@@ -103,6 +103,19 @@ test(
     ]);
     assert.ok(guessed.shadow_json, 'The guess exists before the quote');
     assert.equal(guessed.quote_json, null);
+    // Five other businesses charge more for patios: the card says so, once the Terms allow it.
+    process.env.MARKET_PRICES = 'on';
+    for (let index = 0; index < 5; index++) {
+      const id = randomUUID();
+      await mutate(
+        "INSERT INTO businesses (id,name,slug,description,status,trade_id) VALUES (?,?,?,'','active','pressure-washing')",
+        [id, `Patio Pros ${index}`, `patio-pros-${id.slice(0, 8)}`],
+      );
+      await mutate(
+        "INSERT INTO past_jobs (id,business_id,service_name,description,price_cents,size,notes) VALUES (?,?,'Patios & pavers','Patio wash',?,'600 sq ft','')",
+        [randomUUID(), id, 42000 + index * 1000],
+      );
+    }
     const emptyQuote = await owner
       .post(`/api/v1/onboarding/practice/${first.id}/quote`)
       .set('Origin', origin)
@@ -144,6 +157,9 @@ test(
     assert.ok(insights.includes('Adds stain pre-treatment for $45'));
     assert.ok(insights.includes('Can usually start next week, about 3 hours on site'));
     assert.ok(insights.some((text: string) => text.startsWith('Remembers why')));
+    delete process.env.MARKET_PRICES;
+    assert.ok(done.market?.businesses >= 5, 'Shown when they charge clearly less than most');
+    assert.ok(done.market.ownerCentsPerUnit < done.market.centsPerUnit * 0.9);
     const again2 = await owner
       .post(`/api/v1/onboarding/practice/${first.id}/quote`)
       .set('Origin', origin)

@@ -77,6 +77,7 @@ export function MorePractice({
         run={run}
         onRun={(changed) => setPractice((current) => current && withRun(current, changed))}
         onState={setPractice}
+        closePercent={practice?.closePercent}
         as="div"
         gutter={false}
         className="pb-10"

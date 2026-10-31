@@ -169,10 +169,10 @@ export async function draftForBusiness(input: {
     });
     if (market)
       startingPoint = {
-        basis: `About ${money(market.centsPerUnit)} per ${market.unit.replace(/s$/, '')}, the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
+        basis: `About ${money(market.upperCentsPerUnit)} per ${market.unit.replace(/s$/, '')}, a little above the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
         mainWorkCents:
           spec?.quantity && spec.unit === market.unit
-            ? Math.round((market.centsPerUnit * spec.quantity) / 100) * 100
+            ? Math.round((market.upperCentsPerUnit * spec.quantity) / 100) * 100
             : null,
       };
   }

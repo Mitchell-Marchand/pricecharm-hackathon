@@ -67,7 +67,17 @@ test('prices that don’t scale evenly follow the owner’s own prices at each s
   };
   assert.equal(mainWork(service, 700), 14500, 'Between two sizes it priced');
   assert.equal(mainWork(service, 1200), 22000, 'Past the biggest, at the last step’s rate');
-  assert.equal(mainWork(service, 200), 5000, 'Below the smallest, scaled down from it');
+  // $100 for 400 sq ft and $190 for 1,000 is $40 every job pays plus 15¢ a foot, so 200 sq ft
+  // is more than half of $100, but only a little more: $52.50, not the line's $70.
+  assert.equal(mainWork(service, 200), 5250, 'Below the smallest, a little over scaling down');
+  const steeper = {
+    ...service,
+    points: [
+      { size: 400, cents: 8000 },
+      { size: 1000, cents: 21000 },
+    ],
+  };
+  assert.equal(mainWork(steeper, 200), 4000, 'Never under scaling straight down');
 });
 
 test('a formula is trusted only when it gives back nearly all the owner’s own prices', () => {

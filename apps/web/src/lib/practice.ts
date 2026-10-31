@@ -29,6 +29,17 @@ export interface PracticeRun {
   /** The AI's private guess. Shown only after the owner answers. */
   shadow: { cents: number; siteVisit: boolean; reason: string; confidence: string } | null;
   insights: { id: string; text: string }[];
+  /**
+   * Other businesses' combined rate for this service, when the owner charged clearly less than
+   * it. Missing from older APIs.
+   */
+  market?: {
+    trade: string;
+    unit: string;
+    businesses: number;
+    centsPerUnit: number;
+    ownerCentsPerUnit: number;
+  } | null;
   finished: boolean;
 }
 

@@ -29,7 +29,7 @@ import {
   type QuoteDraft,
 } from '@/lib/practice';
 import { total } from '@/lib/quote';
-import { cx, money, scrollToBottom } from '@/lib/util';
+import { cx, money, rate, scrollToBottom } from '@/lib/util';
 
 function gapPercent(guessCents: number, ownerCents: number): number | null {
   return ownerCents > 0 ? Math.round((Math.abs(guessCents - ownerCents) / ownerCents) * 100) : null;
@@ -62,9 +62,11 @@ function ShadowBar({
 
 function InsightCard({
   run,
+  closePercent,
   onChange,
 }: {
   run: PracticeRun;
+  closePercent: number;
   onChange: (run: PracticeRun) => void;
 }) {
   const notify = useToast();
@@ -75,6 +77,8 @@ function InsightCard({
   const flagged = Boolean(run.shadow?.siteVisit);
   const reason = run.shadow?.reason ?? '';
   const gap = run.outcome === 'quote' && guess > 0 ? gapPercent(guess, ownerCents) : null;
+  const apart = guess - ownerCents;
+  const market = run.outcome === 'quote' ? run.market : null;
   const max = Math.max(guess, ownerCents) * 1.08 || 1;
   const save = async (id: string) => {
     const text = value.trim();
@@ -107,9 +111,21 @@ function InsightCard({
           <p className="text-[15px] text-ink-2">
             {guess > 0 ? (
               <>
-                Before you sent yours, it guessed {money(guess)}.{' '}
-                <span className="font-semibold text-ink">{gap}% apart.</span>{' '}
-                {gap !== null && gap <= 15
+                Before you sent yours, it guessed {money(guess)}
+                {apart === 0 ? (
+                  <>
+                    , <span className="font-semibold text-ink">the same as you</span>.
+                  </>
+                ) : (
+                  <>
+                    ,{' '}
+                    <span className="font-semibold text-ink">
+                      {money(Math.abs(apart))} {apart > 0 ? 'more' : 'less'} than you
+                    </span>
+                    {gap ? ` (${gap}%)` : ''}.
+                  </>
+                )}{' '}
+                {gap !== null && gap <= closePercent
                   ? "That's close. It's learning your pricing."
                   : "It'll get closer with each practice quote."}
               </>
@@ -119,6 +135,14 @@ function InsightCard({
             {flagged &&
               ` It would also have asked to see this one first${reason ? `, because of the ${reason}` : ''}.`}
           </p>
+          {market && (
+            <p className="text-[15px] text-ink-2">
+              You may be charging less than most. {market.businesses} other{' '}
+              {market.trade.toLowerCase()} businesses on PriceCharm charge about{' '}
+              {rate(market.centsPerUnit)} per {market.unit.replace(/s$/, '')} for this. Yours comes
+              to {rate(market.ownerCentsPerUnit)}.
+            </p>
+          )}
         </div>
       )}
       {run.outcome === 'site-visit' && (
@@ -204,6 +228,7 @@ export function PracticeSession({
   as: Content = 'main',
   className,
   gutter = true,
+  closePercent = 15,
 }: {
   business: string;
   run: PracticeRun | null;
@@ -218,6 +243,8 @@ export function PracticeSession({
   className?: string;
   /** Side padding, for pages that don't already have it. */
   gutter?: boolean;
+  /** How close its guess has to come to count, the owner's own setting. */
+  closePercent?: number;
 }) {
   const notify = useToast();
   const [typing, setTyping] = useState(false);
@@ -449,7 +476,9 @@ export function PracticeSession({
                   about half a minute the first time.
                 </p>
               )}
-              {run && showInsights && <InsightCard run={run} onChange={onRun} />}
+              {run && showInsights && (
+                <InsightCard run={run} closePercent={closePercent} onChange={onRun} />
+              )}
             </div>
           </>
         )}
