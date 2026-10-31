@@ -36,7 +36,7 @@ Only `/embed/:slug` can be shown in a frame, and only on PriceCharm itself or th
 
 ## Design
 
-The design comes from the prototype in `apps/prototype`: the tokens in `src/app/globals.css`, the components in `src/components`, and the quote card in `QuoteForm.tsx`. Quote cards are paper, so they keep the same colors in dark mode.
+The design comes from the onboarding prototype (`d876a18`, since removed): the tokens in `src/app/globals.css`, the components in `src/components`, and the quote card in `QuoteForm.tsx`. Quote cards are paper, so they keep the same colors in dark mode.
 
 ## Tests
 

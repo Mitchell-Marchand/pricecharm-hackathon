@@ -24,7 +24,6 @@ PriceCharm runs on Meta's models through the Meta Model API, in Standard mode on
 | --- | --- |
 | [`apps/api`](apps/api) | Express API, MySQL/MariaDB storage, AI integrations, billing, email and the background worker |
 | [`apps/web`](apps/web) | The Next.js web app: the public site, setup, the owner's app and the customer chat |
-| [`apps/prototype`](apps/prototype) | The clickable prototype the web app was built from, on mock data |
 | [`packages/trades`](packages/trades) | The trades and their services, shared by the API and the web app |
 | [`docs`](docs) | [How pricing works](docs/pricing.md) and operations guides ([database](docs/ops/database.md), [AI keys](docs/ops/ai-keys.md)) |
 | [`scripts`](scripts) | Local development, test and setup scripts |
@@ -57,7 +56,6 @@ All commands run from the repository root.
 | `npm test` | API tests that don't need a database |
 | `npm run test:db` | Every API test, including database tests, against a throwaway `quoting_test` database |
 | `bash scripts/e2e.sh` | Playwright suite against a real API and the test database, on ports 3300 and 4200 |
-| `npm run dev --workspace @pricecharm/prototype` | The onboarding prototype on port 3200 |
 
 ## Safety checks
 
@@ -75,7 +73,7 @@ Production runs on one EC2 instance, with MariaDB 11.4 in Docker beside the app.
 
 ## CI and deployment
 
-- **CI** (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It covers the API's formatting, types, database tests and build; the web app's formatting, types, build and end-to-end suite; and the prototype's build.
+- **CI** (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`. It covers the API's formatting, types, database tests and build, and the web app's formatting, types, build and end-to-end suite.
 - **Deploy API** and **Deploy web** run on pushes to `main` that change their app. When the repository variable `ENABLE_DEPLOY` is `true`, they copy the release to the server over SSH and restart it with PM2.
 
 The full runbook is [apps/api/deploy/LAUNCH.md](apps/api/deploy/LAUNCH.md).

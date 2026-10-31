@@ -55,6 +55,8 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Check formatting of workflow and compose files
+        run: npx prettier --check ".github/workflows/*.yml" docker-compose.yml
       - run: npm run format:check --workspace @pricecharm/api
       - run: npm run typecheck --workspace @pricecharm/api
       - name: Migrate the CI database
@@ -110,19 +112,3 @@ jobs:
             apps/web/test-results
             ${{ runner.temp }}/e2e-logs
           retention-days: 7
-
-  prototype:
-    name: Prototype
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - name: Typecheck and build
-        run: npm run build --workspace @pricecharm/prototype
-      - name: Check formatting of workflow and compose files
-        run: npx prettier --check ".github/workflows/*.yml" docker-compose.yml
