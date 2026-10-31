@@ -20,6 +20,8 @@ export type Rate = {
   points: number;
   smallest: number;
   largest: number;
+  /** Every price they've charged for it is their minimum, so there's no rate for it yet. */
+  minimumOnly: boolean;
 };
 
 export type Estimate = {
@@ -43,7 +45,11 @@ export function median(values: number[]): number {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-/** A rate for each service and unit with at least one point. */
+/**
+ * A rate for each service and unit with at least one point. The least they charge for anything,
+ * when two or more services were each charged it as their lowest, is their minimum: a job charged
+ * it says nothing about a rate, so it's left out of the rate.
+ */
 export function fitRates(points: PricePoint[]): Rate[] {
   const groups = new Map<string, PricePoint[]>();
   for (const point of points) {
@@ -51,15 +57,29 @@ export function fitRates(points: PricePoint[]): Rate[] {
     const key = `${point.service.trim().toLowerCase()}|${point.unit}`;
     groups.set(key, [...(groups.get(key) ?? []), point]);
   }
-  return [...groups.values()].map((group) => ({
-    service: group[0].service.trim(),
-    unit: group[0].unit,
-    centsPerUnit: median(group.map((point) => point.cents / point.quantity)),
-    floorCents: Math.min(...group.map((point) => point.cents)),
-    points: group.length,
-    smallest: Math.min(...group.map((point) => point.quantity)),
-    largest: Math.max(...group.map((point) => point.quantity)),
-  }));
+  const all = [...groups.values()].flat();
+  const lowest = all.length ? Math.min(...all.map((point) => point.cents)) : 0;
+  const atLowest = new Set(
+    all
+      .filter((point) => point.cents === lowest)
+      .map((point) => point.service.trim().toLowerCase()),
+  );
+  const minimum = atLowest.size >= 2 ? lowest : null;
+  return [...groups.values()].map((group) => {
+    const priced = group.filter((point) => minimum === null || point.cents > minimum);
+    return {
+      service: group[0].service.trim(),
+      unit: group[0].unit,
+      centsPerUnit: median(
+        (priced.length ? priced : group).map((point) => point.cents / point.quantity),
+      ),
+      floorCents: Math.min(...group.map((point) => point.cents)),
+      points: group.length,
+      smallest: Math.min(...group.map((point) => point.quantity)),
+      largest: Math.max(...group.map((point) => point.quantity)),
+      minimumOnly: !priced.length,
+    };
+  });
 }
 
 /** The main work at this owner's usual rate, or null when they've never priced it by this unit. */
@@ -72,7 +92,11 @@ export function estimateFor(
   if (!quantity || quantity <= 0 || !unit) return null;
   const rate = rates.find((item) => same(item.service, service) && item.unit === unit);
   if (!rate) return null;
-  const cents = Math.round(Math.max(rate.floorCents, rate.centsPerUnit * quantity) / 100) * 100;
+  // Charged only the minimum so far: that's the price up to those sizes, and past them it's unknown.
+  if (rate.minimumOnly && quantity > rate.largest) return null;
+  const cents = rate.minimumOnly
+    ? rate.floorCents
+    : Math.round(Math.max(rate.floorCents, rate.centsPerUnit * quantity) / 100) * 100;
   const sizes = sizeRange(rate);
   const solid = rate.points >= SOLID_POINTS && quantity >= sizes.from && quantity <= sizes.to;
   return { cents, quantity, unit, rate, solid };
@@ -112,7 +136,9 @@ export function rateWords(
 ): { price: string; sizes: string } {
   const floor = floorCents ? `, lowest ${dollars(floorCents)}` : '';
   return {
-    price: `about ${dollars(rate.centsPerUnit)} ${perUnit(rate.unit)}${floor}`,
+    price: rate.minimumOnly
+      ? `only the minimum so far, ${dollars(rate.floorCents)}`
+      : `about ${dollars(rate.centsPerUnit)} ${perUnit(rate.unit)}${floor}`,
     sizes:
       rate.smallest === rate.largest
         ? formatQuantity(rate.smallest, rate.unit)

@@ -162,6 +162,47 @@ test('a minimum on one service holds for the others', async () => {
   assert.equal(priceJob(perService, small)?.totalCents, 15000);
 });
 
+test('a service charged only the minimum has no rate past the sizes charged', async () => {
+  const { priceJob } = await import('../src/pricing/formula.js');
+  // The prod test: 8 inside windows at the $150 minimum, which the AI read as $18.75 a window.
+  const floored = {
+    ...formula,
+    roundToCents: 100,
+    services: [
+      formula.services[0],
+      { ...formula.services[1], rateCents: 1875, points: [{ size: 8, cents: 15000 }] },
+    ],
+  };
+  const inside = (size: number) => ({
+    service: 'Interior windows',
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  assert.equal(priceJob(floored, inside(6))?.totalCents, 15000);
+  assert.equal(priceJob(floored, inside(8))?.totalCents, 15000);
+  assert.equal(priceJob(floored, inside(22)), null, 'The Charm’s usual draft prices it');
+  assert.equal(
+    priceJob(floored, {
+      ...inside(22),
+      service: 'Exterior windows',
+      otherServices: [{ name: 'Interior windows', size: null }],
+    }),
+    null,
+  );
+  // A price above the minimum is a real rate, and so is one under it: a line on a bigger job.
+  const priced = (cents: number) => ({
+    ...floored,
+    services: [
+      floored.services[0],
+      { ...floored.services[1], rateCents: cents / 20, points: [{ size: 20, cents }] },
+    ],
+  });
+  assert.equal(priceJob(priced(20000), inside(22))?.totalCents, 22000);
+  assert.equal(priceJob(priced(12000), inside(30))?.totalCents, 18000);
+});
+
 test('an add-on’s price is corrected to what the owner’s quotes say it cost', async () => {
   const { refineFormula } = await import('../src/pricing/formula.js');
   const wrong = {

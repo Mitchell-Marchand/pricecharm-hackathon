@@ -189,10 +189,28 @@ export function minimumFor(formula: PriceFormula, service: FormulaService): numb
   );
 }
 
+/**
+ * Whether the formula has a price for this service at this size. A job charged the minimum says
+ * nothing about the rate, though the AI may divide it by the size anyway, so a service charged
+ * only the minimum so far has a price up to the sizes it was charged at, and none past them. A
+ * price under the minimum is a real one: that service's line on a bigger job.
+ */
+function pricedAt(formula: PriceFormula, service: FormulaService, size: number) {
+  const minimum = minimumFor(formula, service);
+  const points = sortedPoints(service.points);
+  return (
+    !minimum ||
+    !points.length ||
+    points.some((point) => Math.abs(point.cents - minimum) > minimum * 0.01) ||
+    size <= points.at(-1)!.size
+  );
+}
+
 /** The quote the formula gives for a job, or null when the formula can't price it. */
 export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote | null {
   const service = formula.services.find((item) => same(item.name, parts.service));
   if (!service || !parts.size || parts.size <= 0) return null;
+  if (!pricedAt(formula, service, parts.size)) return null;
   const main = mainWork(service, parts.size);
   if (main === null) return null;
   const extras = parts.surcharges.map((name) => {
@@ -221,7 +239,8 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
     const rule = formula.services.find((item) => same(item.name, other.name));
     // "The inside too" with no size of its own is the same windows, or the same gutters.
     const otherSize = other.size ?? (rule && same(rule.unit, service.unit) ? parts.size : null);
-    const amount = rule && otherSize ? mainWork(rule, otherSize) : null;
+    const amount =
+      rule && otherSize && pricedAt(formula, rule, otherSize) ? mainWork(rule, otherSize) : null;
     if (!rule || !otherSize || amount === null) return null;
     lines.push({
       label: `${rule.name}, ${formatQuantity(otherSize, rule.unit)}`,

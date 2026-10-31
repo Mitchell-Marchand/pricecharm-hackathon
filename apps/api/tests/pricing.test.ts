@@ -118,6 +118,33 @@ test('a rate card comes from the owner’s own prices, with a floor for small jo
   assert.ok(!withinEstimate(20000, usual), 'Far under the usual rate');
 });
 
+test('a minimum charged on two services isn’t read as a rate for either', () => {
+  // The prod test: $150 is the least they charge, on 12 outside windows and on 8 inside ones.
+  const rates = fitRates([
+    ...points('Exterior windows', 'windows', [
+      [12, 15000],
+      [20, 20000],
+      [30, 29000],
+    ]),
+    ...points('Interior windows', 'windows', [[8, 15000]]),
+  ]);
+  const exterior = rates.find((rate) => rate.service === 'Exterior windows')!;
+  const interior = rates.find((rate) => rate.service === 'Interior windows')!;
+  assert.ok(Math.abs(exterior.centsPerUnit - 983.33) < 0.01, 'The minimum job is left out');
+  assert.equal(exterior.minimumOnly, false);
+  assert.equal(interior.minimumOnly, true);
+  assert.equal(estimateFor(rates, 'Interior windows', 6, 'windows')!.cents, 15000);
+  assert.equal(estimateFor(rates, 'Interior windows', 22, 'windows'), null, 'Not $18.75 a window');
+  assert.equal(
+    describeRate(interior),
+    'Interior windows: only the minimum so far, $150 (1 price, 8 windows)',
+  );
+  // One service's lowest price is just its lowest price.
+  const alone = fitRates(points('Interior windows', 'windows', [[8, 15000]]))[0];
+  assert.equal(alone.minimumOnly, false);
+  assert.equal(alone.centsPerUnit, 1875);
+});
+
 test('other businesses’ rates only combine when there are enough of them', () => {
   const rates = (count: number) =>
     Array.from({ length: count }, (_, index) => ({
