@@ -536,8 +536,11 @@ test(
       }
       assert.fail(`${id} was never answered`);
     };
+    // Only Kim's: earlier customers' chats can still be finishing in the background, and anything
+    // they send now goes out on this number too.
+    const toKim = () => ownSent.filter((body) => body.to === kim.phone);
     await toOwn(text('Driveways'));
-    assert.match(ownSent[0]?.text?.body ?? '', /^\[Demo\] Hi Kim! I’m the quote assistant/);
+    assert.match(toKim()[0]?.text?.body ?? '', /^\[Demo\] Hi Kim! I’m the quote assistant/);
     await toOwn(text('About 600 sq ft, two cars.'));
     await toOwn(tap(`${CHIP}Skip photos`, 'Skip photos'));
     const [kimChat] = await rows('SELECT id FROM lead_chats WHERE channel_user_id=?', [kim.userId]);
@@ -553,7 +556,7 @@ test(
       .send({})
       .expect(200);
     await deliverWaiting();
-    const templated = ownSent.at(-1);
+    const templated = toKim().at(-1);
     assert.equal(templated?.type, 'template');
     assert.equal(templated?.template.name, 'pricecharm_quote_ready');
     assert.deepEqual(
