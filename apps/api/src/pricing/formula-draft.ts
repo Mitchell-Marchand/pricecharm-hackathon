@@ -8,8 +8,10 @@ import { json } from '../models.js';
 import { quoteTotal, type DraftedQuote } from '../practice/types.js';
 import { withAiUsage } from '../usage.js';
 import {
+  doubtsAbout,
   fitGaps,
   formulaFits,
+  formulaUsable,
   ownerRounding,
   priceJob,
   refineFormula,
@@ -88,6 +90,8 @@ export type Learned = {
   examples: (JobParts | null)[];
   /** How far the formula's price is from each example's total, in percent. */
   gaps: (number | null)[];
+  /** Each example's total, as the owner charged it. */
+  totals?: number[];
   fits: boolean;
 };
 
@@ -105,22 +109,28 @@ async function inTurns<T, R>(items: T[], at: number, task: (item: T) => Promise<
   return results;
 }
 
+/**
+ * How formulas are worked out and tuned. A change to it works every owner's formula out again, the
+ * next time one is needed.
+ */
+const LEARNING = '2026-11-01';
+
 /** What a formula is worked out from: the owner's quotes and their notes about their prices. */
 function examplesKey(examples: FormulaExample[], notes: string[]) {
-  return createHash('sha256').update(JSON.stringify({ examples, notes })).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify({ examples, notes, learning: LEARNING }))
+    .digest('hex');
 }
 
 /** Works out the owner's formula from their quotes and notes, then checks and tunes it on them. */
-async function learnFrom(data: PricingData, examples: FormulaExample[], model?: string) {
+async function learnFrom(
+  data: PricingData,
+  examples: FormulaExample[],
+  model?: string,
+): Promise<Learned> {
   const { notes } = data.history;
-  const ask = (quick: boolean) =>
-    learnFormula({
-      quick,
-      business: { trade: data.history.business.trade, services: data.history.business.services },
-      examples,
-      notes,
-      model,
-    });
+  const business = { trade: data.history.business.trade, services: data.history.business.services };
+  const ask = (quick: boolean) => learnFormula({ quick, business, examples, notes, model });
   // Working out a formula reasons at length, and the API sometimes gives up on long calls, so it
   // gets two more tries before the quote falls back to the usual draft.
   const attempt = async (tries: number): Promise<PriceFormula> => {
@@ -133,7 +143,16 @@ async function learnFrom(data: PricingData, examples: FormulaExample[], model?: 
       return attempt(tries - 1);
     }
   };
-  const answer = await attempt(3);
+  return settle(await attempt(3), examples, notes, model);
+}
+
+/** Checks and tunes the AI's formula on the owner's own quotes, read the way new requests are. */
+async function settle(
+  answer: PriceFormula,
+  examples: FormulaExample[],
+  notes: string[],
+  model?: string,
+): Promise<Learned> {
   // Rounding is counted from what they wrote: every line, and every total with no discount.
   const learned = {
     ...answer,
@@ -165,14 +184,21 @@ async function learnFrom(data: PricingData, examples: FormulaExample[], model?: 
   );
   const checked = examples.flatMap((example, index) => {
     const found = parts[index];
-    return found ? [{ parts: found, totalCents: example.totalCents }] : [];
+    return found ? [{ parts: found, totalCents: example.totalCents, lines: example.lines }] : [];
   });
   const formula = refineFormula(learned, checked);
   const gaps = examples.map((example, index) => {
     const found = parts[index];
     return found ? fitGaps(formula, [{ parts: found, totalCents: example.totalCents }])[0] : null;
   });
-  return { formula, notes, examples: parts, gaps, fits: formulaFits(gaps) };
+  return {
+    formula,
+    notes,
+    examples: parts,
+    gaps,
+    fits: formulaFits(gaps),
+    totals: examples.map((example) => example.totalCents),
+  };
 }
 
 const learning = new Map<string, Promise<Learned | null>>();
@@ -275,7 +301,14 @@ export async function currentFormula(businessId: string, data: PricingData) {
     : null;
 }
 
-export type FormulaUse = { used: true; formula: PriceFormula } | { used: false; reason: string };
+export type FormulaUse =
+  | {
+      used: true;
+      formula: PriceFormula;
+      /** Why it isn't sure of this one, in the owner's words, when it isn't (doubtsAbout). */
+      doubts: string[];
+    }
+  | { used: false; reason: string };
 
 /** The job's size from what the customer said, when it's in the unit the formula prices by. */
 function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | null) {
@@ -302,7 +335,8 @@ export async function priceFromFormula(
 ): Promise<{ drafted: DraftedQuote | null; use: FormulaUse }> {
   const skip = (reason: string) => ({ drafted: null, use: { used: false as const, reason } });
   if (!learned) return skip('too few priced jobs for a formula');
-  if (!learned.fits) return skip('the formula doesn’t give back the owner’s own prices');
+  if (!learned.fits && !formulaUsable(learned.gaps))
+    return skip('the formula doesn’t give back the owner’s own prices');
   const { formula } = learned;
   const read = await readJobParts({
     formula,
@@ -317,6 +351,14 @@ export async function priceFromFormula(
   const parts = { ...read, size: measuredSize(formula, read.service, input.spec) ?? read.size };
   const priced = priceJob(formula, parts);
   if (!priced) return skip('the formula can’t price this job');
+  // Its doubts are judged against the owner's own quotes, as the formula was checked on them.
+  const checks = learned.examples.flatMap((found, index) =>
+    found && learned.totals?.[index] ? [{ parts: found, totalCents: learned.totals[index] }] : [],
+  );
+  const doubts = [
+    ...(learned.fits ? [] : ['It doesn’t give back enough of your own quotes yet.']),
+    ...doubtsAbout(formula, checks, parts, priced),
+  ];
   return {
     drafted: {
       decision: 'quote',
@@ -325,9 +367,10 @@ export async function priceFromFormula(
       discount: priced.discount,
       start: '',
       duration: '',
-      confidence: 'high',
-      reasoning: 'Priced the way your own quotes add up.',
+      // A quote it doubts goes out as a range, never as a firm price.
+      confidence: doubts.length ? 'low' : 'high',
+      reasoning: ['Priced the way your own quotes add up.', ...doubts].join(' '),
     },
-    use: { used: true as const, formula },
+    use: { used: true as const, formula, doubts },
   };
 }
