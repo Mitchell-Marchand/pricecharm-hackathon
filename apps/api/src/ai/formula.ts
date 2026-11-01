@@ -249,6 +249,8 @@ export async function learnFormula(input: {
   model?: string;
   /** Reason less: a last try, after a long one ran out of room. */
   quick?: boolean;
+  /** Which of the separate times it's worked out from the same quotes this is, from 0. */
+  reading?: number;
 }): Promise<PriceFormula> {
   const result = await requestJson(
     input.quick ? 'learn_formula_quick' : 'learn_formula',
@@ -259,7 +261,7 @@ Try your formula on a few examples. The server checks it against every one and f
     formulaSchema,
     [],
     [],
-    { model: input.model, timeoutMs: 240_000, maxAttempts: 2 },
+    { model: input.model, timeoutMs: 240_000, maxAttempts: 2, asking: input.reading },
   );
   return kept(result);
 }

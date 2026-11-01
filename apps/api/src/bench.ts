@@ -43,11 +43,13 @@ import {
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
+  formulaExamples,
   holdFailedFormulas,
   learnedFormula,
   priceFromFormula,
   type Learned,
 } from './pricing/formula-draft.js';
+import { loadPricingData } from './pricing/history.js';
 import { describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
@@ -287,7 +289,14 @@ type Test = {
    * Formula pricing's best price, why it fell back to the usual draft when it did, and why it
    * doubted the price when it did, which sends it to a real customer as a range.
    */
-  formula?: { cents: number | null; used: boolean; reason?: string; doubts?: string[] };
+  formula?: {
+    cents: number | null;
+    used: boolean;
+    reason?: string;
+    doubts?: string[];
+    /** What each reading of the owner's quotes came to (src/pricing/formula-draft.ts). */
+    readings?: number[];
+  };
   /**
    * What the job's price depends on that the owner's past jobs and practice quotes never showed
    * (src/bench/metrics.ts); empty when all of it was there to learn.
@@ -719,6 +728,7 @@ async function main() {
             used: use.used,
             reason: use.used ? undefined : use.reason,
             doubts: use.used ? use.doubts : undefined,
+            readings: use.used ? use.readings : undefined,
           };
         } catch (error) {
           test.failed = error instanceof Error ? error.message : String(error);
@@ -853,7 +863,26 @@ async function main() {
         fits: result?.fits ?? false,
         gaps: result?.gaps ?? [],
         formula: result?.formula ?? null,
+        answer: result?.answer ?? null,
         examples: result?.examples ?? [],
+        also: (result?.also ?? []).map(({ fits, gaps, formula, answer, examples }) => ({
+          fits,
+          gaps,
+          formula,
+          answer,
+          examples,
+        })),
+        // What it was worked out from, so a formula can be tuned and checked again offline.
+        checks: businessId
+          ? formulaExamples((await loadPricingData(businessId)).history).map(
+              ({ service, request, totalCents, lines }) => ({
+                service,
+                request,
+                totalCents,
+                lines,
+              }),
+            )
+          : [],
       });
     }
     out.push(

@@ -156,7 +156,10 @@ async function serviceRates(businessId: string) {
   // Once their formula prices their quotes, small jobs go as low as its minimum, not as low as
   // the cheapest job they happen to have done.
   const learned = await currentFormula(businessId, data).catch(() => null);
-  const formula = learned?.fits ? learned.formula : null;
+  // Quotes price at the middle of the formula's readings, so its minimum is theirs too.
+  const formulas = (learned ? [learned, ...(learned.also ?? [])] : [])
+    .filter((reading) => reading.fits)
+    .map((reading) => reading.formula);
   return data.history.business.services.map((service) => {
     const rate = rates
       .filter((item) => sameText(item.service) === sameText(service))
@@ -173,8 +176,12 @@ async function serviceRates(businessId: string) {
       const count = points.filter((point) => point.source === source).length;
       return count ? [`${count} ${count === 1 ? one : many}`] : [];
     });
-    const rule = formula?.services.find((item) => sameText(item.name) === sameText(service));
-    const { price, sizes } = rule ? rateWords(rate, minimumFor(formula!, rule)) : rateWords(rate);
+    const minimums = formulas.flatMap((formula) => {
+      const rule = formula.services.find((item) => sameText(item.name) === sameText(service));
+      return rule ? [minimumFor(formula, rule) ?? 0] : [];
+    });
+    const minimum = minimums.sort((a, b) => a - b)[Math.floor(minimums.length / 2)];
+    const { price, sizes } = minimums.length ? rateWords(rate, minimum || null) : rateWords(rate);
     return {
       service,
       price: price.charAt(0).toUpperCase() + price.slice(1),
