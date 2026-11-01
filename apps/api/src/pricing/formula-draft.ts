@@ -176,7 +176,7 @@ async function settle(
         conversation: [{ from: 'customer', text: example.request }],
       },
       model,
-    }).then(({ uncovered: _uncovered, ...parts }) => parts);
+    }).then(({ uncovered: _uncovered, unpriced: _unpriced, ...parts }) => parts);
   const parts = await inTurns(examples, 3, (example) =>
     read(example)
       .catch(() => read(example))
@@ -348,7 +348,8 @@ export async function priceFromFormula(
     model: input.model,
   });
   if (read.uncovered) return skip(`the formula doesn’t cover ${read.uncovered}`);
-  const parts = { ...read, size: measuredSize(formula, read.service, input.spec) ?? read.size };
+  const { unpriced, uncovered: _uncovered, ...asked } = read;
+  const parts = { ...asked, size: measuredSize(formula, read.service, input.spec) ?? read.size };
   const priced = priceJob(formula, parts);
   if (!priced) return skip('the formula can’t price this job');
   // Its doubts are judged against the owner's own quotes, as the formula was checked on them.
@@ -357,6 +358,8 @@ export async function priceFromFormula(
   );
   const doubts = [
     ...(learned.fits ? [] : ['It doesn’t give back enough of your own quotes yet.']),
+    // A choice the customer made that none of the owner's quotes priced, like a cheaper finish.
+    ...(unpriced ? [`They asked for ${unpriced}, which you haven’t priced yet.`] : []),
     ...doubtsAbout(formula, checks, parts, priced),
   ];
   return {

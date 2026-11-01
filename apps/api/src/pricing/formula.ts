@@ -52,6 +52,12 @@ export type FormulaAddOn = {
   cents: number;
   /** On every job, whether the customer asks or not, like a trip charge. */
   always?: boolean;
+  /**
+   * For one priced by the size: the unit it was quoted in, and what it came to on the jobs it was
+   * quoted on (the middle one), for a job measured some other way.
+   */
+  unit?: string;
+  jobCents?: number;
 };
 
 export type PriceFormula = {
@@ -142,6 +148,12 @@ function smaller(cents: number, from: number, slope: number, size: number) {
  */
 export function mainWork(service: FormulaService, size: number): number | null {
   const points = sortedPoints(service.points);
+  // At a size they've priced, it's their own price there (the average, if they priced it more than
+  // once): a line through all their prices can't know this size better than they did. On the
+  // benchmark this fixed 19 jobs for every 3 it broke, most of all where prices step, like a crew
+  // that grows with the home.
+  const exact = points.filter((point) => Math.abs(point.size - size) <= size * 0.01);
+  if (exact.length) return exact.reduce((sum, point) => sum + point.cents, 0) / exact.length;
   const first = points[0],
     last = points.at(-1);
   if (first && last && points.length >= 2 && service.shape === 'fit') {
@@ -307,9 +319,15 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   for (const wanted of [...parts.addOns, ...always]) {
     const addOn = formula.addOns.find((item) => same(item.name, wanted.name));
     if (!addOn) return null;
+    // Priced by a size in another unit than this job's, either reading could be wrong: a rate per
+    // system multiplied by square feet runs away, while what it came to on a rug can be far more
+    // than on a room. It's the more modest of the two, and the quote is doubted (doubtsAbout).
+    const elsewhere = addOn.per === 'unit' && addOn.unit && !same(addOn.unit, service.unit);
     const amount =
       addOn.per === 'unit'
-        ? addOn.cents * parts.size
+        ? elsewhere && addOn.jobCents
+          ? Math.min(addOn.cents * parts.size, addOn.jobCents)
+          : addOn.cents * parts.size
         : addOn.per === 'item'
           ? addOn.cents * (wanted.count ?? 1)
           : addOn.cents;
@@ -697,15 +715,38 @@ export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): 
       }
     }
   }
-  return best;
+  // Each add-on priced by the size keeps the unit of the jobs it was quoted on, and what it came to
+  // on them (the middle one).
+  return {
+    ...best,
+    addOns: best.addOns.map((addOn) => {
+      if (addOn.per !== 'unit') return addOn;
+      const seen = examples.flatMap((example) => {
+        const wanted = example.parts.addOns.some((item) => same(item.name, addOn.name));
+        const service = best.services.find((item) => same(item.name, example.parts.service));
+        return (wanted || addOn.always) && service && example.parts.size
+          ? [{ unit: service.unit, cents: addOn.cents * example.parts.size }]
+          : [];
+      });
+      if (!seen.length) return addOn;
+      const units = [...new Set(seen.map((item) => item.unit.toLowerCase()))];
+      if (units.length > 1) return addOn;
+      const costs = seen.map((item) => item.cents).sort((a, b) => a - b);
+      return {
+        ...addOn,
+        unit: seen[0].unit,
+        jobCents: Math.round(costs[Math.floor(costs.length / 2)]),
+      };
+    }),
+  };
 }
 
 /**
  * What makes this quote one not to send as a firm price, in the owner's words, or nothing. Each is
  * a sign the formula is guessing rather than following the owner's own quotes: a size far from
  * any they priced, a service they've priced only once or twice, a size between two of their
- * prices that jump, a rate far from theirs, less than anything they've ever charged, a price far
- * from what they charged at this very size, or extras that come to more than the job itself. On
+ * prices that jump, a rate far from theirs, less than anything they've ever charged, extras that
+ * come to more than the job itself, or a minimum never charged for the service. On
  * the benchmark these catch most of the quotes that end up far from the owner's price (see
  * src/bench.ts), and a quote with one goes out as a range.
  */
@@ -764,12 +805,6 @@ export function doubtsAbout(
       if (rate < Math.min(...perUnit) * 0.6 || rate > Math.max(...perUnit) * 1.6)
         doubts.push(`Its rate is far from what you charge for ${service.name.toLowerCase()}.`);
     }
-    const here = points.filter((point) => Math.abs(point.size - size) <= size * 0.01);
-    if (here.length) {
-      const own = here.reduce((sum, point) => sum + point.cents, 0) / here.length;
-      if (Math.abs(main - own) > own * 0.15)
-        doubts.push('It’s far from what you charged for this size before.');
-    }
     const extras = parts.surcharges
       .map((name) => formula.surcharges.find((item) => same(item.name, name)))
       .reduce(
@@ -786,6 +821,13 @@ export function doubtsAbout(
         0,
       );
     if (main > 0 && extras > main) doubts.push('Its extras come to more than the job itself.');
+    const elsewhere = parts.addOns
+      .map((wanted) => formula.addOns.find((item) => same(item.name, wanted.name)))
+      .find((item) => item?.per === 'unit' && item.unit && !same(item.unit, service.unit));
+    if (elsewhere)
+      doubts.push(
+        `${elsewhere.name} is priced by the ${elsewhere.unit!.replace(/s$/, '')} on other jobs, not by the ${service.unit.replace(/s$/, '')}.`,
+      );
   }
   // Lifted well up to a minimum this service was never charged: the minimum may not be its.
   if (service) {
@@ -814,6 +856,27 @@ export function doubtsAbout(
   );
   if (Number.isFinite(cheapest) && quote.totalCents < cheapest * 0.9)
     doubts.push('It’s less than anything you’ve charged.');
+  // A surcharge or add-on far beyond what it came to on any of their own quotes: one seen on small
+  // jobs, as a share, can run far past what they'd charge on a big one.
+  const most = new Map<string, number>();
+  for (const example of examples)
+    for (const line of priceJob(formula, example.parts)?.lines.slice(1) ?? [])
+      most.set(
+        line.label.replace(/ \(\d+\)$/, ''),
+        Math.max(most.get(line.label.replace(/ \(\d+\)$/, '')) ?? 0, line.amountCents),
+      );
+  const runaway = quote.lines.slice(1).find((line) => {
+    const before = most.get(line.label.replace(/ \(\d+\)$/, ''));
+    return (
+      before !== undefined && line.amountCents > before * 2.5 && line.amountCents - before > 5000
+    );
+  });
+  if (runaway)
+    doubts.push(
+      `Its ${runaway.label.replace(/ \(\d+\)$/, '').toLowerCase()} is far more than you’ve charged for it.`,
+    );
+  const dearest = Math.max(...examples.map((example) => example.totalCents));
+  if (quote.totalCents > dearest * 2) doubts.push('It’s more than twice anything you’ve charged.');
   return doubts;
 }
 

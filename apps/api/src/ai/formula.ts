@@ -273,7 +273,7 @@ export async function readJobParts(input: {
     details?: string;
   };
   model?: string;
-}): Promise<JobParts & { uncovered: string }> {
+}): Promise<JobParts & { uncovered: string; unpriced: string }> {
   const { formula } = input;
   return requestJson(
     'read_job',
@@ -284,7 +284,8 @@ Read the customer's request into this business's price formula, using the formul
 - addOns: the formula's add-ons the customer asks for. count: for per-item ones, the number the customer gave, else null.
 - otherServices: any other of the formula's services they want done in the same job, with its size, or null if they didn't give one.
 - extraSize: for a main service with a second count, how many the customer has of it (like 2 bathrooms), or null if they haven't said or the service has none.
-- uncovered: work they ask for, a service or an extra, that nothing in the formula covers, in a few words, or empty. Never a condition of the job, like stains or a second story.`,
+- uncovered: work they ask for, a service or an extra, that nothing in the formula covers, in a few words, or empty. Never a condition of the job, like stains or a second story.
+- unpriced: a choice they make about the work that would change its price and that none of the formula's surcharges names, like a material, a grade or a lighter or fuller version of the service, in a few words, or empty. Never the size, and never something the formula has a surcharge, add-on or service for.`,
     {
       formula: {
         services: formula.services.map((item) => ({
@@ -299,11 +300,19 @@ Read the customer's request into this business's price formula, using the formul
     },
     {
       ...partsJson,
-      properties: { ...partsJson.properties, uncovered: { type: 'string' } },
-      required: [...partsJson.required, 'uncovered'],
+      properties: {
+        ...partsJson.properties,
+        uncovered: { type: 'string' },
+        unpriced: { type: 'string' },
+      },
+      required: [...partsJson.required, 'uncovered', 'unpriced'],
     },
     partsSchema.extend({
       uncovered: z.string().transform((value) => value.trim().slice(0, 200)),
+      unpriced: z
+        .string()
+        .default('')
+        .transform((value) => value.trim().slice(0, 200)),
     }),
     [],
     [],
