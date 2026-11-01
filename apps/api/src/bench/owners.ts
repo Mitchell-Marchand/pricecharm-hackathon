@@ -1,4 +1,4 @@
-import { formatQuantity } from '../pricing/units.js';
+import { formatQuantity, roundSize } from '../pricing/units.js';
 import { quoteTotal, type Discount } from '../practice/types.js';
 
 /**
@@ -655,6 +655,51 @@ export function drawJob(
       (shape === 'any' || shape === 'typical') && rng() < 0.5
         ? pick(rng, owner.rules.recurring).label
         : (owner.rules.usually ?? ONE_TIME);
+  return job;
+}
+
+/** Every size priced for each service in these jobs, by lowercase name. */
+export function sizesShown(jobs: SimJob[]) {
+  const sizes: Record<string, number[]> = {};
+  for (const job of jobs) {
+    (sizes[job.service.toLowerCase()] ??= []).push(job.quantity);
+    if (job.second) (sizes[job.second.service.toLowerCase()] ??= []).push(job.second.quantity);
+  }
+  return sizes;
+}
+
+/**
+ * A size past any priced for the service priced at the fewest sizes: half the smallest, or one and
+ * a half times the biggest. Two practice customers at these sizes after setup (--practice stretch)
+ * set against two at usual sizes (--practice more), on 2026-11-01: the jobs they reached went 65%
+ * to 71% within 10%, but adding any two quotes moved the owner's other prices about as much, so
+ * neither came out ahead, and the app doesn't do this.
+ */
+export function stretchSize(
+  services: string[],
+  sizes: Record<string, number[]>,
+  side: 'bigger' | 'smaller',
+): { service: string; around: number } | null {
+  const sizesOf = (service: string) => sizes[service.toLowerCase()] ?? [];
+  const service = services
+    .slice()
+    .sort((a, b) => sizesOf(a).length - sizesOf(b).length)
+    .at(0);
+  const priced = service ? sizesOf(service) : [];
+  if (!service || !priced.length) return null;
+  const around =
+    side === 'bigger' ? roundSize(Math.max(...priced) * 1.5) : roundSize(Math.min(...priced) * 0.5);
+  return side === 'bigger' || around < Math.min(...priced) ? { service, around } : null;
+}
+
+/** A plain job for one service at the size given, nothing else asked. */
+export function stretchedJob(rng: Rng, owner: SimOwner, service: string, around: number): SimJob {
+  const [main] = owner.rules.services;
+  const job = drawJob(rng, owner, service === main.name ? 'plain' : 'other');
+  const rule = owner.rules.services.find((item) => item.name === service)!;
+  job.quantity = sizeOf(rule, around);
+  if (rule.extra && job.extra !== undefined)
+    job.extra = Math.max(rule.extra.range[0], Math.min(job.extra, Math.ceil(job.quantity)));
   return job;
 }
 

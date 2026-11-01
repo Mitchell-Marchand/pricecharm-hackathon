@@ -25,6 +25,11 @@ export type FormulaService = {
   /** No job of this service for less, when the owner has a minimum for it. */
   minimumCents: number | null;
   /**
+   * Set when the owner charged a job of this service alone less than another service's minimum,
+   * so that minimum isn't theirs for this one.
+   */
+  underOthersMinimum?: boolean;
+  /**
    * A second count the price follows, like bathrooms next to bedrooms: cents for each one past
    * the ones the main price includes.
    */
@@ -228,18 +233,19 @@ const rounded = (cents: number, to: number) =>
 
 /**
  * The least a job of this service costs, or null when the owner has no minimum. A minimum the
- * owner showed on one service applies to the others unless they set their own, but not the
- * smallest band's price on a service priced by bands: that's just its price.
+ * owner showed on one service applies to the others unless they set their own or charged less on
+ * one, but not the smallest band's price on a service priced by bands: that's just its price.
  */
 export function minimumFor(formula: PriceFormula, service: FormulaService): number | null {
   return (
     service.minimumCents ??
     formula.minimumCents ??
-    (formula.services
-      .filter((item) => item.shape !== 'bands')
-      .map((item) => item.minimumCents)
-      .filter((cents): cents is number => Boolean(cents))
-      .sort((a, b) => a - b)[0] ||
+    ((!service.underOthersMinimum &&
+      formula.services
+        .filter((item) => item.shape !== 'bands')
+        .map((item) => item.minimumCents)
+        .filter((cents): cents is number => Boolean(cents))
+        .sort((a, b) => a - b)[0]) ||
       null)
   );
 }
@@ -521,6 +527,17 @@ export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): 
         ? { ...service, minimumCents: null }
         : service,
     ),
+  };
+  // Nor is another service's minimum one for a service the owner charged less for, like tune-ups
+  // under a duct cleaner's minimum.
+  best = {
+    ...best,
+    services: best.services.map((service) => {
+      const lent = service.minimumCents === null && minimumFor(best, service);
+      return lent && charged(service.name) < lent * 0.99
+        ? { ...service, underOthersMinimum: true }
+        : service;
+    }),
   };
   // The AI sometimes takes a small job raised to a minimum for a price at its size. When there's
   // no minimum, the cheapest totals are each tried as one, without the prices at that amount, and

@@ -339,6 +339,36 @@ test('a carpet cleaner charges pet odor by the room, and counts a rug as one roo
   );
 });
 
+test('a stretch customer is a plain job past any size priced for the service priced least', async () => {
+  const { sizesShown, stretchedJob, stretchSize } = await import('../src/bench/owners.js');
+  const shown = { carpet: [2, 3, 5, 7], 'area rugs': [80, 120] };
+  const services = ['Carpet', 'Area rugs'];
+  assert.deepEqual(stretchSize(services, shown, 'bigger'), { service: 'Area rugs', around: 200 });
+  assert.deepEqual(stretchSize(services, shown, 'smaller'), { service: 'Area rugs', around: 40 });
+  assert.equal(
+    stretchSize(['Carpet'], { carpet: [1, 2] }, 'smaller'),
+    null,
+    'Nothing under a room',
+  );
+  const rule = { step: 1, volume: null, bands: null, height: false };
+  const carpets = owner('carpet', {
+    services: [
+      { ...rule, name: 'Carpet', unit: 'rooms', rate: 6000, sizes: [1, 8] },
+      { ...rule, name: 'Area rugs', unit: 'sq ft', rate: 150, sizes: [24, 150] },
+    ],
+    addOns: [{ label: 'Pet odor treatment', per: 'unit', unit: 'rooms', cents: 3000 }],
+  });
+  const rug = stretchedJob(seeded(1), carpets, 'Area rugs', 200);
+  assert.deepEqual(
+    { service: rug.service, quantity: rug.quantity, addOns: rug.addOns, heavy: rug.heavy },
+    { service: 'Area rugs', quantity: 200, addOns: [], heavy: false },
+  );
+  assert.deepEqual(
+    sizesShown([rug, { ...plainJob, service: 'Carpet', quantity: 3, second: rug }]),
+    { 'area rugs': [200, 200], carpet: [3] },
+  );
+});
+
 test('a detailer scales the price by vehicle size, and junk is a share of the truck', () => {
   const detailer = owner('detailing', {
     services: [

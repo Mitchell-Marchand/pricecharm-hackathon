@@ -176,6 +176,38 @@ test('a minimum on one service holds for the others', async () => {
   assert.equal(priceJob(perService, small)?.totalCents, 15000);
 });
 
+test('a minimum on one service doesn’t hold for one the owner charged less for', async () => {
+  const { priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const hvac: PriceFormula = {
+    ...formula,
+    services: [
+      { name: 'Tune-ups', unit: 'units', rateCents: 7000, points: [], minimumCents: null },
+      { name: 'Duct cleaning', unit: 'sq ft', rateCents: 28, points: [], minimumCents: 47000 },
+    ],
+    surcharges: [],
+    addOns: [],
+    bundlePercent: null,
+    roundToCents: 100,
+    minimumCents: null,
+  };
+  const job = (service: string, size: number) => ({
+    service,
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  // Ducts never go under $470, but one tune-up was $70.
+  const refined = refineFormula(hvac, [
+    { parts: job('Duct cleaning', 500), totalCents: 47000 },
+    { parts: job('Duct cleaning', 2000), totalCents: 56000 },
+    { parts: job('Tune-ups', 1), totalCents: 7000 },
+    { parts: job('Tune-ups', 2), totalCents: 14000 },
+  ]);
+  assert.equal(priceJob(refined, job('Tune-ups', 1))?.totalCents, 7000);
+  assert.equal(priceJob(refined, job('Duct cleaning', 400))?.totalCents, 47000);
+});
+
 test('a service charged only the minimum has no rate past the sizes charged', async () => {
   const { priceJob } = await import('../src/pricing/formula.js');
   // The prod test: 8 inside windows at the $150 minimum, which the AI read as $18.75 a window.

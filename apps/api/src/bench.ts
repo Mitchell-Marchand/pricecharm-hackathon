@@ -27,6 +27,9 @@ import {
   pastJobs,
   seeded,
   simulatedOwners,
+  sizesShown,
+  stretchedJob,
+  stretchSize,
   BLIND_TRADES,
   CLASSIC_TRADES,
   HELD_OUT_TRADES,
@@ -97,7 +100,9 @@ type Shape = Parameters<typeof drawJob>[2];
  * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them
  * (experiments, since October 30). The plans setup used before are kept, so a run can compare.
  */
-const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
+type Customer = { shape: Shape; extra?: number; stretch?: 'bigger' | 'smaller' };
+
+const PLANS: Record<string, Customer[]> = {
   original: [
     { shape: 'typical' },
     { shape: 'bigger' },
@@ -123,6 +128,14 @@ const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
     { shape: 'bigger', extra: 0 },
   ],
 };
+// Setup's customers, then two for the service priced at the fewest sizes, past any size priced
+// (stretchSize in src/bench/owners.ts); and, to tell aiming from having more, two plain ones.
+PLANS.stretch = [
+  ...PLANS.experiments,
+  { shape: 'other', stretch: 'bigger' },
+  { shape: 'other', stretch: 'smaller' },
+];
+PLANS.more = [...PLANS.experiments, { shape: 'other' }, { shape: 'other' }];
 const PLAN = 'experiments';
 
 function option(name: string) {
@@ -154,7 +167,7 @@ async function seedOwner(
   owner: SimOwner,
   rng: { past: Rng; practice: Rng },
   start: Date,
-  plan: { shape: Shape; extra?: number }[],
+  plan: Customer[],
   past: number,
 ) {
   const id = randomUUID();
@@ -190,8 +203,12 @@ async function seedOwner(
       ],
     );
   }
-  for (const [position, { shape, extra }] of plan.entries()) {
-    const job = drawJob(rng.practice, owner, shape, extra);
+  const services = owner.rules.services.map((rule) => rule.name);
+  for (const [position, { shape, extra, stretch }] of plan.entries()) {
+    const size = stretch ? stretchSize(services, sizesShown(jobs), stretch) : null;
+    const job = size
+      ? stretchedJob(rng.practice, owner, size.service, size.around)
+      : drawJob(rng.practice, owner, shape, extra);
     jobs.push(job);
     const quote = ownerQuote(owner, job);
     const spec = jobSpec(owner, job);
