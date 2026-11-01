@@ -227,7 +227,7 @@ export const WIDE: Record<WideTrade, Trade> = {
             cents: dollars(rng, 3, 8),
             item: { name: 'steps', range: [12, 15], ask: 'There’s also a staircase, {n} steps.' },
           },
-          { label: 'Pet odor treatment', per: 'unit', cents: dollars(rng, 15, 50) },
+          { label: 'Pet odor treatment', per: 'unit', unit: 'rooms', cents: dollars(rng, 15, 50) },
           { label: 'Sofa cleaning', per: 'job', cents: dollars(rng, 85, 135) },
         ],
       };

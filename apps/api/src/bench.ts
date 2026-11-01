@@ -923,6 +923,10 @@ async function main() {
       spec: describeSpec(jobSpec(owners[test.owner], test.job)),
     })),
   };
+  // Saved before comparing, so a run the comparison refuses keeps the answers it paid for.
+  const file = fileOption('json');
+  if (file)
+    await writeFile(file, `${JSON.stringify({ ...run, answers: answers.kept }, null, 2)}\n`);
   const against = fileOption('compare');
   if (against) {
     const before = JSON.parse(await readFile(against, 'utf8')) as SavedRun;
@@ -944,11 +948,8 @@ async function main() {
       replay: replayFile,
       engine,
     });
-  const file = fileOption('json');
-  if (file) {
-    await writeFile(file, `${JSON.stringify({ ...run, answers: answers.kept }, null, 2)}\n`);
+  if (file)
     console.info(`\nSaved every owner’s rules, every job and every model answer to ${file}.`);
-  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

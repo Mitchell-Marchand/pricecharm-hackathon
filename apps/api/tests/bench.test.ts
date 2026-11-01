@@ -292,6 +292,53 @@ test('a cleaner prices bedrooms and bathrooms past the first, regular visits for
   assert.match(message, /every two weeks/);
 });
 
+test('a carpet cleaner charges pet odor by the room, and counts a rug as one room', async () => {
+  const carpets = owner('carpet', {
+    services: [
+      {
+        name: 'Carpet',
+        unit: 'rooms',
+        rate: 6000,
+        sizes: [1, 8],
+        step: 1,
+        volume: null,
+        bands: null,
+        height: false,
+      },
+      {
+        name: 'Area rugs',
+        unit: 'sq ft',
+        rate: 150,
+        sizes: [24, 150],
+        step: 1,
+        volume: null,
+        bands: null,
+        height: false,
+      },
+    ],
+    addOns: [{ label: 'Pet odor treatment', per: 'unit', unit: 'rooms', cents: 3000 }],
+  });
+  const odor = [{ label: 'Pet odor treatment' }];
+  // 3 rooms at $60 and $30 a room for odor; a 100 sq ft rug at $1.50 and one room's $30.
+  assert.equal(
+    ownerTotal(carpets, { ...plainJob, service: 'Carpet', quantity: 3, addOns: odor }),
+    27000,
+  );
+  const rug = { ...plainJob, service: 'Area rugs', quantity: 100, addOns: odor };
+  assert.equal(ownerTotal(carpets, rug), 18000);
+  // Quoted only on a rug, its price by the room on carpet was never shown.
+  const { informationGaps } = await import('../src/bench/metrics.js');
+  const carpet = { ...plainJob, service: 'Carpet', quantity: 4, addOns: odor };
+  assert.deepEqual(
+    informationGaps(
+      carpets,
+      [rug, ...[3, 4, 5].map((rooms) => ({ ...carpet, quantity: rooms, addOns: [] }))],
+      carpet,
+    ),
+    ['add-on never quoted on a job measured this way'],
+  );
+});
+
 test('a detailer scales the price by vehicle size, and junk is a share of the truck', () => {
   const detailer = owner('detailing', {
     services: [

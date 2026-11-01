@@ -178,9 +178,26 @@ export function informationGaps(owner: SimOwner, examples: SimJob[], job: SimJob
     !examples.some(reach)
   )
     gaps.push('harder access never quoted');
-  for (const addOn of job.addOns)
-    if (!examples.some((example) => example.addOns.some((item) => item.label === addOn.label)))
-      gaps.push('add-on never quoted');
+  const unitOf = (service: string) => rules.services.find((item) => item.name === service)?.unit;
+  for (const addOn of job.addOns) {
+    const quoted = examples.filter((example) =>
+      example.addOns.some((item) => item.label === addOn.label),
+    );
+    const charged = rules.addOns.find((item) => item.label === addOn.label);
+    if (!quoted.length) gaps.push('add-on never quoted');
+    // Charged by the room on carpet and as one room on a rug, its price on one never shows the
+    // other, and quoted on carpet at one size, it could as well be one price there.
+    else if (charged?.per === 'unit' && charged.unit) {
+      const sizes = new Set(
+        quoted
+          .filter((example) => unitOf(example.service) === unitOf(job.service))
+          .map((example) => example.quantity),
+      );
+      if (!sizes.size) gaps.push('add-on never quoted on a job measured this way');
+      else if (sizes.size < 2 && !sizes.has(job.quantity))
+        gaps.push('add-on quoted at one size on a job measured this way');
+    }
+  }
   if (job.extra && rule.extra) {
     const counts = examples.flatMap((example) =>
       example.service === job.service && example.extra ? [example.extra] : [],

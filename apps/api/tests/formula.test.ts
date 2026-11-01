@@ -679,6 +679,41 @@ test('at a size the owner priced, the main work is their own price there', () =>
   assert.notEqual(mainWork(movers, 2.5), null);
 });
 
+test('an add-on charged by the room on carpet keeps the one price it had on a rug', async () => {
+  const { doubtsAbout, priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const carpets = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    services: [
+      { name: 'Carpet', unit: 'rooms', rateCents: 6000, points: [], minimumCents: null },
+      { name: 'Area rugs', unit: 'sq ft', rateCents: 150, points: [], minimumCents: null },
+    ],
+    // The AI read it as one price, from the rug.
+    addOns: [{ name: 'Pet odor', per: 'job' as const, cents: 3500 }],
+  };
+  const job = (service: string, size: number) => ({
+    service,
+    size,
+    surcharges: [],
+    addOns: [{ name: 'Pet odor', count: null }],
+    otherServices: [],
+  });
+  // $35 a room on carpet; a rug counts as one room.
+  const examples = [
+    { parts: job('Carpet', 3), totalCents: 3 * 6000 + 3 * 3500 },
+    { parts: job('Carpet', 5), totalCents: 5 * 6000 + 5 * 3500 },
+    { parts: job('Area rugs', 100), totalCents: 100 * 150 + 3500 },
+  ];
+  const refined = refineFormula(carpets, examples);
+  assert.equal(priceJob(refined, job('Carpet', 4))?.totalCents, 4 * 6000 + 4 * 3500);
+  const rug = job('Area rugs', 80);
+  const quote = priceJob(refined, rug)!;
+  assert.equal(quote.totalCents, 80 * 150 + 3500);
+  assert.ok(!doubtsAbout(refined, examples, rug, quote).some((doubt) => /other jobs/.test(doubt)));
+});
+
 test('an add-on priced by the window or the system isn’t multiplied by square feet', async () => {
   const { doubtsAbout, priceJob, refineFormula } = await import('../src/pricing/formula.js');
   const hvac = {

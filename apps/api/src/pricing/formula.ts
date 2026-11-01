@@ -58,6 +58,11 @@ export type FormulaAddOn = {
    */
   unit?: string;
   jobCents?: number;
+  /**
+   * What it cost on jobs measured another way, when the owner's quotes show it there, like pet
+   * odor charged by the room on carpet and as one price on a rug.
+   */
+  elsewhereCents?: number;
 };
 
 export type PriceFormula = {
@@ -319,15 +324,18 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   for (const wanted of [...parts.addOns, ...always]) {
     const addOn = formula.addOns.find((item) => same(item.name, wanted.name));
     if (!addOn) return null;
-    // Priced by a size in another unit than this job's, either reading could be wrong: a rate per
+    // Priced by a size in another unit than this job's, it's what the owner charged for it on jobs
+    // measured this other way. Never quoted on one, either reading could be wrong: a rate per
     // system multiplied by square feet runs away, while what it came to on a rug can be far more
     // than on a room. It's the more modest of the two, and the quote is doubted (doubtsAbout).
     const elsewhere = addOn.per === 'unit' && addOn.unit && !same(addOn.unit, service.unit);
     const amount =
       addOn.per === 'unit'
-        ? elsewhere && addOn.jobCents
-          ? Math.min(addOn.cents * parts.size, addOn.jobCents)
-          : addOn.cents * parts.size
+        ? elsewhere && addOn.elsewhereCents !== undefined
+          ? addOn.elsewhereCents
+          : elsewhere && addOn.jobCents
+            ? Math.min(addOn.cents * parts.size, addOn.jobCents)
+            : addOn.cents * parts.size
         : addOn.per === 'item'
           ? addOn.cents * (wanted.count ?? 1)
           : addOn.cents;
@@ -677,12 +685,15 @@ export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): 
       ...best,
       addOns: best.addOns.map((item, at) => (at === index ? { ...item, cents: 0 } : item)),
     };
-    const ways = (cost: number, size: number, count: number | null): FormulaAddOn[] => [
-      { ...addOn, per: 'unit', cents: Math.round(cost / size) },
-      { ...addOn, per: 'job', cents: cost },
-      ...(count ? [{ ...addOn, per: 'item' as const, cents: Math.round(cost / count) }] : []),
+    const { unit: _unit, jobCents: _jobCents, elsewhereCents: _elsewhere, ...plain } = addOn;
+    const ways = (cost: number, size: number, count: number | null, unit: string) => [
+      { ...plain, per: 'unit' as const, cents: Math.round(cost / size), unit },
+      { ...plain, per: 'job' as const, cents: cost },
+      ...(count ? [{ ...plain, per: 'item' as const, cents: Math.round(cost / count) }] : []),
     ];
     const candidates: FormulaAddOn[] = [];
+    // What it came to on each job: the owner's line for it, or what the rest leaves of the total.
+    const costs: { unit: string; size: number; cents: number }[] = [];
     let seen = 0;
     for (const example of examples) {
       const wanted = addOn.always
@@ -691,19 +702,70 @@ export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): 
       if (!wanted) continue;
       seen++;
       const rest = priceJob(without, example.parts);
-      if (!rest || !example.parts.size) continue;
+      const service = best.services.find((item) => same(item.name, example.parts.service));
+      if (!rest || !example.parts.size || !service) continue;
+      const { unit } = service;
       const cost = example.totalCents - rest.totalCents;
-      if (cost > 0) candidates.push(...ways(cost, example.parts.size, wanted.count));
+      if (cost > 0) candidates.push(...ways(cost, example.parts.size, wanted.count, unit));
       const line = ownerLine(best, example, (item) => item.label.startsWith(addOn.name));
-      if (line) candidates.push(...ways(line.amountCents, example.parts.size, wanted.count));
+      if (line) candidates.push(...ways(line.amountCents, example.parts.size, wanted.count, unit));
+      // The owner's line for it says what it cost, even on a job that came to about the minimum;
+      // without one, what the rest leaves of the total does, unless the minimum hides it.
+      const written = line ?? example.lines?.find((item) => item.label.startsWith(addOn.name));
+      const minimum = minimumFor(best, service);
+      const cents = written?.amountCents ?? (minimum && rest.totalCents <= minimum ? 0 : cost);
+      if (cents > 0) costs.push({ unit, size: example.parts.size, cents });
+    }
+    // Charged by the size, it's by the unit of the jobs it came from; on jobs measured another
+    // way, it's what it cost on those, when the owner's quotes show it there. That's a second
+    // price, so reading it that way, when the AI didn't, takes its own jobs following the size
+    // better than one price for them all would: otherwise it could as well be one price there and
+    // another on the other jobs.
+    const middle = (values: number[]) =>
+      Math.round([...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]);
+    const inUnit = (candidate: FormulaAddOn): FormulaAddOn | null => {
+      if (candidate.per !== 'unit' || !candidate.unit) return candidate;
+      const own = costs.filter((item) => same(item.unit, candidate.unit!));
+      const other = costs.filter((item) => !same(item.unit, candidate.unit!));
+      const flat = own.length ? middle(own.map((item) => item.cents)) : 0;
+      const off = (price: (size: number) => number) =>
+        own.reduce((sum, item) => sum + Math.abs(price(item.size) - item.cents), 0);
+      const follows = off((size) => candidate.cents * size) < off(() => flat);
+      if (other.length && addOn.per !== 'unit' && !follows) return null;
+      return {
+        ...candidate,
+        ...(own.length ? { jobCents: middle(own.map((item) => candidate.cents * item.size)) } : {}),
+        ...(other.length ? { elsewhereCents: middle(other.map((item) => item.cents)) } : {}),
+      };
+    };
+    // Read as counted, but the count was the job's size on every job that gave one, like pet odor
+    // for all 7 rooms: it's charged by the size, which a new request always has and its count can
+    // leave unsaid.
+    const counted = examples.flatMap((example) => {
+      const count = example.parts.addOns.find((item) => same(item.name, addOn.name))?.count;
+      const unit = best.services.find((item) => same(item.name, example.parts.service))?.unit;
+      return count && unit ? [{ count, size: example.parts.size, unit }] : [];
+    });
+    let reading = addOn.per;
+    const bySize =
+      addOn.per === 'item' &&
+      counted.length >= 2 &&
+      counted.every((item) => item.count === item.size && same(item.unit, counted[0].unit))
+        ? inUnit({ ...plain, per: 'unit', unit: counted[0].unit })
+        : null;
+    if (bySize) {
+      reading = 'unit';
+      best = { ...best, addOns: best.addOns.map((item, at) => (at === index ? bySize : item)) };
     }
     // From one job, per unit and per job give it back equally, so how it's charged stays the
     // AI's reading of how the trade charges it, unless that reading can't give the job back.
     // Charging it another way has to give the quotes back better by a point for each job.
-    const sameWay = candidates.filter((other) => other.per === addOn.per);
-    const weight = (item: FormulaAddOn) => (item.per === addOn.per ? 0 : seen);
+    const sameWay = candidates.filter((other) => other.per === reading);
+    const weight = (item: FormulaAddOn) => (item.per === reading ? 0 : seen);
     let current = miss(best);
-    for (const other of seen > 1 || !sameWay.length ? candidates : sameWay) {
+    for (const other of (seen > 1 || !sameWay.length ? candidates : sameWay)
+      .map(inUnit)
+      .filter((item): item is FormulaAddOn => Boolean(item))) {
       const alternative = {
         ...best,
         addOns: best.addOns.map((item, at) => (at === index ? other : item)),
@@ -720,7 +782,7 @@ export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): 
   return {
     ...best,
     addOns: best.addOns.map((addOn) => {
-      if (addOn.per !== 'unit') return addOn;
+      if (addOn.per !== 'unit' || addOn.unit) return addOn;
       const seen = examples.flatMap((example) => {
         const wanted = example.parts.addOns.some((item) => same(item.name, addOn.name));
         const service = best.services.find((item) => same(item.name, example.parts.service));
@@ -823,7 +885,13 @@ export function doubtsAbout(
     if (main > 0 && extras > main) doubts.push('Its extras come to more than the job itself.');
     const elsewhere = parts.addOns
       .map((wanted) => formula.addOns.find((item) => same(item.name, wanted.name)))
-      .find((item) => item?.per === 'unit' && item.unit && !same(item.unit, service.unit));
+      .find(
+        (item) =>
+          item?.per === 'unit' &&
+          item.unit &&
+          !same(item.unit, service.unit) &&
+          item.elsewhereCents === undefined,
+      );
     if (elsewhere)
       doubts.push(
         `${elsewhere.name} is priced by the ${elsewhere.unit!.replace(/s$/, '')} on other jobs, not by the ${service.unit.replace(/s$/, '')}.`,

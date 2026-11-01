@@ -124,6 +124,12 @@ export type AddOnRule = {
   per: 'unit' | 'job' | 'item';
   cents: number;
   /**
+   * For a per-unit add-on, the unit it's priced in, when the owner also offers it on a service
+   * measured another way. There it costs one unit's worth, the way a carpet cleaner charges pet
+   * odor by the room and counts a rug as one room.
+   */
+  unit?: string;
+  /**
    * For per-item add-ons: what's counted, how many customers usually have, and how they say it,
    * with {n} for the count.
    */
@@ -530,7 +536,7 @@ export function ownerQuote(owner: SimOwner, job: SimJob): OwnerQuote {
     const rule = rules.addOns.find((item) => item.label === wanted.label)!;
     const amount =
       rule.per === 'unit'
-        ? rule.cents * job.quantity
+        ? rule.cents * (rule.unit && rule.unit !== main.unit ? 1 : job.quantity)
         : rule.per === 'item'
           ? rule.cents * (wanted.count ?? 1)
           : rule.cents;
