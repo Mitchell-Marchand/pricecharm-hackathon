@@ -8,6 +8,7 @@ import { rateLimit } from './http.js';
 import { queueEmail } from './integrations/email.js';
 import { formatInsights, insightsReport } from './insights.js';
 import { wordingReport } from './live/accept-wording.js';
+import { SIGNUP_STEPS, queueSignupAlert, type SignupStep } from './signup-alerts.js';
 
 /**
  * Product metrics, kept in our own database. Events say what happened and when, never names,
@@ -46,7 +47,7 @@ export async function recordMilestone(
 ): Promise<void> {
   const subject = await subjectOf(businessId, connection);
   if (!subject) return;
-  await mutate(
+  const saved = await mutate(
     'INSERT IGNORE INTO product_events (id,subject,name,detail,dedupe_key,session,props) VALUES (?,?,?,?,?,?,?)',
     [
       randomUUID(),
@@ -59,6 +60,9 @@ export async function recordMilestone(
     ],
     connection,
   );
+  // The first setup, account and card also email us, with who it is.
+  if (saved.affectedRows && SIGNUP_STEPS.has(name))
+    await queueSignupAlert(connection, businessId, name as SignupStep);
 }
 
 /** The same milestone, for a step that only knows which owner took it. */
