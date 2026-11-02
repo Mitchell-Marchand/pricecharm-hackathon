@@ -341,6 +341,50 @@ export type FormulaUse =
     }
   | { used: false; reason: string };
 
+/**
+ * Everything the owner's price depends on, in any reading of their quotes, for the customer chat
+ * to find out before it's done: each service's size and any second count, the conditions their
+ * prices follow (some are choices, like a grade, or how often), and the extras they charge for.
+ * Not extras on every job, which aren't the customer's to choose. On the benchmark's customer
+ * chats, the jobs where the chat missed one of these were 20% within 10% of the owner's price.
+ */
+export function priceDrivers(learned: Learned | null) {
+  const services: { name: string; unit: string; count: string | null }[] = [];
+  const conditions: string[] = [];
+  const extras: { name: string; counted: boolean }[] = [];
+  const known = (list: string[], text: string) =>
+    list.some((item) => item.toLowerCase() === text.toLowerCase());
+  for (const { formula } of learned ? [learned, ...(learned.also ?? [])] : []) {
+    for (const service of formula.services)
+      if (
+        !known(
+          services.map((item) => item.name),
+          service.name,
+        )
+      )
+        services.push({
+          name: service.name,
+          unit: service.unit,
+          count: service.extra?.unit ?? null,
+        });
+    for (const surcharge of formula.surcharges)
+      if (!known(conditions, surcharge.when || surcharge.name))
+        conditions.push(surcharge.when || surcharge.name);
+    for (const addOn of formula.addOns)
+      if (
+        !addOn.always &&
+        !known(
+          extras.map((item) => item.name),
+          addOn.name,
+        )
+      )
+        extras.push({ name: addOn.name, counted: addOn.per === 'item' });
+  }
+  return { services, conditions, extras };
+}
+
+export type PriceDrivers = ReturnType<typeof priceDrivers>;
+
 /** The job's size from what the customer said, when it's in the unit the formula prices by. */
 function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | null) {
   const rule = formula.services.find((item) => item.name.toLowerCase() === service.toLowerCase());

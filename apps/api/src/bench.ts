@@ -51,6 +51,7 @@ import { draftForBusiness } from './pricing/draft.js';
 import {
   formulaExamples,
   holdFailedFormulas,
+  priceDrivers,
   learnedFormula,
   priceFromFormula,
   type Learned,
@@ -156,8 +157,11 @@ PLANS.usual = [
   ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
 ];
 const PLAN = 'experiments';
-/** The most questions a --chat run's customer chat asks before the job is priced anyway. */
-const CHAT_TURNS = 8;
+/**
+ * The most questions a --chat run's customer chat asks before the job is priced anyway. A live
+ * chat has no limit; nearly every benchmark chat is done well before this.
+ */
+const CHAT_TURNS = 12;
 
 function option(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -759,6 +763,9 @@ async function main() {
     };
     await answer();
     const checklist = await questionChecklist(test.businessId);
+    const drivers = priceDrivers(
+      await learnedFormula(test.businessId, {}, model).catch(() => null),
+    );
     let last = null as IntakeTurn | null;
     for (let turn = 0; turn < CHAT_TURNS; turn++) {
       const previous = last;
@@ -773,6 +780,7 @@ async function main() {
               radiusMiles: null,
             },
             checklist,
+            drivers,
             serviceName: previous?.serviceName ?? '',
             conversation: said,
             photosReceived: 0,

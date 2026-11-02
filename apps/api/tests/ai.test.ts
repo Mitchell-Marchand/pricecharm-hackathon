@@ -558,3 +558,87 @@ test('a formula quote is the middle of its readings, and a range when they disag
   assert.equal(apart.drafted?.confidence, 'low');
   assert.match(apart.drafted?.reasoning ?? '', /anywhere from \$180 to \$300/);
 });
+
+test('the customer chat finds out everything the owner’s price depends on before it’s done', async () => {
+  const { intakeTurn } = await import('../src/ai/intake.js');
+  const { priceDrivers } = await import('../src/pricing/formula-draft.js');
+  const reading = (
+    surcharges: { name: string; when: string }[],
+    addOns: { name: string; per: 'item' | 'job'; always?: boolean }[],
+  ) => ({
+    formula: {
+      services: [
+        {
+          name: 'Windows',
+          unit: 'windows',
+          rateCents: 800,
+          points: [],
+          minimumCents: null,
+          extra: null,
+        },
+      ],
+      surcharges: surcharges.map((item) => ({ ...item, percent: 20, flatCents: null })),
+      addOns: addOns.map((addOn) => ({ ...addOn, cents: 500 })),
+      bundlePercent: null,
+      roundToCents: 100,
+      minimumCents: null,
+      itemizes: true,
+    },
+    notes: [],
+    examples: [],
+    gaps: [],
+    fits: true,
+  });
+  const drivers = priceDrivers({
+    ...reading(
+      [{ name: 'Second story', when: 'second story' }],
+      [
+        { name: 'Screens', per: 'item' },
+        { name: 'Trip charge', per: 'job', always: true },
+      ],
+    ),
+    also: [
+      reading([{ name: '2nd floor', when: 'Second story' }], [{ name: 'screens', per: 'item' }]),
+    ],
+  });
+  assert.deepEqual(drivers, {
+    services: [{ name: 'Windows', unit: 'windows', count: null }],
+    conditions: ['second story'],
+    extras: [{ name: 'Screens', counted: true }],
+  });
+  let sent = '';
+  globalThis.fetch = async (_url, init) => {
+    sent = String(init?.body);
+    return response({
+      reply: 'Is it one story or two?',
+      chips: ['One', 'Two'],
+      askPhoto: false,
+      serviceName: 'Windows',
+      ready: false,
+      summary: '',
+      outOfScope: '',
+      spec: { quantity: 20, unit: 'windows', condition: '', access: '', extras: [], timing: '' },
+    });
+  };
+  const turn = {
+    business: {
+      name: 'Clear View',
+      trade: 'Window cleaning',
+      services: ['Windows'],
+      area: 'Austin',
+      radiusMiles: null,
+    },
+    checklist: [],
+    serviceName: 'Windows',
+    conversation: [{ from: 'customer' as const, text: '20 windows, please.' }],
+    photosReceived: 0,
+  };
+  await intakeTurn({ ...turn, drivers }, []);
+  assert.match(sent, /drivers are what this owner's price depends on/);
+  assert.match(sent, /Set ready only once you know each of these/);
+  assert.match(sent, /how many of a counted one/);
+  assert.doesNotMatch(sent, /another of the services/, 'It has one service');
+  assert.match(sent, /\\"conditions\\":\[\\"second story\\"\]/, 'The drivers go in as data');
+  await intakeTurn(turn, []);
+  assert.doesNotMatch(sent, /drivers are what/, 'Without a formula, the chat works as before');
+});
