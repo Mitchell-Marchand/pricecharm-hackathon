@@ -7,6 +7,7 @@ import { Logo } from '@/components/Logo';
 import { CharmCard, LEARNING_TEXT, useCharm } from '@/components/Charm';
 import { SetupLoading } from '@/components/SetupLoading';
 import { AccountMenu } from '@/components/owner/AccountMenu';
+import { CodeBox } from '@/components/owner/CodeBox';
 import { ConfirmEmail } from '@/components/owner/ConfirmEmail';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { ShareSections } from '@/components/share/ShareSections';
@@ -23,7 +24,7 @@ import {
   type Billing,
 } from '@/lib/owner';
 import { planDetail, planName, type Plan } from '@/lib/plans';
-import { money } from '@/lib/util';
+import { money, shortDate } from '@/lib/util';
 
 /** Checks of the card after coming back from adding it, two seconds apart. */
 const CARD_CHECKS = 10;
@@ -136,7 +137,7 @@ export default function LiveStep() {
             onDeployed={setBilling}
           />
         ) : (
-          <Plans business={business} billing={billing} charm={charm} />
+          <Plans business={business} billing={billing} charm={charm} onBilling={setBilling} />
         )}
       </main>
     </div>
@@ -151,10 +152,12 @@ function Plans({
   business,
   billing,
   charm,
+  onBilling,
 }: {
   business: string;
   billing: Billing;
   charm: CharmView | null;
+  onBilling: (billing: Billing) => void;
 }) {
   const [busy, setBusy] = useState<Plan | null>(null);
   const [error, setError] = useState('');
@@ -195,7 +198,7 @@ function Plans({
                 ? `Start with ${money(pricing.perQuoteCents)} a quote`
                 : plan === 'per_accepted'
                   ? `Start with ${pricing.accepted.basisPoints / 100}% a job`
-                  : billing.freeWeek
+                  : billing.freeWeek && !billing.code
                     ? 'Start your free week'
                     : `Start ${plan === 'monthly' ? 'monthly' : 'yearly'}`
             }
@@ -204,6 +207,11 @@ function Plans({
           <p className="text-ink-2">{billing.reason}</p>
         )}
       </div>
+      {billing.checkoutAvailable && (
+        <div className="mt-5 flex flex-col">
+          <CodeBox billing={billing} onChange={onBilling} />
+        </div>
+      )}
       {error && (
         <p className="mt-4 text-stop" role="alert">
           {error}
@@ -265,7 +273,11 @@ function Deploy({
         <p className="inline-flex items-center gap-2 font-semibold text-go">
           <Check className="size-5" aria-hidden />
           {billing.plan ? planName(billing.plan, billing.pricing) : 'Plan chosen'}, card added
-          {billing.status === 'trialing' ? ', free week started' : ''}
+          {billing.code?.endsAt
+            ? `, free until ${shortDate(billing.code.endsAt)}`
+            : billing.status === 'trialing'
+              ? ', free week started'
+              : ''}
         </p>
         <h1 className="t-hero mt-4">Ready when you are.</h1>
         <p className="mt-5 max-w-xl text-lg text-ink-2">
@@ -366,7 +378,7 @@ function Live({
             icon: Receipt,
             title: billing.plan ? planName(billing.plan, billing.pricing) : 'Your plan',
             text: billing.plan
-              ? `${planDetail(billing.plan, billing.pricing, false)} Change it any time in Settings.`
+              ? `${billing.code?.endsAt ? `Free until ${shortDate(billing.code.endsAt)}. ` : ''}${planDetail(billing.plan, billing.pricing, false)} Change it any time in Settings.`
               : 'Setup, practice and your own tests are free.',
           },
         ].map(({ icon: Icon, title, text }) => (

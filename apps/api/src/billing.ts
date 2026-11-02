@@ -84,6 +84,109 @@ export async function firstMonth(account: RowDataPacket, connection: Sql) {
 }
 
 /**
+ * The free days from a code, as of a time: when they end, or no end date before the first card,
+ * since they start with it. Null without a code and once they're over.
+ */
+export function freeDays(account: RowDataPacket, at = new Date()) {
+  if (!account.promo_code || !account.promo_days) return null;
+  const code = String(account.promo_code),
+    days = Number(account.promo_days);
+  if (!account.card_added_at) return { code, days, endsAt: null };
+  const endsAt = new Date(new Date(account.card_added_at).getTime() + days * 86400000);
+  return endsAt.getTime() > at.getTime() ? { code, days, endsAt } : null;
+}
+/** Whether a quote shown at this time is free under a code. */
+export const freeUnderCode = (account: RowDataPacket, at = new Date()) =>
+  Boolean(freeDays(account, at)?.endsAt);
+
+const seconds = (date: Date) => Math.floor(date.getTime() / 1000);
+/**
+ * A subscription's free time if it starts now, as Stripe takes it: the free week, or a code's free
+ * days when they last longer. Before the first card, the code's days start with this subscription.
+ * Each is the same however often it's worked out, so a retried start asks Stripe the same thing.
+ */
+function trialTerms(account: RowDataPacket): { trial_period_days: number } | { trial_end: number } {
+  const week = publicPricing().subscription.trialDays,
+    free = freeDays(account);
+  if (free && !free.endsAt) return { trial_period_days: Math.max(week, free.days) };
+  // Once the week's been had, back on a subscription inside the free days, it's what's left.
+  if (
+    free?.endsAt &&
+    (account.trial_used_at || free.endsAt.getTime() > Date.now() + week * 86400000)
+  )
+    return { trial_end: seconds(free.endsAt) };
+  return { trial_period_days: week };
+}
+/** The subscription's free week is theirs: once, or again while a code's free days last. */
+const freeWeekLeft = (plan: Plan, account: RowDataPacket) =>
+  isSubscription(plan) && (!account.trial_used_at || freeUnderCode(account));
+/** When free time on those terms ends, in Stripe's seconds. */
+const trialEnd = (terms: ReturnType<typeof trialTerms>) =>
+  'trial_end' in terms ? terms.trial_end : seconds(new Date()) + terms.trial_period_days * 86400;
+
+/** A code as typed, with any spaces and in any case. */
+export const normalCode = (input: string) => input.replace(/\s+/g, '').toUpperCase();
+
+/**
+ * Puts a code on the account: one per business, before its first card. Its free days start when
+ * the card is added. Entering the same code again changes nothing.
+ */
+export async function redeemCode(businessId: string, input: string): Promise<void> {
+  const code = normalCode(input);
+  await transaction(async (connection) => {
+    const account = await ensureBillingAccount(businessId, connection);
+    if (account.promo_code === code) return;
+    if (account.promo_code)
+      throw new ApiError(
+        409,
+        'CODE_ALREADY_USED',
+        `You’re already using code ${account.promo_code}. It’s one code per account.`,
+      );
+    if (account.card_added_at)
+      throw new ApiError(
+        409,
+        'CODE_TOO_LATE',
+        'Codes are for new accounts, before a card is added.',
+      );
+    // Locked, so two owners can't both take a code's last use.
+    const [promo] = await rows(
+      'SELECT * FROM promo_codes WHERE code=? FOR UPDATE',
+      [code],
+      connection,
+    );
+    if (!promo)
+      throw new ApiError(404, 'CODE_NOT_FOUND', 'That code isn’t right. Check it and try again.');
+    if (promo.ends_at && new Date(promo.ends_at).getTime() <= Date.now())
+      throw new ApiError(409, 'CODE_ENDED', 'That code has expired.');
+    if (promo.max_uses !== null) {
+      const [{ uses }] = await rows(
+        'SELECT COUNT(*) uses FROM billing_accounts WHERE promo_code=?',
+        [promo.code],
+        connection,
+      );
+      if (Number(uses) >= Number(promo.max_uses))
+        throw new ApiError(409, 'CODE_USED_UP', 'That code has been used up.');
+    }
+    await mutate(
+      'UPDATE billing_accounts SET promo_code=?,promo_days=?,promo_redeemed_at=UTC_TIMESTAMP(3) WHERE business_id=?',
+      [promo.code, promo.free_days, businessId],
+      connection,
+    );
+    await mutate(
+      'INSERT IGNORE INTO usage_events(id,business_id,kind,dedupe_key,metadata_json) VALUES (?,?,?,?,?)',
+      [
+        randomUUID(),
+        businessId,
+        'promo_redeemed',
+        `promo_redeemed:${businessId}`,
+        JSON.stringify({ code: promo.code, days: Number(promo.free_days), note: promo.note }),
+      ],
+      connection,
+    );
+  });
+}
+
+/**
  * The fee terms each quote is charged under on a plan. They're saved on the account when the plan
  * is chosen and on every fee, so a later price change never rewrites an old charge. On the
  * subscription, they're the fee for a quote past the month's allowance.
@@ -267,7 +370,8 @@ export async function getBilling(businessId: string) {
   return transaction(async (connection) => {
     const account = await ensureBillingAccount(businessId, connection),
       usage = await billingCounts(businessId, connection),
-      first = await firstMonth(account, connection);
+      first = await firstMonth(account, connection),
+      code = freeDays(account);
     const provider = billingProvider(),
       configured = provider === 'local' || stripeConfigured();
     return {
@@ -287,6 +391,12 @@ export async function getBilling(businessId: string) {
         : account.card_added_at
           ? null
           : { endsAt: null, feesCents: 0, waivedCents: 0 },
+      /** The free days from a code while they last, with no end date until a card is added. */
+      code: code
+        ? { code: code.code, days: code.days, endsAt: code.endsAt ? iso(code.endsAt) : null }
+        : null,
+      /** A code goes on once, before the first card. */
+      canAddCode: !account.promo_code && !account.card_added_at,
       periodEnd: account.period_end ? iso(account.period_end) : null,
       status: String(account.subscription_status),
       usage: {
@@ -465,25 +575,44 @@ export function dollars(cents: number): string {
 }
 /**
  * What the plan costs, in a line above Checkout's button. Checkout only saves the card, so Stripe
- * shows no price of its own. A first card also gets the first-month max.
+ * shows no price of its own. A first card also gets the first-month max, and a code's free days
+ * come first.
  */
-function checkoutTerms(plan: Plan, firstCard: boolean, freeWeek: boolean): string {
+function checkoutTerms(
+  plan: Plan,
+  firstCard: boolean,
+  freeWeek: boolean,
+  code: { code: string; days: number } | null,
+): string {
   const pricing = publicPricing(),
     { accepted, subscription } = pricing;
-  const first = firstCard
-    ? ` In your first 30 days, quote fees stop at ${dollars(pricing.firstMonthMaxCents)}.`
-    : '';
+  // A code's free days cover the first month, or the max picks up after them.
+  const first =
+    firstCard && !(code && code.days >= FIRST_MONTH_DAYS)
+      ? ` In your first 30 days, quote fees stop at ${dollars(pricing.firstMonthMaxCents)}.`
+      : '';
+  // The subscription's free week is the code's days instead, when they're longer.
+  const free = (days: number) =>
+    `With code ${code?.code}, your first ${days} days are free, starting today. Then `;
   if (plan === 'per_quote')
-    return `${dollars(pricing.perQuoteCents)} for each quote shown to a customer, billed monthly. Nothing today.${first}`;
+    return code
+      ? `${free(code.days)}${dollars(pricing.perQuoteCents)} for each quote shown to a customer, billed monthly.${first}`
+      : `${dollars(pricing.perQuoteCents)} for each quote shown to a customer, billed monthly. Nothing today.${first}`;
+  const percent = `${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.`;
   if (plan === 'per_accepted')
-    return `Nothing today. Each month, your card is billed ${accepted.basisPoints / 100}% of the quotes customers accepted, at least ${dollars(accepted.minimumFeeCents)} and at most ${dollars(accepted.maximumFeeCents)} each. No accepted quotes, no bill.${first}`;
+    return code
+      ? `${free(code.days)}each month, your card is billed ${percent}${first}`
+      : `Nothing today. Each month, your card is billed ${percent}${first}`;
   const price =
     plan === 'monthly'
       ? `${dollars(subscription.monthlyCents)} a month`
       : `${dollars(subscription.yearlyCents)} a year`;
-  const starts = freeWeek
-    ? `${price} after your free week, which starts today.`
-    : `${price}, starting today.`;
+  const starts =
+    freeWeek && code
+      ? `${free(Math.max(code.days, subscription.trialDays))}${price}.`
+      : freeWeek
+        ? `${price} after your free week, which starts today.`
+        : `${price}, starting today.`;
   return `${starts} Includes ${subscription.includedQuotes} quotes a month. Each one past that is ${dollars(subscription.overageCents)}, billed monthly.${first}`;
 }
 
@@ -505,15 +634,14 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     await transaction(async (connection) => {
       const account = await ensureBillingAccount(context.businessId, connection);
       const plan = chosenPlan(account);
-      // Locally the card is taken as given, and a subscription starts on its free week.
-      const freeWeek = isSubscription(plan) && !account.trial_used_at;
+      // Locally the card is taken as given, and a subscription starts on its free week, or on a
+      // code's free days.
+      const freeWeek = freeWeekLeft(plan, account);
       await mutate(
         `UPDATE billing_accounts SET subscription_status=?,period_end=?,last_reconciled_at=UTC_TIMESTAMP(3),card_added_at=COALESCE(card_added_at,UTC_TIMESTAMP(3))${freeWeek ? ',trial_used_at=UTC_TIMESTAMP(3)' : ''} WHERE business_id=?`,
         [
           freeWeek ? 'trialing' : 'active',
-          freeWeek
-            ? new Date(Date.now() + publicPricing().subscription.trialDays * 86400000)
-            : null,
+          freeWeek ? new Date(trialEnd(trialTerms(account)) * 1000) : null,
           context.businessId,
         ],
         connection,
@@ -541,14 +669,16 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         connection,
       );
     }
-    // An open checkout is reused only if it's for the plan they've chosen now.
+    const code = freeDays(account);
+    // An open checkout is reused only if it's for the plan they've chosen now, and their code.
     if (account.checkout_session_id) {
       const existing = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id));
       if (
         existing.status === 'open' &&
         existing.url &&
         existing.mode === 'setup' &&
-        existing.metadata?.plan === plan
+        existing.metadata?.plan === plan &&
+        (existing.metadata?.code ?? '') === (code?.code ?? '')
       )
         return existing.url;
     }
@@ -560,16 +690,12 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         currency: 'usd',
         customer: customerId,
         client_reference_id: context.businessId,
-        metadata: { plan },
+        metadata: { plan, ...(code ? { code: code.code } : {}) },
         // A monthly bill for a business: no buy-now-pay-later or app wallets.
         allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
         custom_text: {
           submit: {
-            message: checkoutTerms(
-              plan,
-              !account.card_added_at,
-              isSubscription(plan) && !account.trial_used_at,
-            ),
+            message: checkoutTerms(plan, !account.card_added_at, freeWeekLeft(plan, account), code),
           },
         },
         setup_intent_data: { metadata: { businessId: context.businessId } },
@@ -577,7 +703,8 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         cancel_url: `${appOrigin()}${back}`,
       },
       {
-        idempotencyKey: `quotient-card:${context.businessId}:${plan}:${Math.floor(Date.now() / 3600000)}`,
+        // A code added since the last checkout changes what this one says, so it's a new one.
+        idempotencyKey: `quotient-card:${context.businessId}:${plan}:${code?.code ?? ''}:${Math.floor(Date.now() / 3600000)}`,
       },
     );
     if (!checkout.url)
@@ -622,9 +749,14 @@ function onPlan(subscription: Stripe.Subscription, plan: Plan) {
  * swaps the price on the quote meter. That item is swapped, never deleted, because Stripe drops a
  * deleted item's usage; quotes from before the switch are billed at the old price. Stripe credits
  * what's left of a period they paid for to their next bills. The free week is the subscription's,
- * and Stripe bills no quotes during a trial, so moving to a per-quote plan ends it.
+ * and Stripe bills no quotes during a trial, so moving to a per-quote plan ends it. A free week
+ * starting now runs to freeUntil.
  */
-async function moveSubscription(subscription: Stripe.Subscription, plan: Plan, freeWeek: boolean) {
+async function moveSubscription(
+  subscription: Stripe.Subscription,
+  plan: Plan,
+  freeUntil: number | null,
+) {
   const current = planItem(subscription),
     currentMetered = meteredItem(subscription);
   const target = planPrices(plan);
@@ -641,11 +773,8 @@ async function moveSubscription(subscription: Stripe.Subscription, plan: Plan, f
     {
       items,
       proration_behavior: 'create_prorations',
-      ...(freeWeek
-        ? {
-            trial_end:
-              Math.floor(Date.now() / 1000) + publicPricing().subscription.trialDays * 86400,
-          }
+      ...(freeUntil
+        ? { trial_end: freeUntil }
         : !isSubscription(plan) && subscription.status === 'trialing'
           ? { trial_end: 'now' as const }
           : {}),
@@ -813,9 +942,10 @@ async function useCheckoutCard(stripe: Stripe, account: RowDataPacket, customerI
 
 /**
  * Starts or moves the subscription so it's on the owner's plan. A plan starts on their saved card,
- * with its free week if they haven't had it, and only one per plan choice and card. A plan they
- * cancelled stays stopped until they pick a plan or save a card again. Returns the subscription it
- * started or moved.
+ * with its free week if they haven't had it, and only one per plan choice and card. With a code,
+ * the free week runs to the end of the code's free days when that's later. A plan they cancelled
+ * stays stopped until they pick a plan or save a card again. Returns the subscription it started
+ * or moved.
  */
 async function matchPlan(
   stripe: Stripe,
@@ -825,14 +955,15 @@ async function matchPlan(
 ): Promise<Stripe.Subscription | null> {
   if (!PLANS.includes(account.plan)) return null;
   const plan = account.plan as Plan;
-  const freeWeek = isSubscription(plan) && !account.trial_used_at;
+  const freeWeek = freeWeekLeft(plan, account);
+  const trial = trialTerms(account);
   const live = subscriptions.find(
     (item) => !item.ended_at && !['canceled', 'incomplete_expired'].includes(item.status),
   );
   if (live) {
     if (onPlan(live, plan)) return null;
     await validatePlanPrices(plan);
-    return moveSubscription(live, plan, freeWeek);
+    return moveSubscription(live, plan, freeWeek ? trialEnd(trial) : null);
   }
   const card = await savedCard(stripe, customerId);
   if (!card) return null;
@@ -848,7 +979,7 @@ async function matchPlan(
       items: planItems(plan),
       billing_mode: { type: 'flexible' },
       metadata: { businessId: String(account.business_id), plan },
-      ...(freeWeek ? { trial_period_days: publicPricing().subscription.trialDays } : {}),
+      ...(freeWeek ? trial : {}),
     },
     { idempotencyKey: `quotient-plan:${account.business_id}:${plan}:${pickedAt}:${card.id}` },
   );
