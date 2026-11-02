@@ -1,20 +1,44 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiMode, aiProvider, modelFor, runWithAiUsage, useSavedAnswers } from './ai/index.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { describeComparison, type SavedRun } from './bench/compare.js';
 import {
+  closeness,
+  describeCloseness,
+  informationGaps,
+  ownerInterval,
+  pricingShape,
+  asPercent,
+  asPoints,
+  type Priced,
+} from './bench/metrics.js';
+import {
+  aimedJob,
   customerMessage,
   drawJob,
   jobSpec,
   ownerQuote,
   ownerTotal,
   pastJobRecord,
+  pastJobs,
   seeded,
   simulatedOwners,
+  sizesShown,
+  stretchedJob,
+  stretchSize,
+  tradeOfferings,
+  type Aim,
+  BLIND_TRADES,
+  CLASSIC_TRADES,
+  HELD_OUT_TRADES,
+  isSealed,
+  WIDE_TRADES,
+  type TradeId,
   type Rng,
   type SimJob,
   type SimOwner,
@@ -22,11 +46,13 @@ import {
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
+  formulaExamples,
   holdFailedFormulas,
   learnedFormula,
   priceFromFormula,
   type Learned,
 } from './pricing/formula-draft.js';
+import { loadPricingData } from './pricing/history.js';
 import { describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
@@ -41,7 +67,20 @@ import { accuracy, closer, share } from './proof.js';
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
  *     [--past 10] [--practice original] [--concurrency 4] [--json <file>] [--formula-only]
- *     [--replay <file>] [--fill] [--compare <file>]
+ *     [--replay <file>] [--fill] [--compare <file>] [--trades classic|wide|<id,id...>]
+ *
+ * The sealed test set is seeds 9001–9100 and the held-out trades (painting, pest control and pool
+ * service, built by someone who never saw the pricing code). Nothing is tuned on it: it runs only
+ * with --sealed, at milestones, and every sealed run is written to bench-results/sealed-runs.log
+ * with when, what and which code, so it's always plain how often it's been looked at.
+ * --trades sealed is every trade, held-out ones included. --trades blind is the practice trades
+ * built the same blind way, for working on how pricing carries over to trades it wasn't built
+ * around without opening the sealed ones.
+ *
+ * --trades picks the businesses: classic (the default) is window cleaning, pressure washing and
+ * gutters, as every run before November 2026 was; wide adds nine more trades that price their own
+ * ways, by bedrooms and bathrooms, by the hour, by vehicle size and the like, with four owners in
+ * each unless --owners says otherwise.
  *
  * With --messy the owners price by eye a little, straying 2–8% from their own rates job to job,
  * the way real owners do. With --formula each job is also priced from the owner's formula (src/pricing/formula-draft.ts),
@@ -66,7 +105,9 @@ type Shape = Parameters<typeof drawJob>[2];
  * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them
  * (experiments, since October 30). The plans setup used before are kept, so a run can compare.
  */
-const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
+type Customer = { shape: Shape; extra?: number; stretch?: 'bigger' | 'smaller'; aim?: Aim };
+
+const PLANS: Record<string, Customer[]> = {
   original: [
     { shape: 'typical' },
     { shape: 'bigger' },
@@ -92,6 +133,25 @@ const PLANS: Record<string, { shape: Shape; extra?: number }[]> = {
     { shape: 'bigger', extra: 0 },
   ],
 };
+// Setup's customers, then two for the service priced at the fewest sizes, past any size priced
+// (stretchSize in src/bench/owners.ts); and, to tell aiming from having more, two plain ones.
+PLANS.stretch = [
+  ...PLANS.experiments,
+  { shape: 'other', stretch: 'bigger' },
+  { shape: 'other', stretch: 'smaller' },
+];
+PLANS.more = [...PLANS.experiments, { shape: 'other' }, { shape: 'other' }];
+// Setup's customers, then six aimed at what the owner hasn't shown (aimedJob in
+// src/bench/owners.ts), or six of the usual customers, which priced better.
+const AIMS: Aim[] = ['size', 'extra', 'choice', 'schedule'];
+PLANS.aimed = [
+  ...PLANS.experiments,
+  ...[0, 1, 2, 3, 4, 5].map((turn) => ({ shape: 'plain' as const, aim: AIMS[turn % AIMS.length] })),
+];
+PLANS.usual = [
+  ...PLANS.experiments,
+  ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
+];
 const PLAN = 'experiments';
 
 function option(name: string) {
@@ -114,30 +174,6 @@ const number = (name: string, fallback: number, max: number) =>
   Math.min(Math.max(Math.round(Number(option(name) ?? fallback)) || fallback, 1), max);
 
 /**
- * The owner's past jobs: three of their main service, small, usual and big, nothing unusual, then
- * with --past more, of any kind, the way an owner's invoices run.
- */
-function pastJobs(rng: Rng, owner: SimOwner, count: number): SimJob[] {
-  const rule = owner.rules.services[0];
-  const [low, high] = rule.sizes;
-  const first = [0.2, 0.5, 0.85].map((share) => {
-    const raw = low + (high - low) * share;
-    return {
-      service: rule.name,
-      quantity: rule.unit === 'sq ft' ? Math.round(raw / 10) * 10 : Math.round(raw),
-      heavy: false,
-      twoStory: rule.height && rng() < 0.4,
-      addOns: [],
-      second: null,
-    };
-  });
-  return [
-    ...first,
-    ...Array.from({ length: Math.max(0, count - 3) }, () => drawJob(rng, owner, 'any')),
-  ];
-}
-
-/**
  * Saves the owner as a business with its past jobs and finished practice customers, the rows the
  * Charm learns from. Past jobs are 10 ms apart, so they always load in the same order and a run
  * asks the model the same things each time. Practice customer i finishes i+1 minutes after the
@@ -147,10 +183,12 @@ async function seedOwner(
   owner: SimOwner,
   rng: { past: Rng; practice: Rng },
   start: Date,
-  plan: { shape: Shape; extra?: number }[],
+  plan: Customer[],
   past: number,
+  offerings: ReturnType<typeof tradeOfferings>,
 ) {
   const id = randomUUID();
+  const jobs: SimJob[] = [];
   await mutate(
     "INSERT INTO businesses (id,name,slug,description,status,trade_id,service_area,metrics_subject) VALUES (?,?,?,'','active',?,?,UUID())",
     [
@@ -167,6 +205,7 @@ async function seedOwner(
       [randomUUID(), id, rule.name, position],
     );
   for (const [index, job] of pastJobs(rng.past, owner, past).entries()) {
+    jobs.push(job);
     const record = pastJobRecord(owner, job);
     await mutate(
       "INSERT INTO past_jobs (id,business_id,service_name,description,price_cents,size,notes,created_at) VALUES (?,?,?,?,?,?,'',?)",
@@ -181,8 +220,20 @@ async function seedOwner(
       ],
     );
   }
-  for (const [position, { shape, extra }] of plan.entries()) {
-    const job = drawJob(rng.practice, owner, shape, extra);
+  const services = owner.rules.services.map((rule) => rule.name);
+  const asked = new Set<string>();
+  // An aim with nothing left to ask for goes on to the next, as the app's plan does.
+  const aimed = (aim: Aim) =>
+    AIMS.map((_, turn) => AIMS[(AIMS.indexOf(aim) + turn) % AIMS.length]).reduce<SimJob | null>(
+      (found, next) => found ?? aimedJob(rng.practice, owner, next, offerings, jobs, asked),
+      null,
+    );
+  for (const [position, { shape, extra, stretch, aim }] of plan.entries()) {
+    const size = stretch ? stretchSize(services, sizesShown(jobs), stretch) : null;
+    const job = size
+      ? stretchedJob(rng.practice, owner, size.service, size.around)
+      : ((aim && aimed(aim)) ?? drawJob(rng.practice, owner, shape, extra));
+    jobs.push(job);
     const quote = ownerQuote(owner, job);
     const spec = jobSpec(owner, job);
     const runId = randomUUID();
@@ -244,7 +295,7 @@ async function seedOwner(
         ],
       );
   }
-  return id;
+  return { id, jobs };
 }
 
 type Test = {
@@ -256,8 +307,23 @@ type Test = {
   /** The Charm's best price, by how much practice it had: 'full', or 0 with --curve. */
   charm: Record<string, { cents: number | null; visit: boolean } | undefined>;
   generic?: { cents: number | null };
-  /** Formula pricing's best price, and why it fell back to the usual draft when it did. */
-  formula?: { cents: number | null; used: boolean; reason?: string };
+  /**
+   * Formula pricing's best price, why it fell back to the usual draft when it did, and why it
+   * doubted the price when it did, which sends it to a real customer as a range.
+   */
+  formula?: {
+    cents: number | null;
+    used: boolean;
+    reason?: string;
+    doubts?: string[];
+    /** What each reading of the owner's quotes came to (src/pricing/formula-draft.ts). */
+    readings?: number[];
+  };
+  /**
+   * What the job's price depends on that the owner's past jobs and practice quotes never showed
+   * (src/bench/metrics.ts); empty when all of it was there to learn.
+   */
+  gaps: string[];
   failed?: string;
 };
 
@@ -350,13 +416,13 @@ export function missBreakdown(
     ['Two services together', (test) => Boolean(test.job.second)],
     [
       'In bad shape, which this owner charges for',
-      (test, owner) => test.job.heavy && owner.rules.heavy > 0,
+      (test, owner) => test.job.heavy && (owner.rules.heavy > 0 || Boolean(owner.rules.heavyFlat)),
     ],
     [
       'Second story, which this owner charges for',
       (test, owner) =>
         test.job.twoStory &&
-        owner.rules.height > 0 &&
+        (owner.rules.height > 0 || Boolean(owner.rules.heightFlat)) &&
         Boolean(owner.rules.services.find((rule) => rule.name === test.job.service)?.height),
     ],
     ['Small enough for the minimum', (test, owner) => test.ownerCents <= owner.rules.minimum],
@@ -367,6 +433,25 @@ export function missBreakdown(
         const rule = owner.rules.services.find((item) => item.name === test.job.service);
         return Boolean(rule?.volume || rule?.bands);
       },
+    ],
+    [
+      'Priced by the hour',
+      (test, owner) =>
+        Boolean(owner.rules.services.find((rule) => rule.name === test.job.service)?.hourly),
+    ],
+    [
+      'Priced by two counts, like bedrooms and bathrooms',
+      (test, owner) =>
+        Boolean(owner.rules.services.find((rule) => rule.name === test.job.service)?.extra),
+    ],
+    [
+      'Priced by what the customer picks, like the vehicle’s size',
+      (test, owner) =>
+        Boolean(owner.rules.services.find((rule) => rule.name === test.job.service)?.options),
+    ],
+    [
+      'Regular visits priced differently',
+      (test, owner) => Boolean(owner.rules.recurring && test.job.frequency),
     ],
     ['It wanted to see the job first', (test) => Boolean(test.charm.full?.visit)],
   ];
@@ -387,19 +472,135 @@ export function missBreakdown(
     );
 }
 
-function lines(label: string, gaps: { gap: number | null }[]) {
-  const stats = accuracy(gaps);
+function lines(label: string, priced: Priced[]) {
+  return [describeCloseness(label, priced)];
+}
+
+/**
+ * Formula quotes it doubted, which a real customer sees as a range, against the ones it would send
+ * as a firm price: how many, how close each kind came, and whether the range would hold the owner's
+ * price (the widest range goes 25% each way).
+ */
+function sureness(
+  tests: Test[],
+  priceOf: (test: Test) => number | null | undefined,
+  priced: (subset: Test[]) => Priced[],
+) {
+  const formula = tests.filter((test) => test.formula?.used && test.formula.doubts);
+  if (!formula.length) return [];
+  const unsure = formula.filter((test) => test.formula!.doubts!.length);
+  const firm = formula.filter((test) => !test.formula!.doubts!.length);
+  const off = (test: Test) => Math.abs((priceOf(test) ?? 0) - test.ownerCents) / test.ownerCents;
   return [
-    `  ${label}: within 10% on ${share(stats.within10, stats.jobs)}, within 15% on ${share(stats.within15, stats.jobs)}, typical miss ${stats.medianGap === null ? '-' : `${stats.medianGap}%`}`,
+    `Formula quotes it would send as a range, doubting them: ${unsure.length} of ${formula.length} (${asPercent(unsure.length / formula.length)}).`,
+    describeCloseness('  Sent as a firm price', priced(firm)),
+    `    of those, more than 25% off: ${firm.filter((test) => off(test) > 0.25).length}, more than 50% off: ${firm.filter((test) => off(test) > 0.5).length}`,
+    describeCloseness('  Sent as a range', priced(unsure)),
+    `    the owner’s price inside the range: ${unsure.filter((test) => off(test) <= 0.25).length} of ${unsure.length}`,
   ];
+}
+
+/**
+ * The measures in full for the price a run is judged on: how sure each is, split by whether the
+ * owner's own quotes showed what the job needed, by how the owner prices, and the worst quotes.
+ */
+function detail(
+  tests: Test[],
+  owners: SimOwner[],
+  priceOf: (test: Test) => number | null | undefined,
+) {
+  const priced = (subset: Test[]) =>
+    subset.map((test) => ({ cents: priceOf(test), ownerCents: test.ownerCents }));
+  const ownerOf = (test: Test) => `${test.owner}`;
+  const within = ownerInterval(tests, ownerOf, (sample) => closeness(priced(sample)).within10);
+  const mean = ownerInterval(tests, ownerOf, (sample) => closeness(priced(sample)).mean);
+  const shown = tests.filter((test) => !test.gaps.length);
+  const unshown = tests.filter((test) => test.gaps.length);
+  const reasons = new Map<string, Test[]>();
+  for (const test of unshown)
+    for (const reason of new Set(test.gaps))
+      reasons.set(reason, [...(reasons.get(reason) ?? []), test]);
+  const shapes = new Map<string, Test[]>();
+  for (const test of tests) {
+    const shape = pricingShape(owners[test.owner], test.job.service);
+    shapes.set(shape, [...(shapes.get(shape) ?? []), test]);
+  }
+  const miss = (test: Test) => {
+    const cents = priceOf(test);
+    return cents ? ((cents - test.ownerCents) / test.ownerCents) * 100 : -100;
+  };
+  const worst = [...tests].sort((a, b) => Math.abs(miss(b)) - Math.abs(miss(a))).slice(0, 5);
+  return [
+    'In full:',
+    describeCloseness('All', priced(tests)),
+    `  Resampling owners: within 10% likely ${asPercent(within.low)}–${asPercent(within.high)}, mean miss ${asPoints(mean.low)}–${asPoints(mean.high)}.`,
+    describeCloseness('Everything it needed was in the owner’s quotes', priced(shown)),
+    describeCloseness('Something it needed never was', priced(unshown)),
+    ...[...reasons.entries()]
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([reason, subset]) => describeCloseness(`  ${reason}`, priced(subset))),
+    ...sureness(tests, priceOf, priced),
+    'By how the owner prices the service:',
+    ...[...shapes.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([shape, subset]) => describeCloseness(shape, priced(subset))),
+    'Furthest off:',
+    ...worst.map(
+      (test) =>
+        `  ${miss(test) >= 0 ? '+' : ''}${Math.round(miss(test))}%: ${owners[test.owner].name}, ${test.message.slice(0, 100)}${test.message.length > 100 ? '…' : ''} ($${(priceOf(test) ?? 0) / 100} against $${test.ownerCents / 100})`,
+    ),
+  ];
+}
+
+/** A line in bench-results/sealed-runs.log for each sealed run: when, what, and on which code. */
+async function logSealed(run: {
+  seed: number;
+  trades: string;
+  owners: number;
+  tests: number;
+  replay?: string;
+  engine: string;
+}) {
+  const git = (args: string[]) =>
+    new Promise<string>((resolve) =>
+      execFile('git', args, (error, stdout) => resolve(error ? '' : stdout.trim())),
+    );
+  const commit = await git(['rev-parse', '--short', 'HEAD']);
+  const changed = await git(['status', '--porcelain', '--untracked-files=no']);
+  const where = path.resolve(fileURLToPath(import.meta.url), '../../../../bench-results');
+  await mkdir(where, { recursive: true });
+  await appendFile(
+    path.join(where, 'sealed-runs.log'),
+    `${new Date().toISOString()} seed ${run.seed}, trades ${run.trades}, ${run.owners} owners, ${run.tests} tests each, ${run.replay ? `replay of ${path.basename(run.replay)}` : 'fresh'}, on ${run.engine}, code ${commit || 'unknown'}${changed ? ' with uncommitted changes' : ''}\n`,
+  );
 }
 
 async function main() {
   if (process.env.DB_NAME !== 'quoting_bench')
     throw new Error('The benchmark only runs on the quoting_bench database. Use scripts/bench.sh.');
-  const count = number('owners', 30, 90);
+  const tradesOption = option('trades') ?? 'classic';
+  const tradeIds: TradeId[] =
+    tradesOption === 'classic'
+      ? CLASSIC_TRADES
+      : tradesOption === 'wide'
+        ? WIDE_TRADES
+        : tradesOption === 'sealed'
+          ? [...WIDE_TRADES, ...HELD_OUT_TRADES]
+          : tradesOption === 'blind'
+            ? BLIND_TRADES
+            : (tradesOption.split(',').map((id) => id.trim()) as TradeId[]);
+  const known = [...WIDE_TRADES, ...HELD_OUT_TRADES, ...BLIND_TRADES];
+  const unknown = tradeIds.filter((id) => !known.includes(id));
+  if (unknown.length)
+    throw new Error(`No simulated owners for ${unknown.join(', ')}. Try ${known.join(', ')}.`);
+  const count = number('owners', tradesOption === 'classic' ? 30 : 4 * tradeIds.length, 120);
   const perOwner = number('tests', 6, 30);
   const seed = number('seed', 1, 1_000_000);
+  const sealed = isSealed(seed, tradeIds);
+  if (sealed && !process.argv.includes('--sealed'))
+    throw new Error(
+      'That’s the sealed test set (seeds 9001–9100, or a held-out trade). Nothing is tuned on it, so it runs only with --sealed, at milestones.',
+    );
   const concurrency = number('concurrency', 4, 12);
   const model = option('model');
   const curve = process.argv.includes('--curve');
@@ -423,6 +624,19 @@ async function main() {
   > = {};
   const callsOf = (operation: string) =>
     (calls[operation] ??= { answered: 0, input: 0, output: 0, failed: {} });
+  /**
+   * What each owner's calls took: working out their formula (every reading, and each of their
+   * quotes read for it), then pricing their new jobs.
+   */
+  type Stage = 'learning' | 'quoting';
+  let stage = 'learning' as Stage;
+  type Spent = { input: number; output: number; calls: number; failed: number };
+  const spent = new Map<string, Record<Stage, Spent>>();
+  const spentBy = (businessId: string) => {
+    const none = () => ({ input: 0, output: 0, calls: 0, failed: 0 });
+    if (!spent.has(businessId)) spent.set(businessId, { learning: none(), quoting: none() });
+    return spent.get(businessId)![stage];
+  };
   const replayFile = fileOption('replay');
   const earlier = replayFile
     ? ((JSON.parse(await readFile(replayFile, 'utf8')) as { answers?: Saved }).answers ?? null)
@@ -433,19 +647,21 @@ async function main() {
   replayOnly = Boolean(earlier) && !fill;
   const answers = savedAnswers(earlier, fill);
   const generic = aiMode !== 'demo' && !formulaOnly;
-  const owners = simulatedOwners(seed, count, messy);
+  const owners = simulatedOwners(seed, count, messy, tradeIds);
   const start = new Date(Date.now() - 86_400_000);
 
+  const offerings = tradeOfferings(owners);
   console.info(`Setting up ${count} simulated owners.`);
   const tests: Test[] = [];
   for (const [index, owner] of owners.entries()) {
     const base = seed * 1000 + index * 10;
-    const businessId = await seedOwner(
+    const { id: businessId, jobs: examples } = await seedOwner(
       owner,
       { past: seeded(base + 1), practice: seeded(base + 2) },
       start,
       plan,
       past,
+      offerings,
     );
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
@@ -457,6 +673,7 @@ async function main() {
         message: customerMessage(rng, owner, job),
         ownerCents: ownerTotal(owner, job),
         charm: {},
+        gaps: informationGaps(owner, examples, job),
       });
     }
   }
@@ -478,12 +695,17 @@ async function main() {
           tokens.input += usage.inputTokens;
           tokens.output += usage.outputTokens;
           tokens.calls++;
+          const mine = spentBy(businessId);
+          mine.input += usage.inputTokens;
+          mine.output += usage.outputTokens;
+          mine.calls++;
           const kind = callsOf(usage.operation);
           kind.answered++;
           kind.input += usage.inputTokens;
           kind.output += usage.outputTokens;
         },
         failed: async (failure) => {
+          spentBy(businessId).failed++;
           const kind = callsOf(failure.operation);
           kind.failed[failure.reason] = (kind.failed[failure.reason] ?? 0) + 1;
         },
@@ -547,6 +769,8 @@ async function main() {
             cents: best(drafted),
             used: use.used,
             reason: use.used ? undefined : use.reason,
+            doubts: use.used ? use.doubts : undefined,
+            readings: use.used ? use.readings : undefined,
           };
         } catch (error) {
           test.failed = error instanceof Error ? error.message : String(error);
@@ -597,22 +821,34 @@ async function main() {
       3,
     );
   }
+  stage = 'quoting';
   console.info(`Pricing ${tests.length} new jobs with ${engine}: ${tasks.length} drafts.`);
   await pool(tasks, concurrency);
 
   const scored = tests.filter((test) => !test.failed);
   const report = (subset: Test[]) => {
-    const charm = subset.map((test) => ({ gap: gapOf(test.charm.full?.cents, test.ownerCents) }));
-    const others = subset.map((test) => ({ gap: gapOf(test.generic?.cents, test.ownerCents) }));
-    const formulas = subset.map((test) => ({ gap: gapOf(test.formula?.cents, test.ownerCents) }));
+    const charm = subset.map((test) => ({
+      cents: test.charm.full?.cents,
+      ownerCents: test.ownerCents,
+    }));
+    const others = subset.map((test) => ({
+      cents: test.generic?.cents,
+      ownerCents: test.ownerCents,
+    }));
+    const formulas = subset.map((test) => ({
+      cents: test.formula?.cents,
+      ownerCents: test.ownerCents,
+    }));
     return { charm, others, formulas };
   };
+  const gapped = (priced: Priced[]) =>
+    priced.map((item) => ({ gap: gapOf(item.cents, item.ownerCents) }));
   const out: string[] = [];
   const trades = [...new Set(owners.map((owner) => owner.trade))];
   out.push(
     `PriceCharm simulated-owner benchmark, ${new Date().toISOString().slice(0, 10)}, seed ${seed}`,
     '',
-    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${formulaOnly ? `This run priced with the owner’s formula alone (--formula-only), on ${engine}.` : generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
+    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: ${tradesOption === 'classic' ? 'rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round' : 'rates, size bands, hourly crews, bedrooms and bathrooms, vehicle sizes, regular-visit prices, minimums, extra for jobs in bad shape or hard to reach, add-ons, set fees, and how they round'}.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${formulaOnly ? `This run priced with the owner’s formula alone (--formula-only), on ${engine}.` : generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
     '',
     `All ${scored.length} jobs:`,
   );
@@ -621,9 +857,11 @@ async function main() {
   if (formula) out.push(...lines('Formula pricing', all.formulas));
   if (generic) {
     out.push(...lines('Generic AI', all.others));
-    const wins = closer(all.charm.map((charm, index) => ({ charm, generic: all.others[index] })));
-    const charmMiss = accuracy(all.charm).medianGap,
-      genericMiss = accuracy(all.others).medianGap;
+    const charmGaps = gapped(all.charm),
+      genericGaps = gapped(all.others);
+    const wins = closer(charmGaps.map((charm, index) => ({ charm, generic: genericGaps[index] })));
+    const charmMiss = accuracy(charmGaps).medianGap,
+      genericMiss = accuracy(genericGaps).medianGap;
     out.push(
       `  Closer to the owner: the Charm on ${share(wins.charm, scored.length)}, the generic AI on ${share(wins.generic, scored.length)}${wins.tied ? `, tied on ${wins.tied}` : ''}.`,
     );
@@ -668,7 +906,26 @@ async function main() {
         fits: result?.fits ?? false,
         gaps: result?.gaps ?? [],
         formula: result?.formula ?? null,
+        answer: result?.answer ?? null,
         examples: result?.examples ?? [],
+        also: (result?.also ?? []).map(({ fits, gaps, formula, answer, examples }) => ({
+          fits,
+          gaps,
+          formula,
+          answer,
+          examples,
+        })),
+        // What it was worked out from, so a formula can be tuned and checked again offline.
+        checks: businessId
+          ? formulaExamples((await loadPricingData(businessId)).history).map(
+              ({ service, request, totalCents, lines }) => ({
+                service,
+                request,
+                totalCents,
+                lines,
+              }),
+            )
+          : [],
       });
     }
     out.push(
@@ -678,7 +935,7 @@ async function main() {
       `  It priced ${share(used.length, scored.length)} jobs itself:`,
       ...lines(
         '  On those',
-        used.map((test) => ({ gap: gapOf(test.formula?.cents, test.ownerCents) })),
+        used.map((test) => ({ cents: test.formula?.cents, ownerCents: test.ownerCents })),
       ),
       ...[...reasons.entries()].map(([reason, n]) => `  The AI drafted ${n} because ${reason}.`),
       'Where formula pricing misses (typical miss on jobs with each, then without):',
@@ -688,6 +945,14 @@ async function main() {
       ),
     );
   }
+  out.push(
+    '',
+    ...detail(
+      scored,
+      owners,
+      formula ? (test) => test.formula?.cents : (test) => test.charm.full?.cents,
+    ),
+  );
   out.push('', 'By trade:');
   for (const trade of trades) {
     const subset = scored.filter((test) => owners[test.owner].trade === trade);
@@ -703,7 +968,7 @@ async function main() {
       'What practice adds (the Charm on the same jobs):',
       ...lines(
         'Past jobs only',
-        scored.map((test) => ({ gap: gapOf(test.charm['0']?.cents, test.ownerCents) })),
+        scored.map((test) => ({ cents: test.charm['0']?.cents, ownerCents: test.ownerCents })),
       ),
       ...lines(`Plus ${plan.length} practice quotes`, all.charm),
     );
@@ -714,6 +979,44 @@ async function main() {
     out.push(
       '',
       `${tokens.calls} model calls: ${tokens.input.toLocaleString('en-US')} tokens in, ${tokens.output.toLocaleString('en-US')} out.`,
+    );
+  // Tokens for each trade: an owner's formula, and each new job, on average. Failed calls have no
+  // tokens to count, though the API may still charge for them.
+  const tradeOf = new Map(tests.map((test) => [test.businessId, owners[test.owner].trade]));
+  const byTrade = trades.map((trade) => {
+    const ids = [...spent.keys()].filter((id) => tradeOf.get(id) === trade);
+    const sum = (stage: Stage) =>
+      ids.reduce(
+        (total, id) => {
+          const item = spent.get(id)![stage];
+          return {
+            input: total.input + item.input,
+            output: total.output + item.output,
+            calls: total.calls + item.calls,
+            failed: total.failed + item.failed,
+          };
+        },
+        { input: 0, output: 0, calls: 0, failed: 0 },
+      );
+    const quotes = tests.filter((test) => owners[test.owner].trade === trade).length;
+    return {
+      trade,
+      owners: ids.length,
+      quotes,
+      learning: sum('learning'),
+      quoting: sum('quoting'),
+    };
+  });
+  const thousands = (tokens: number) => `${Math.round(tokens / 1000).toLocaleString('en-US')}k`;
+  if (byTrade.some((item) => item.owners))
+    out.push(
+      'Tokens by trade, for each owner’s formula and then each new job:',
+      ...byTrade
+        .filter((item) => item.owners)
+        .map(
+          ({ trade, owners: count, quotes, learning, quoting }) =>
+            `  ${trade}: formula ${thousands(learning.input / count)} in / ${thousands(learning.output / count)} out, each job ${thousands(quoting.input / Math.max(1, quotes))} in / ${thousands(quoting.output / Math.max(1, quotes))} out${learning.failed + quoting.failed ? `, ${learning.failed + quoting.failed} failed calls` : ''}`,
+        ),
     );
   // Failures are counted per try, so a formula that took three tries shows two here.
   const kinds = Object.entries(calls).sort(([a], [b]) => a.localeCompare(b));
@@ -739,6 +1042,7 @@ async function main() {
     formulaOnly,
     tokens,
     calls,
+    spent: byTrade,
     owners,
     learned,
     tests: tests.map((test) => ({
@@ -747,6 +1051,10 @@ async function main() {
       spec: describeSpec(jobSpec(owners[test.owner], test.job)),
     })),
   };
+  // Saved before comparing, so a run the comparison refuses keeps the answers it paid for.
+  const file = fileOption('json');
+  if (file)
+    await writeFile(file, `${JSON.stringify({ ...run, answers: answers.kept }, null, 2)}\n`);
   const against = fileOption('compare');
   if (against) {
     const before = JSON.parse(await readFile(against, 'utf8')) as SavedRun;
@@ -759,11 +1067,17 @@ async function main() {
   }
   console.info(`\n${out.join('\n')}`);
 
-  const file = fileOption('json');
-  if (file) {
-    await writeFile(file, `${JSON.stringify({ ...run, answers: answers.kept }, null, 2)}\n`);
+  if (sealed)
+    await logSealed({
+      seed,
+      trades: tradesOption,
+      owners: count,
+      tests: perOwner,
+      replay: replayFile,
+      engine,
+    });
+  if (file)
     console.info(`\nSaved every owner’s rules, every job and every model answer to ${file}.`);
-  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

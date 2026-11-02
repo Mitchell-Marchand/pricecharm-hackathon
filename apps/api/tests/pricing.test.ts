@@ -197,52 +197,44 @@ test('job details read as fields and as a line for the owner', () => {
   assert.equal(specFromScenario({ ...scenario, quantity: 18, unit: 'Windows' }).unit, 'windows');
 });
 
-test('practice aims where the AI knows least', () => {
+test('after setup, practice goes to a service never priced, then everyday customers', () => {
   const base: PlanInput = {
     position: 3,
     setupCount: 3,
     services: ['Driveways', 'House wash'],
-    points: points('Driveways', 'sq ft', [
-      [500, 20000],
-      [900, 32000],
-    ]),
     examples: { driveways: 2, 'house wash': 0 },
-    finished: [],
+    asked: [],
   };
   assert.equal(planSituation({ ...base, position: 1 }), SITUATIONS[1], 'Setup keeps its mix');
   assert.match(planSituation(base), /"House wash" service.*haven't priced/);
   const covered = { ...base, examples: { driveways: 2, 'house wash': 1 } };
-  const miss = {
-    service: 'Driveways',
-    situation: SITUATIONS[0],
-    gap: 30,
-    confidence: 'medium',
-  };
-  assert.match(planSituation({ ...covered, finished: [miss] }), /^Another "Driveways" job/);
-  assert.match(
-    planSituation({ ...covered, finished: [{ ...miss, gap: 5 }] }),
-    /bigger "Driveways" job .* around 1,800 sq ft/,
+  // Each draw below 0.3 says yes: the other service, an extra or two, bad shape, and so on.
+  const draws =
+    (...values: number[]) =>
+    () =>
+      values.shift() ?? 0.99;
+  assert.equal(
+    planSituation({ ...covered, random: draws(0.9, 0.9, 0.1, 0.9, 0.9, 0.9, 0.9) }),
+    'An everyday customer for their "Driveways" service, like the ones they get all the time, with a job on the smaller side of their usual jobs for it. It’s in normal shape. No extras. If the work comes in versions, like materials or grades, they pick the one that suits them.',
   );
-  const afterBigger = [
-    { ...miss, gap: 5 },
-    { ...miss, gap: 5, situation: 'A bigger "Driveways" job than they\'ve priced so far.' },
-  ];
-  assert.match(
-    planSituation({ ...covered, finished: afterBigger }),
-    /small "Driveways" job, around 250 sq ft/,
-  );
+  const busy = planSituation({ ...covered, random: draws(0.9, 0.1, 0.9, 0.5, 0.1, 0.1, 0.1, 0.1) });
+  assert.match(busy, /"Driveways" service.* in the middle .* rough shape.* harder to reach/);
+  assert.match(busy, /two extras.*another of their services.*regular schedule/);
+  assert.match(planSituation({ ...covered, random: draws(0.1, 0) }), /"House wash" service/);
+
+  const driveways = points('Driveways', 'sq ft', [
+    [500, 20000],
+    [900, 32000],
+  ]);
 
   // Practice for one service the owner picked goes after what that service still needs.
-  assert.match(
-    focusSituation('House wash', base.points),
-    /"House wash" service, sized like a usual/,
-  );
+  assert.match(focusSituation('House wash', driveways), /"House wash" service, sized like a usual/);
   assert.match(
     focusSituation('Driveways', points('Driveways', 'sq ft', [[600, 25000]])),
     /a bit bigger than the one they've priced, around 900 sq ft/,
   );
-  assert.match(focusSituation('driveways', base.points), /smaller "driveways" job .* 300 sq ft/);
-  const three = [...base.points, ...points('Driveways', 'sq ft', [[1200, 42000]])];
+  assert.match(focusSituation('driveways', driveways), /smaller "driveways" job .* 300 sq ft/);
+  const three = [...driveways, ...points('Driveways', 'sq ft', [[1200, 42000]])];
   assert.match(
     focusSituation('Driveways', three),
     /usual "Driveways" job, around 900 sq ft/,

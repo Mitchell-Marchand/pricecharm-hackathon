@@ -8,8 +8,10 @@ import { json } from '../models.js';
 import { quoteTotal, type DraftedQuote } from '../practice/types.js';
 import { withAiUsage } from '../usage.js';
 import {
+  doubtsAbout,
   fitGaps,
   formulaFits,
+  formulaUsable,
   ownerRounding,
   priceJob,
   refineFormula,
@@ -82,13 +84,23 @@ export function formulaExamples(history: PricingHistory): FormulaExample[] {
 
 export type Learned = {
   formula: PriceFormula;
+  /** The AI's formula before it was tuned on the owner's quotes. */
+  answer?: PriceFormula;
   /** The owner's notes it was worked out with. */
   notes: string[];
   /** Each example as the AI reads it at quote time, by its index, or null if it couldn't. */
   examples: (JobParts | null)[];
   /** How far the formula's price is from each example's total, in percent. */
   gaps: (number | null)[];
+  /** Each example's total, as the owner charged it. */
+  totals?: number[];
   fits: boolean;
+  /**
+   * The same quotes worked out again, separately. The AI's reading of a few prices differs from
+   * one time to the next, so a job is priced at the middle of them all, and doubted when they
+   * disagree.
+   */
+  also?: Learned[];
 };
 
 /** Runs tasks a few at a time, in order. */
@@ -105,35 +117,70 @@ async function inTurns<T, R>(items: T[], at: number, task: (item: T) => Promise<
   return results;
 }
 
+/**
+ * How formulas are worked out and tuned. A change to it works every owner's formula out again, the
+ * next time one is needed.
+ */
+const LEARNING = '2026-11-01.2';
+
 /** What a formula is worked out from: the owner's quotes and their notes about their prices. */
 function examplesKey(examples: FormulaExample[], notes: string[]) {
-  return createHash('sha256').update(JSON.stringify({ examples, notes })).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify({ examples, notes, learning: LEARNING }))
+    .digest('hex');
 }
 
-/** Works out the owner's formula from their quotes and notes, then checks and tunes it on them. */
-async function learnFrom(data: PricingData, examples: FormulaExample[], model?: string) {
+/**
+ * How many times the formula is worked out from the same quotes. On the benchmark, prices from
+ * three readings that came within 2% of each other were within 10% of the owner's 89% of the time,
+ * and ones more than 10% apart only half the time.
+ */
+const READINGS = 3;
+
+/**
+ * Works out the owner's formula from their quotes and notes, then checks and tunes it on them,
+ * a few separate times.
+ */
+async function learnFrom(
+  data: PricingData,
+  examples: FormulaExample[],
+  model?: string,
+): Promise<Learned> {
   const { notes } = data.history;
-  const ask = (quick: boolean) =>
-    learnFormula({
-      quick,
-      business: { trade: data.history.business.trade, services: data.history.business.services },
-      examples,
-      notes,
-      model,
-    });
+  const business = { trade: data.history.business.trade, services: data.history.business.services };
+  const ask = (reading: number, quick: boolean) =>
+    learnFormula({ quick, business, examples, notes, model, reading });
   // Working out a formula reasons at length, and the API sometimes gives up on long calls, so it
   // gets two more tries before the quote falls back to the usual draft.
-  const attempt = async (tries: number): Promise<PriceFormula> => {
+  const attempt = async (reading: number, tries: number): Promise<PriceFormula> => {
     try {
       // The last try reasons less, so it finishes inside its allowance.
-      return await ask(tries <= 1);
+      return await ask(reading, tries <= 1);
     } catch (error) {
       if (tries <= 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, 5000));
-      return attempt(tries - 1);
+      return attempt(reading, tries - 1);
     }
   };
-  const answer = await attempt(3);
+  const readings = await Promise.allSettled(
+    Array.from({ length: READINGS }, (_, reading) =>
+      attempt(reading, 3).then((answer) => settle(answer, examples, notes, model)),
+    ),
+  );
+  const learned = readings.flatMap((reading) =>
+    reading.status === 'fulfilled' ? [reading.value] : [],
+  );
+  if (!learned.length) throw (readings[0] as PromiseRejectedResult).reason;
+  return { ...learned[0], also: learned.slice(1) };
+}
+
+/** Checks and tunes the AI's formula on the owner's own quotes, read the way new requests are. */
+async function settle(
+  answer: PriceFormula,
+  examples: FormulaExample[],
+  notes: string[],
+  model?: string,
+): Promise<Learned> {
   // Rounding is counted from what they wrote: every line, and every total with no discount.
   const learned = {
     ...answer,
@@ -157,7 +204,7 @@ async function learnFrom(data: PricingData, examples: FormulaExample[], model?: 
         conversation: [{ from: 'customer', text: example.request }],
       },
       model,
-    }).then(({ uncovered: _uncovered, ...parts }) => parts);
+    }).then(({ uncovered: _uncovered, unpriced: _unpriced, ...parts }) => parts);
   const parts = await inTurns(examples, 3, (example) =>
     read(example)
       .catch(() => read(example))
@@ -165,14 +212,22 @@ async function learnFrom(data: PricingData, examples: FormulaExample[], model?: 
   );
   const checked = examples.flatMap((example, index) => {
     const found = parts[index];
-    return found ? [{ parts: found, totalCents: example.totalCents }] : [];
+    return found ? [{ parts: found, totalCents: example.totalCents, lines: example.lines }] : [];
   });
   const formula = refineFormula(learned, checked);
   const gaps = examples.map((example, index) => {
     const found = parts[index];
     return found ? fitGaps(formula, [{ parts: found, totalCents: example.totalCents }])[0] : null;
   });
-  return { formula, notes, examples: parts, gaps, fits: formulaFits(gaps) };
+  return {
+    formula,
+    answer: learned,
+    notes,
+    examples: parts,
+    gaps,
+    fits: formulaFits(gaps),
+    totals: examples.map((example) => example.totalCents),
+  };
 }
 
 const learning = new Map<string, Promise<Learned | null>>();
@@ -275,7 +330,16 @@ export async function currentFormula(businessId: string, data: PricingData) {
     : null;
 }
 
-export type FormulaUse = { used: true; formula: PriceFormula } | { used: false; reason: string };
+export type FormulaUse =
+  | {
+      used: true;
+      formula: PriceFormula;
+      /** Why it isn't sure of this one, in the owner's words, when it isn't (doubtsAbout). */
+      doubts: string[];
+      /** What each reading of the owner's quotes came to, lowest first. */
+      readings: number[];
+    }
+  | { used: false; reason: string };
 
 /** The job's size from what the customer said, when it's in the unit the formula prices by. */
 function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | null) {
@@ -285,9 +349,51 @@ function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | nu
   return unit === spec.unit ? spec.quantity : null;
 }
 
+/** One reading's price for the job, or why it can't price it. */
+async function readingPrice(
+  learned: Learned,
+  input: {
+    serviceName: string;
+    conversation: { from: 'customer' | 'owner'; text: string }[];
+    spec: JobSpec | null;
+    media?: string[];
+    model?: string;
+  },
+) {
+  const { formula } = learned;
+  const read = await readJobParts({
+    formula,
+    request: {
+      serviceName: input.serviceName,
+      conversation: input.conversation,
+      details: describeJob(input.spec, input.media) || undefined,
+    },
+    model: input.model,
+  });
+  if (read.uncovered) return { reason: `the formula doesn’t cover ${read.uncovered}` };
+  const { unpriced, uncovered: _uncovered, ...asked } = read;
+  const parts = { ...asked, size: measuredSize(formula, read.service, input.spec) ?? read.size };
+  const priced = priceJob(formula, parts);
+  if (!priced) return { reason: 'the formula can’t price this job' };
+  // Its doubts are judged against the owner's own quotes, as the formula was checked on them.
+  const checks = learned.examples.flatMap((found, index) =>
+    found && learned.totals?.[index] ? [{ parts: found, totalCents: learned.totals[index] }] : [],
+  );
+  const doubts = [
+    ...(learned.fits ? [] : ['It doesn’t give back enough of your own quotes yet.']),
+    // A choice the customer made that none of the owner's quotes priced, like a cheaper finish.
+    ...(unpriced ? [`They asked for ${unpriced}, which you haven’t priced yet.`] : []),
+    ...doubtsAbout(formula, checks, parts, priced),
+  ];
+  return { formula, priced, doubts };
+}
+
+const dollars = (cents: number) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
+
 /**
  * The quote from the owner's formula, when it fits their own quotes and covers everything the
- * customer asks for. The AI only reads the request; the server does the arithmetic.
+ * customer asks for. The AI only reads the request; the server does the arithmetic. Each reading
+ * of the owner's quotes prices the job, and the quote is the middle one, the higher of two.
  */
 export async function priceFromFormula(
   learned: Learned | null,
@@ -302,32 +408,47 @@ export async function priceFromFormula(
 ): Promise<{ drafted: DraftedQuote | null; use: FormulaUse }> {
   const skip = (reason: string) => ({ drafted: null, use: { used: false as const, reason } });
   if (!learned) return skip('too few priced jobs for a formula');
-  if (!learned.fits) return skip('the formula doesn’t give back the owner’s own prices');
-  const { formula } = learned;
-  const read = await readJobParts({
-    formula,
-    request: {
-      serviceName: input.serviceName,
-      conversation: input.conversation,
-      details: describeJob(input.spec, input.media) || undefined,
-    },
-    model: input.model,
-  });
-  if (read.uncovered) return skip(`the formula doesn’t cover ${read.uncovered}`);
-  const parts = { ...read, size: measuredSize(formula, read.service, input.spec) ?? read.size };
-  const priced = priceJob(formula, parts);
-  if (!priced) return skip('the formula can’t price this job');
+  const readings = [learned, ...(learned.also ?? [])].filter(
+    (reading) => reading.fits || formulaUsable(reading.gaps),
+  );
+  if (!readings.length) return skip('the formula doesn’t give back the owner’s own prices');
+  const results = await Promise.all(readings.map((reading) => readingPrice(reading, input)));
+  const priced = results
+    .flatMap((result) => ('priced' in result && result.priced ? [result] : []))
+    .sort((a, b) => a.priced.totalCents - b.priced.totalCents);
+  // Most readings have to price it: one that covers what the others say nothing covers is a guess.
+  if (priced.length * 2 < results.length || !priced.length)
+    return skip(
+      results.find((result) => 'reason' in result)?.reason ?? 'the formula can’t price this job',
+    );
+  const middle = priced[Math.floor(priced.length / 2)];
+  const low = priced[0].priced.totalCents,
+    high = priced.at(-1)!.priced.totalCents;
+  const doubts = [
+    ...middle.doubts,
+    ...(high > low * 1.1
+      ? [
+          `Your quotes can be read more than one way for this job: anywhere from ${dollars(low)} to ${dollars(high)}.`,
+        ]
+      : []),
+  ];
   return {
     drafted: {
       decision: 'quote',
       reason: '',
-      lines: priced.lines,
-      discount: priced.discount,
+      lines: middle.priced.lines,
+      discount: middle.priced.discount,
       start: '',
       duration: '',
-      confidence: 'high',
-      reasoning: 'Priced the way your own quotes add up.',
+      // A quote it doubts goes out as a range, never as a firm price.
+      confidence: doubts.length ? 'low' : 'high',
+      reasoning: ['Priced the way your own quotes add up.', ...doubts].join(' '),
     },
-    use: { used: true as const, formula },
+    use: {
+      used: true as const,
+      formula: middle.formula,
+      doubts,
+      readings: priced.map((item) => item.priced.totalCents),
+    },
   };
 }

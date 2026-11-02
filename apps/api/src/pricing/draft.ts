@@ -13,7 +13,7 @@ import { describeJob, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
 
 /** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
-const FORMULA_VERSION = 'formula-2026-10-30';
+const FORMULA_VERSION = 'formula-2026-11-01';
 
 /** Photos from the owner's own past jobs that go with a draft, next to the customer's. */
 const REFERENCE_PHOTOS = 2;

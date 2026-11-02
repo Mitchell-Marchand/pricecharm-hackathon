@@ -37,6 +37,11 @@ export type AiRequestOptions = {
   metaVideoFileId?: string;
   /** Longer than AI_TIMEOUT_MS, for work that reasons at length, like working out a formula. */
   timeoutMs?: number;
+  /**
+   * Which of several separate askings of the same question this is, so the benchmark keeps an
+   * answer for each. The model is sent the same thing every time.
+   */
+  asking?: number;
 };
 export type AiImage = { mimeType: string; dataBase64: string };
 export type AiDocument = { filename: string; mimeType: 'application/pdf'; dataBase64: string };
@@ -172,7 +177,13 @@ export async function requestJson<T>(
   const model = options.model || modelFor(operation);
   const saved = savedAnswers;
   const savedKey = saved
-    ? answerKey(operation, model, instructions, input, [...images, ...documents])
+    ? answerKey(
+        options.asking ? `${operation}#${options.asking}` : operation,
+        model,
+        instructions,
+        input,
+        [...images, ...documents],
+      )
     : '';
   if (saved) {
     const answer = saved.answer(savedKey);

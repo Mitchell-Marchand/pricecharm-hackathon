@@ -24,7 +24,8 @@
     "bench:compare": "node --import tsx src/bench/compare.ts",
     "proof:production": "node dist/proof.js",
     "ops:production": "node dist/ops.js --http",
-    "stripe:setup": "node --import tsx src/stripe-setup.ts"
+    "stripe:setup": "node --import tsx src/stripe-setup.ts",
+    "promo": "node --import tsx src/promo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

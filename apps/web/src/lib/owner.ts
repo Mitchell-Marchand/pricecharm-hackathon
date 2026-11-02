@@ -199,6 +199,10 @@ export interface Billing {
    * Null once it's over.
    */
   firstMonth: { endsAt: string | null; feesCents: number; waivedCents: number } | null;
+  /** The free days from a code while they last. They have no end date until a card is added. */
+  code: { code: string; days: number; endsAt: string | null } | null;
+  /** A code can go on: they haven't used one, and haven't added a card. */
+  canAddCode: boolean;
   periodEnd: string | null;
   coveredThisMonth: number;
   /** The quote link takes requests: deployed, and not paused. */
@@ -231,6 +235,8 @@ function complete(billing: Billing): Billing {
     pricing: billing.pricing ?? DEFAULT_PRICING,
     freeWeek: billing.freeWeek ?? true,
     firstMonth: billing.firstMonth ?? null,
+    code: billing.code ?? null,
+    canAddCode: billing.canAddCode ?? false,
     periodEnd: billing.periodEnd ?? null,
     coveredThisMonth: billing.coveredThisMonth ?? 0,
     // Before deploying existed, a link with billing in place was already taking requests.
@@ -251,6 +257,9 @@ export const startCheckout = (from?: 'setup') =>
 /** Picks or switches the plan. It takes effect now, and with a card on file the plan starts on it. */
 export const choosePlan = (plan: Plan) =>
   api<Billing>('/app/billing/plan', { method: 'POST', ...json({ plan }) }).then(complete);
+/** Puts a code on the account, for free days from the first card. */
+export const addCode = (code: string) =>
+  api<Billing>('/app/billing/code', { method: 'POST', ...json({ code }) }).then(complete);
 /** Deploys the agent: the quote link starts taking requests. Needs a plan and a card. */
 export const deployAgent = () =>
   api<Billing>('/app/deploy', { method: 'POST', ...json({}) }).then(complete);

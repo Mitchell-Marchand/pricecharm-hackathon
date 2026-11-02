@@ -5,7 +5,7 @@ import { Check } from 'lucide-react';
 import { Button, Segmented, Tag } from '@/components/ui';
 import type { Billing } from '@/lib/owner';
 import { choiceOf, type Plan, type PlanChoice } from '@/lib/plans';
-import { cx, money } from '@/lib/util';
+import { cx, money, shortDate } from '@/lib/util';
 
 type Card = {
   label: string;
@@ -65,7 +65,8 @@ export function PlanCards({
       unit: yearly ? 'a year' : 'a month',
       line: '',
       points: [
-        ...(freeWeek ? ['First week free'] : []),
+        // With a code every plan starts free, as the line under them says.
+        ...(freeWeek && !billing.code ? ['First week free'] : []),
         `${subscription.includedQuotes} quotes a month included`,
         `${money(subscription.overageCents)} a quote after that`,
       ],
@@ -148,7 +149,13 @@ export function PlanCards({
         })}
       </div>
       {/* Under every plan alike, so it doesn't favor one. */}
-      {billing.firstMonth && pricing.firstMonthMaxCents ? (
+      {billing.code ? (
+        <p className="text-[15px] text-ink-2">
+          {billing.code.endsAt
+            ? `With code ${billing.code.code}, quotes are free until ${shortDate(billing.code.endsAt)}, whichever plan you’re on.`
+            : `With code ${billing.code.code}, your first ${billing.code.days} days are free, whichever plan you pick.`}
+        </p>
+      ) : billing.firstMonth && pricing.firstMonthMaxCents ? (
         <p className="text-[15px] text-ink-2">
           Whichever you pick, your quote fees stop at {money(pricing.firstMonthMaxCents)} for the
           first 30 days. Quotes past that still go out, and you don’t pay for them.

@@ -24,6 +24,16 @@ export type FormulaService = {
   shape?: PriceShape;
   /** No job of this service for less, when the owner has a minimum for it. */
   minimumCents: number | null;
+  /**
+   * Set when the owner charged a job of this service alone less than another service's minimum,
+   * so that minimum isn't theirs for this one.
+   */
+  underOthersMinimum?: boolean;
+  /**
+   * A second count the price follows, like bathrooms next to bedrooms: cents for each one past
+   * the ones the main price includes.
+   */
+  extra?: { unit: string; rateCents: number; included: number } | null;
 };
 
 export type PriceShape = 'line' | 'bands' | 'fit';
@@ -32,7 +42,10 @@ export type FormulaSurcharge = {
   name: string;
   /** When it applies, in the owner's terms: "heavy moss", "second story". */
   when: string;
-  /** Percent of the main work, or a flat amount. */
+  /**
+   * Percent of the main work, or a flat amount. Below zero takes off, like a discount for regular
+   * visits or a cheaper material.
+   */
   percent: number | null;
   flatCents: number | null;
 };
@@ -42,6 +55,19 @@ export type FormulaAddOn = {
   /** Per unit of the job's size, once per job, or per item counted (like each downspout). */
   per: 'unit' | 'job' | 'item';
   cents: number;
+  /** On every job, whether the customer asks or not, like a trip charge. */
+  always?: boolean;
+  /**
+   * For one priced by the size: the unit it was quoted in, and what it came to on the jobs it was
+   * quoted on (the middle one), for a job measured some other way.
+   */
+  unit?: string;
+  jobCents?: number;
+  /**
+   * What it cost on jobs measured another way, when the owner's quotes show it there, like pet
+   * odor charged by the room on carpet and as one price on a rug.
+   */
+  elsewhereCents?: number;
 };
 
 export type PriceFormula = {
@@ -67,6 +93,16 @@ export type JobParts = {
   surcharges: string[];
   addOns: { name: string; count: number | null }[];
   otherServices: { name: string; size: number | null }[];
+  /** The job's second count, for a service priced by one, like 2 bathrooms. */
+  extraSize?: number | null;
+};
+
+/** One of the owner's quotes, as the formula is checked against it. */
+export type FormulaCheck = {
+  parts: JobParts;
+  totalCents: number;
+  /** The owner's own lines, when the quote has them. Past jobs only have a total. */
+  lines?: { label: string; amountCents: number }[] | null;
 };
 
 export type FormulaQuote = {
@@ -122,6 +158,12 @@ function smaller(cents: number, from: number, slope: number, size: number) {
  */
 export function mainWork(service: FormulaService, size: number): number | null {
   const points = sortedPoints(service.points);
+  // At a size they've priced, it's their own price there (the average, if they priced it more than
+  // once): a line through all their prices can't know this size better than they did. On the
+  // benchmark this fixed 19 jobs for every 3 it broke, most of all where prices step, like a crew
+  // that grows with the home.
+  const exact = points.filter((point) => Math.abs(point.size - size) <= size * 0.01);
+  if (exact.length) return exact.reduce((sum, point) => sum + point.cents, 0) / exact.length;
   const first = points[0],
     last = points.at(-1);
   if (first && last && points.length >= 2 && service.shape === 'fit') {
@@ -191,20 +233,29 @@ const rounded = (cents: number, to: number) =>
 
 /**
  * The least a job of this service costs, or null when the owner has no minimum. A minimum the
- * owner showed on one service applies to the others unless they set their own, but not the
- * smallest band's price on a service priced by bands: that's just its price.
+ * owner showed on one service applies to the others unless they set their own or charged less on
+ * one, but not the smallest band's price on a service priced by bands: that's just its price.
  */
 export function minimumFor(formula: PriceFormula, service: FormulaService): number | null {
   return (
     service.minimumCents ??
     formula.minimumCents ??
-    (formula.services
-      .filter((item) => item.shape !== 'bands')
-      .map((item) => item.minimumCents)
-      .filter((cents): cents is number => Boolean(cents))
-      .sort((a, b) => a - b)[0] ||
+    ((!service.underOthersMinimum &&
+      formula.services
+        .filter((item) => item.shape !== 'bands')
+        .map((item) => item.minimumCents)
+        .filter((cents): cents is number => Boolean(cents))
+        .sort((a, b) => a - b)[0]) ||
       null)
   );
+}
+
+/**
+ * The main work at a size within the whole formula: below the sizes a band owner priced, never
+ * above the minimum their small jobs were raised to, whichever service it was set on.
+ */
+function workAt(formula: PriceFormula, service: FormulaService, size: number) {
+  return mainWork({ ...service, minimumCents: minimumFor(formula, service) }, size);
 }
 
 /**
@@ -229,8 +280,12 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   const service = formula.services.find((item) => same(item.name, parts.service));
   if (!service || !parts.size || parts.size <= 0) return null;
   if (!pricedAt(formula, service, parts.size)) return null;
-  const main = mainWork(service, parts.size);
+  let main = workAt(formula, service, parts.size);
   if (main === null) return null;
+  if (service.extra) {
+    if (parts.extraSize === null || parts.extraSize === undefined) return null;
+    main += service.extra.rateCents * Math.max(0, parts.extraSize - service.extra.included);
+  }
   const extras = parts.surcharges.map((name) => {
     const surcharge = formula.surcharges.find((item) => same(item.name, name));
     if (!surcharge) return null;
@@ -242,35 +297,51 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   });
   if (extras.some((extra) => extra === null)) return null;
   const size = formatQuantity(parts.size, service.unit);
-  const lines: { label: string; amountCents: number }[] = formula.itemizes
-    ? [
-        { label: `${service.name}, ${size}`, amountCents: main },
-        ...extras.map((extra) => ({ label: extra!.label, amountCents: extra!.cents })),
-      ]
-    : [
-        {
-          label: `${service.name}, ${size}`,
-          amountCents: main + extras.reduce((sum, extra) => sum + extra!.cents, 0),
-        },
-      ];
+  // What takes off, like a regular-visit discount, is always in the main work's price.
+  const own = extras.filter((extra) => formula.itemizes && extra!.cents > 0);
+  const lines: { label: string; amountCents: number }[] = [
+    {
+      label: `${service.name}, ${size}`,
+      amountCents:
+        main +
+        extras
+          .filter((extra) => !own.includes(extra))
+          .reduce((sum, extra) => sum + extra!.cents, 0),
+    },
+    ...own.map((extra) => ({ label: extra!.label, amountCents: extra!.cents })),
+  ];
   for (const other of parts.otherServices) {
     const rule = formula.services.find((item) => same(item.name, other.name));
     // "The inside too" with no size of its own is the same windows, or the same gutters.
     const otherSize = other.size ?? (rule && same(rule.unit, service.unit) ? parts.size : null);
     const amount =
-      rule && otherSize && pricedAt(formula, rule, otherSize) ? mainWork(rule, otherSize) : null;
+      rule && otherSize && pricedAt(formula, rule, otherSize)
+        ? workAt(formula, rule, otherSize)
+        : null;
     if (!rule || !otherSize || amount === null) return null;
     lines.push({
       label: `${rule.name}, ${formatQuantity(otherSize, rule.unit)}`,
       amountCents: amount,
     });
   }
-  for (const wanted of parts.addOns) {
+  const always = formula.addOns
+    .filter((item) => item.always && !parts.addOns.some((wanted) => same(wanted.name, item.name)))
+    .map((item) => ({ name: item.name, count: null }));
+  for (const wanted of [...parts.addOns, ...always]) {
     const addOn = formula.addOns.find((item) => same(item.name, wanted.name));
     if (!addOn) return null;
+    // Priced by a size in another unit than this job's, it's what the owner charged for it on jobs
+    // measured this other way. Never quoted on one, either reading could be wrong: a rate per
+    // system multiplied by square feet runs away, while what it came to on a rug can be far more
+    // than on a room. It's the more modest of the two, and the quote is doubted (doubtsAbout).
+    const elsewhere = addOn.per === 'unit' && addOn.unit && !same(addOn.unit, service.unit);
     const amount =
       addOn.per === 'unit'
-        ? addOn.cents * parts.size
+        ? elsewhere && addOn.elsewhereCents !== undefined
+          ? addOn.elsewhereCents
+          : elsewhere && addOn.jobCents
+            ? Math.min(addOn.cents * parts.size, addOn.jobCents)
+            : addOn.cents * parts.size
         : addOn.per === 'item'
           ? addOn.cents * (wanted.count ?? 1)
           : addOn.cents;
@@ -308,10 +379,7 @@ export function ownerRounding(amounts: number[]): number {
 }
 
 /** How the formula does on the quotes it was worked out from: each one's gap, in percent. */
-export function fitGaps(
-  formula: PriceFormula,
-  examples: { parts: JobParts; totalCents: number }[],
-): (number | null)[] {
+export function fitGaps(formula: PriceFormula, examples: FormulaCheck[]): (number | null)[] {
   return examples.map((example) => {
     const priced = priceJob(formula, example.parts);
     if (!priced || example.totalCents <= 0) return null;
@@ -321,19 +389,108 @@ export function fitGaps(
   });
 }
 
+const words = (label: string) =>
+  new Set(
+    label
+      .toLowerCase()
+      .replace(/,.*$/, '')
+      .replace(/\(.*?\)/g, '')
+      .replace(/[^a-z ]/g, ' ')
+      .split(/\s+/)
+      .filter((word) => word && !['extra', 'for', 'the', 'and', 'a', 'of', 'with'].includes(word)),
+  );
+
+/** How much two line names share, from none to all of their words. */
+function overlap(a: string, b: string) {
+  const mine = words(a),
+    theirs = words(b);
+  const shared = [...mine].filter((word) => theirs.has(word)).length;
+  return shared / Math.max(1, new Set([...mine, ...theirs]).size);
+}
+
+type Line = { label: string; amountCents: number };
+
 /**
- * Settles what the AI can't always tell from a few rounded prices: how price follows size,
- * whether a surcharge is a percent of the main work or a flat amount, how big it is, and whether
- * there's one at all, and what each add-on costs and how it's charged. Each reading is tried against the owner's own
- * quotes, and the one that gives them back best is kept. On a tie, the simpler reading wins. A
- * price the owner's notes give stays as it is, even where older quotes disagree.
+ * Pairs the formula's lines with the owner's: the main work with theirs, then each other line with
+ * the one whose name it shares most with, and the last one left on each side with each other.
  */
-export function refineFormula(
-  formula: PriceFormula,
-  examples: { parts: JobParts; totalCents: number }[],
-): PriceFormula {
+function pairLines(mine: Line[], theirs: Line[]) {
+  const pairs: [number | null, number | null][] = mine.length && theirs.length ? [[0, 0]] : [];
+  const left = mine.map((_, at) => at).slice(1),
+    right = theirs.map((_, at) => at).slice(1);
+  for (;;) {
+    let best: [number, number, number] | null = null;
+    for (const i of left)
+      for (const j of right) {
+        const score = overlap(mine[i].label, theirs[j].label);
+        if (score >= 0.34 && (!best || score > best[2])) best = [i, j, score];
+      }
+    if (!best) break;
+    pairs.push([best[0], best[1]]);
+    left.splice(left.indexOf(best[0]), 1);
+    right.splice(right.indexOf(best[1]), 1);
+  }
+  if (left.length === 1 && right.length === 1) pairs.push([left.pop()!, right.pop()!]);
+  return [
+    ...pairs,
+    ...left.map((at) => [at, null] as [number, null]),
+    ...right.map((at) => [null, at] as [null, number]),
+  ];
+}
+
+/** Whether the owner's total is their minimum, which says nothing about the job's parts. */
+function atMinimum(formula: PriceFormula, example: FormulaCheck) {
+  const service = formula.services.find((item) => same(item.name, example.parts.service));
+  const minimum = service ? minimumFor(formula, service) : null;
+  return Boolean(minimum && Math.abs(example.totalCents - minimum) <= minimum * 0.01);
+}
+
+/**
+ * How far the formula's lines are from the owner's own, on the quotes that have them, in percent
+ * of each quote: a quote says what each part cost, not just what they came to.
+ */
+function lineMiss(formula: PriceFormula, examples: FormulaCheck[]) {
+  let sum = 0;
+  for (const example of examples) {
+    if (!example.lines?.length || example.totalCents <= 0 || atMinimum(formula, example)) continue;
+    const priced = priceJob(formula, example.parts);
+    if (!priced) continue;
+    const owner = example.lines;
+    const off = pairLines(priced.lines, owner).reduce(
+      (total, [i, j]) =>
+        total +
+        Math.abs(
+          (i === null ? 0 : priced.lines[i].amountCents) - (j === null ? 0 : owner[j].amountCents),
+        ),
+      0,
+    );
+    sum += (off / example.totalCents) * 100;
+  }
+  return sum;
+}
+
+/** The owner's line for this part of the job, on a quote that has lines, or null. */
+function ownerLine(formula: PriceFormula, example: FormulaCheck, label: (line: Line) => boolean) {
+  if (!example.lines?.length || atMinimum(formula, example)) return null;
+  const priced = priceJob(formula, example.parts);
+  if (!priced) return null;
+  for (const [i, j] of pairLines(priced.lines, example.lines))
+    if (i !== null && j !== null && label(priced.lines[i])) return example.lines[j];
+  return null;
+}
+
+/**
+ * Settles what the AI can't always tell from a few rounded prices: how price follows size, what
+ * the minimum is, whether a surcharge is a percent of the main work or a flat amount, how big it
+ * is, and whether there's one at all, what each add-on costs and how it's charged, and which are
+ * on every job. Each reading is tried against the owner's own quotes, line by line where they
+ * wrote lines, and the one that gives them back best is kept. On a tie, the simpler reading wins.
+ * A price the owner's notes give stays as it is, even where older quotes disagree.
+ */
+export function refineFormula(formula: PriceFormula, examples: FormulaCheck[]): PriceFormula {
   const miss = (candidate: PriceFormula) =>
-    fitGaps(candidate, examples).reduce<number>((sum, gap) => sum + (gap ?? 100), 0);
+    fitGaps(candidate, examples).reduce<number>((sum, gap) => sum + (gap ?? 100), 0) +
+    lineMiss(candidate, examples);
   let best: PriceFormula = {
     ...formula,
     services: formula.services.map((service) => ({
@@ -353,41 +510,172 @@ export function refineFormula(
               Math.abs(example.totalCents - service.minimumCents!) <= service.minimumCents! * 0.01,
           ),
       )?.minimumCents ?? null;
+  // A minimum above a price the owner charged for a job of one service isn't theirs. (A job of two
+  // services together can come in under it, after the discount for booking both.)
+  const alone = examples.filter((example) => !example.parts.otherServices.length);
+  const charged = (service?: string) =>
+    Math.min(
+      ...alone
+        .filter((example) => !service || same(example.parts.service, service))
+        .map((example) => example.totalCents),
+    );
+  if (best.minimumCents !== null && charged() < best.minimumCents * 0.99) best.minimumCents = null;
+  best = {
+    ...best,
+    services: best.services.map((service) =>
+      service.minimumCents && charged(service.name) < service.minimumCents * 0.99
+        ? { ...service, minimumCents: null }
+        : service,
+    ),
+  };
+  // Nor is another service's minimum one for a service the owner charged less for, like tune-ups
+  // under a duct cleaner's minimum.
+  best = {
+    ...best,
+    services: best.services.map((service) => {
+      const lent = service.minimumCents === null && minimumFor(best, service);
+      return lent && charged(service.name) < lent * 0.99
+        ? { ...service, underOthersMinimum: true }
+        : service;
+    }),
+  };
+  // The AI sometimes takes a small job raised to a minimum for a price at its size. When there's
+  // no minimum, the cheapest totals are each tried as one, without the prices at that amount, and
+  // kept only when the quotes' totals come back clearly better: a job at a minimum says nothing
+  // line by line, so its lines can't count for or against one. A minimum is a price jobs of
+  // different sizes share, so only a total at least two of them came to is tried: one cheap job
+  // is just a cheap job.
+  if (best.minimumCents === null && !best.services.some((service) => service.minimumCents)) {
+    const totals = (candidate: PriceFormula) =>
+      fitGaps(candidate, examples).reduce<number>((sum, gap) => sum + (gap ?? 100), 0);
+    let current = totals(best);
+    const shared = (total: number) =>
+      new Set(
+        examples
+          .filter((example) => Math.abs(example.totalCents - total) <= total * 0.01)
+          .map((example) => `${example.parts.service}:${example.parts.size}`),
+      ).size >= 2;
+    const cheapest = [...new Set(examples.map((example) => example.totalCents))]
+      .sort((a, b) => a - b)
+      .slice(0, 3)
+      // Never above a price the owner charged for one service alone.
+      .filter((total) => shared(total) && total <= charged() * 1.01);
+    for (const total of cheapest) {
+      const alternative = {
+        ...best,
+        minimumCents: total,
+        services: best.services.map((service) => {
+          const points = service.points.filter(
+            (point) => Math.abs(point.cents - total) > total * 0.01,
+          );
+          return { ...service, points, shape: priceShape(points) };
+        }),
+      };
+      const candidate = totals(alternative) + 5;
+      if (candidate < current) {
+        best = alternative;
+        current = candidate;
+      }
+    }
+  }
+  // A second count's price, and how many the main price includes: each job says what its count
+  // added, given the rest of the formula.
+  for (const [index, service] of best.services.entries()) {
+    if (!service.extra) continue;
+    const extra = service.extra;
+    const withRate = (rateCents: number, included: number) => ({
+      ...best,
+      services: best.services.map((item, at) =>
+        at === index ? { ...item, extra: { ...extra, rateCents, included } } : item,
+      ),
+    });
+    let current = miss(best);
+    for (const included of new Set([0, 1, extra.included]))
+      for (const example of examples) {
+        const count = example.parts.extraSize;
+        if (!same(example.parts.service, service.name) || !count || count <= included) continue;
+        const rest = priceJob(withRate(0, included), example.parts);
+        const cost = rest ? example.totalCents - rest.totalCents : 0;
+        if (cost <= 0) continue;
+        const alternative = withRate(Math.round(cost / (count - included)), included);
+        const candidate = miss(alternative);
+        if (candidate < current) {
+          best = alternative;
+          current = candidate;
+        }
+      }
+  }
   const fromNotes = (name: string) => formula.setByNotes?.some((item) => same(item, name));
+  // A set charge on nearly every quote the owner itemized that customers don't ask for, like a
+  // trip charge, is on every job.
+  const itemized = examples.filter((example) => example.lines?.length);
+  best = {
+    ...best,
+    addOns: best.addOns.map((addOn) => {
+      if (addOn.per !== 'job' || addOn.always || fromNotes(addOn.name)) return addOn;
+      const listed = itemized.filter((example) =>
+        example.lines!.some((line) => overlap(line.label, addOn.name) >= 0.5),
+      ).length;
+      const asked = examples.filter((example) =>
+        example.parts.addOns.some((item) => same(item.name, addOn.name)),
+      ).length;
+      return listed >= Math.max(2, itemized.length * 0.8) && asked < listed / 2
+        ? { ...addOn, always: true }
+        : addOn;
+    }),
+  };
   for (const [index, surcharge] of formula.surcharges.entries()) {
     if (fromNotes(surcharge.name)) continue;
-    const mains = examples
-      .filter((example) => example.parts.surcharges.some((name) => same(name, surcharge.name)))
+    const had = examples.filter((example) =>
+      example.parts.surcharges.some((name) => same(name, surcharge.name)),
+    );
+    const mains = had
       .map((example) => {
         const service = best.services.find((item) => same(item.name, example.parts.service));
-        return service && example.parts.size ? mainWork(service, example.parts.size) : null;
+        return service && example.parts.size ? workAt(best, service, example.parts.size) : null;
       })
       .filter((cents): cents is number => cents !== null && cents > 0);
     if (!mains.length) continue;
-    // One job can't tell a percent from a flat amount, so it's read as a percent.
-    if (mains.length === 1 && surcharge.percent === null)
+    // Jobs that had it at about the same size can't tell a percent from a flat amount, since
+    // both give them back alike, so it's a percent unless their sizes differ by half again.
+    const flatTold = mains.length > 1 && Math.max(...mains) >= Math.min(...mains) * 1.5;
+    const average = mains.reduce((sum, main) => sum + main, 0) / mains.length;
+    if (!flatTold && best.surcharges[index].percent === null)
       best = {
         ...best,
         surcharges: best.surcharges.map((item, at) =>
           at === index
-            ? { ...item, percent: ((item.flatCents ?? 0) / mains[0]) * 100, flatCents: null }
+            ? { ...item, percent: ((item.flatCents ?? 0) / average) * 100, flatCents: null }
             : item,
         ),
       };
     // Each job that had it gives one way to turn the amount into the other kind, and a percent is
-    // also searched from none to 80% in half points, since rounding can hide the right one.
+    // also searched from none to 80% in half points, since rounding can hide the right one, off
+    // the price for what takes off. A quote that lists it says what it was, next to the main work.
+    const off = (surcharge.percent ?? surcharge.flatCents ?? 0) < 0 ? -1 : 1;
+    const listed = had.flatMap((example) => {
+      const line = ownerLine(best, example, (item) => same(item.label, surcharge.name));
+      const main = example.lines?.[0]?.amountCents;
+      return line && main
+        ? [
+            { ...surcharge, percent: (line.amountCents / main) * 100, flatCents: null },
+            { ...surcharge, percent: null, flatCents: line.amountCents },
+          ]
+        : [];
+    });
     const others: FormulaSurcharge[] = [
       ...[...new Set(mains.length > 1 ? mains : [])].map((main) =>
         surcharge.percent !== null
           ? { ...surcharge, percent: null, flatCents: Math.round((main * surcharge.percent) / 100) }
           : { ...surcharge, percent: ((surcharge.flatCents ?? 0) / main) * 100, flatCents: null },
       ),
+      ...listed,
       ...Array.from({ length: 161 }, (_, step) => ({
         ...surcharge,
-        percent: step / 2,
+        percent: (off * step) / 2,
         flatCents: null,
       })),
-    ];
+    ].filter((other) => flatTold || other.percent !== null);
     // A surcharge at all has to give the quotes back better than none, and a flat amount better
     // than a percent, by half a point for each job that had it: an owner who prices by eye
     // strays enough to make a small surcharge, or a flat one, look a little closer.
@@ -407,38 +695,94 @@ export function refineFormula(
     }
   }
   // Add-ons the same way: each job that had one says what it must have cost, given the rest of
-  // the formula, per unit, per item or per job.
+  // the formula, per unit, per item or per job, and a quote that lists it says what it was.
   for (const [index, addOn] of best.addOns.entries()) {
     if (fromNotes(addOn.name)) continue;
     const without = {
       ...best,
       addOns: best.addOns.map((item, at) => (at === index ? { ...item, cents: 0 } : item)),
     };
+    const { unit: _unit, jobCents: _jobCents, elsewhereCents: _elsewhere, ...plain } = addOn;
+    const ways = (cost: number, size: number, count: number | null, unit: string) => [
+      { ...plain, per: 'unit' as const, cents: Math.round(cost / size), unit },
+      { ...plain, per: 'job' as const, cents: cost },
+      ...(count ? [{ ...plain, per: 'item' as const, cents: Math.round(cost / count) }] : []),
+    ];
     const candidates: FormulaAddOn[] = [];
+    // What it came to on each job: the owner's line for it, or what the rest leaves of the total.
+    const costs: { unit: string; size: number; cents: number }[] = [];
+    let seen = 0;
     for (const example of examples) {
-      const wanted = example.parts.addOns.find((item) => same(item.name, addOn.name));
-      const rest = wanted ? priceJob(without, example.parts) : null;
-      if (!wanted || !rest || !example.parts.size) continue;
+      const wanted = addOn.always
+        ? { name: addOn.name, count: null }
+        : example.parts.addOns.find((item) => same(item.name, addOn.name));
+      if (!wanted) continue;
+      seen++;
+      const rest = priceJob(without, example.parts);
+      const service = best.services.find((item) => same(item.name, example.parts.service));
+      if (!rest || !example.parts.size || !service) continue;
+      const { unit } = service;
       const cost = example.totalCents - rest.totalCents;
-      if (cost <= 0) continue;
-      candidates.push(
-        { ...addOn, per: 'unit', cents: Math.round(cost / example.parts.size) },
-        { ...addOn, per: 'job', cents: cost },
-        ...(wanted.count
-          ? [{ ...addOn, per: 'item' as const, cents: Math.round(cost / wanted.count) }]
-          : []),
-      );
+      if (cost > 0) candidates.push(...ways(cost, example.parts.size, wanted.count, unit));
+      const line = ownerLine(best, example, (item) => item.label.startsWith(addOn.name));
+      if (line) candidates.push(...ways(line.amountCents, example.parts.size, wanted.count, unit));
+      // The owner's line for it says what it cost, even on a job that came to about the minimum;
+      // without one, what the rest leaves of the total does, unless the minimum hides it.
+      const written = line ?? example.lines?.find((item) => item.label.startsWith(addOn.name));
+      const minimum = minimumFor(best, service);
+      const cents = written?.amountCents ?? (minimum && rest.totalCents <= minimum ? 0 : cost);
+      if (cents > 0) costs.push({ unit, size: example.parts.size, cents });
+    }
+    // Charged by the size, it's by the unit of the jobs it came from; on jobs measured another
+    // way, it's what it cost on those, when the owner's quotes show it there. That's a second
+    // price, so reading it that way, when the AI didn't, takes its own jobs following the size
+    // better than one price for them all would: otherwise it could as well be one price there and
+    // another on the other jobs.
+    const middle = (values: number[]) =>
+      Math.round([...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]);
+    const inUnit = (candidate: FormulaAddOn): FormulaAddOn | null => {
+      if (candidate.per !== 'unit' || !candidate.unit) return candidate;
+      const own = costs.filter((item) => same(item.unit, candidate.unit!));
+      const other = costs.filter((item) => !same(item.unit, candidate.unit!));
+      const flat = own.length ? middle(own.map((item) => item.cents)) : 0;
+      const off = (price: (size: number) => number) =>
+        own.reduce((sum, item) => sum + Math.abs(price(item.size) - item.cents), 0);
+      const follows = off((size) => candidate.cents * size) < off(() => flat);
+      if (other.length && addOn.per !== 'unit' && !follows) return null;
+      return {
+        ...candidate,
+        ...(own.length ? { jobCents: middle(own.map((item) => candidate.cents * item.size)) } : {}),
+        ...(other.length ? { elsewhereCents: middle(other.map((item) => item.cents)) } : {}),
+      };
+    };
+    // Read as counted, but the count was the job's size on every job that gave one, like pet odor
+    // for all 7 rooms: it's charged by the size, which a new request always has and its count can
+    // leave unsaid.
+    const counted = examples.flatMap((example) => {
+      const count = example.parts.addOns.find((item) => same(item.name, addOn.name))?.count;
+      const unit = best.services.find((item) => same(item.name, example.parts.service))?.unit;
+      return count && unit ? [{ count, size: example.parts.size, unit }] : [];
+    });
+    let reading = addOn.per;
+    const bySize =
+      addOn.per === 'item' &&
+      counted.length >= 2 &&
+      counted.every((item) => item.count === item.size && same(item.unit, counted[0].unit))
+        ? inUnit({ ...plain, per: 'unit', unit: counted[0].unit })
+        : null;
+    if (bySize) {
+      reading = 'unit';
+      best = { ...best, addOns: best.addOns.map((item, at) => (at === index ? bySize : item)) };
     }
     // From one job, per unit and per job give it back equally, so how it's charged stays the
     // AI's reading of how the trade charges it, unless that reading can't give the job back.
-    const seen = examples.filter((example) =>
-      example.parts.addOns.some((item) => same(item.name, addOn.name)),
-    ).length;
     // Charging it another way has to give the quotes back better by a point for each job.
-    const sameWay = candidates.filter((other) => other.per === addOn.per);
-    const weight = (item: FormulaAddOn) => (item.per === addOn.per ? 0 : seen);
+    const sameWay = candidates.filter((other) => other.per === reading);
+    const weight = (item: FormulaAddOn) => (item.per === reading ? 0 : seen);
     let current = miss(best);
-    for (const other of seen > 1 || !sameWay.length ? candidates : sameWay) {
+    for (const other of (seen > 1 || !sameWay.length ? candidates : sameWay)
+      .map(inUnit)
+      .filter((item): item is FormulaAddOn => Boolean(item))) {
       const alternative = {
         ...best,
         addOns: best.addOns.map((item, at) => (at === index ? other : item)),
@@ -450,17 +794,197 @@ export function refineFormula(
       }
     }
   }
-  return best;
+  // Each add-on priced by the size keeps the unit of the jobs it was quoted on, and what it came to
+  // on them (the middle one).
+  return {
+    ...best,
+    addOns: best.addOns.map((addOn) => {
+      if (addOn.per !== 'unit' || addOn.unit) return addOn;
+      const seen = examples.flatMap((example) => {
+        const wanted = example.parts.addOns.some((item) => same(item.name, addOn.name));
+        const service = best.services.find((item) => same(item.name, example.parts.service));
+        return (wanted || addOn.always) && service && example.parts.size
+          ? [{ unit: service.unit, cents: addOn.cents * example.parts.size }]
+          : [];
+      });
+      if (!seen.length) return addOn;
+      const units = [...new Set(seen.map((item) => item.unit.toLowerCase()))];
+      if (units.length > 1) return addOn;
+      const costs = seen.map((item) => item.cents).sort((a, b) => a - b);
+      return {
+        ...addOn,
+        unit: seen[0].unit,
+        jobCents: Math.round(costs[Math.floor(costs.length / 2)]),
+      };
+    }),
+  };
 }
 
 /**
- * Whether the formula is trusted to price: it has to give back the owner's own quotes, nearly
- * all of them within 10%. Owners who price by eye stray a few percent job to job, so a formula
- * that has them right still can't match every quote to the dollar; one that's wrong misses some
- * by far more. Otherwise the AI drafts instead.
+ * What makes this quote one not to send as a firm price, in the owner's words, or nothing. Each is
+ * a sign the formula is guessing rather than following the owner's own quotes: a size far from
+ * any they priced, a service they've priced only once or twice, a size between two of their
+ * prices that jump, a rate far from theirs, less than anything they've ever charged, extras that
+ * come to more than the job itself, or a minimum never charged for the service. On
+ * the benchmark these catch most of the quotes that end up far from the owner's price (see
+ * src/bench.ts), and a quote with one goes out as a range.
+ */
+export function doubtsAbout(
+  formula: PriceFormula,
+  examples: FormulaCheck[],
+  parts: JobParts,
+  quote: FormulaQuote,
+): string[] {
+  // Without the owner's quotes there's nothing to judge it against.
+  if (!examples.length) return [];
+  const doubts: string[] = [];
+  const sizesOf = (name: string) =>
+    examples.flatMap((example) => [
+      ...(same(example.parts.service, name) && example.parts.size ? [example.parts.size] : []),
+      ...example.parts.otherServices
+        .filter((other) => same(other.name, name) && other.size)
+        .map((other) => other.size!),
+    ]);
+  const services = [
+    { name: parts.service, size: parts.size },
+    ...parts.otherServices.map((other) => ({ name: other.name, size: other.size ?? parts.size })),
+  ];
+  for (const { name, size } of services) {
+    if (!size) continue;
+    const sizes = sizesOf(name);
+    if (sizes.length <= 2)
+      doubts.push(
+        `You’ve priced ${name.toLowerCase()} only ${sizes.length === 1 ? 'once' : sizes.length ? 'twice' : 'in other jobs'} so far.`,
+      );
+    else if (size > Math.max(...sizes) * 1.5)
+      doubts.push(`It’s much bigger than the ${name.toLowerCase()} jobs you’ve priced.`);
+    else if (size < Math.min(...sizes) * 0.67)
+      doubts.push(`It’s much smaller than the ${name.toLowerCase()} jobs you’ve priced.`);
+  }
+  const service = formula.services.find((item) => same(item.name, parts.service));
+  const size = parts.size;
+  if (service && size) {
+    const points = sortedPoints(service.points);
+    const main = workAt(formula, service, size) ?? 0;
+    const perUnit = points.map((point) => point.cents / point.size);
+    // Between two of their prices where the price per unit jumps: where it steps up can't be told.
+    for (const [index, low] of points.slice(0, -1).entries()) {
+      const high = points[index + 1];
+      if (
+        size > low.size * 1.01 &&
+        size < high.size * 0.99 &&
+        perUnit[index + 1] > perUnit[index] * 1.3
+      ) {
+        doubts.push('Your price jumps between the sizes on either side of this one.');
+        break;
+      }
+    }
+    if (perUnit.length >= 2 && main > 0) {
+      const rate = main / size;
+      if (rate < Math.min(...perUnit) * 0.6 || rate > Math.max(...perUnit) * 1.6)
+        doubts.push(`Its rate is far from what you charge for ${service.name.toLowerCase()}.`);
+    }
+    const extras = parts.surcharges
+      .map((name) => formula.surcharges.find((item) => same(item.name, name)))
+      .reduce(
+        (sum, item) =>
+          sum +
+          Math.max(
+            0,
+            item
+              ? item.percent !== null
+                ? (main * item.percent) / 100
+                : (item.flatCents ?? 0)
+              : 0,
+          ),
+        0,
+      );
+    if (main > 0 && extras > main) doubts.push('Its extras come to more than the job itself.');
+    const elsewhere = parts.addOns
+      .map((wanted) => formula.addOns.find((item) => same(item.name, wanted.name)))
+      .find(
+        (item) =>
+          item?.per === 'unit' &&
+          item.unit &&
+          !same(item.unit, service.unit) &&
+          item.elsewhereCents === undefined,
+      );
+    if (elsewhere)
+      doubts.push(
+        `${elsewhere.name} is priced by the ${elsewhere.unit!.replace(/s$/, '')} on other jobs, not by the ${service.unit.replace(/s$/, '')}.`,
+      );
+  }
+  // Lifted well up to a minimum this service was never charged: the minimum may not be its.
+  if (service) {
+    const minimum = minimumFor(formula, service);
+    const unlifted = priceJob(
+      {
+        ...formula,
+        minimumCents: null,
+        services: formula.services.map((item) => ({ ...item, minimumCents: null })),
+      },
+      parts,
+    );
+    const chargedHere = examples.some(
+      (example) =>
+        same(example.parts.service, service.name) &&
+        minimum !== null &&
+        Math.abs(example.totalCents - minimum) <= minimum * 0.01,
+    );
+    if (minimum && unlifted && quote.totalCents > unlifted.totalCents * 1.25 && !chargedHere)
+      doubts.push(
+        `It’s lifted to your minimum, which you haven’t charged for ${service.name.toLowerCase()}.`,
+      );
+  }
+  const cheapest = Math.min(
+    ...examples.map((example) => example.totalCents).filter((cents) => cents > 0),
+  );
+  if (Number.isFinite(cheapest) && quote.totalCents < cheapest * 0.9)
+    doubts.push('It’s less than anything you’ve charged.');
+  // A surcharge or add-on far beyond what it came to on any of their own quotes: one seen on small
+  // jobs, as a share, can run far past what they'd charge on a big one.
+  const most = new Map<string, number>();
+  for (const example of examples)
+    for (const line of priceJob(formula, example.parts)?.lines.slice(1) ?? [])
+      most.set(
+        line.label.replace(/ \(\d+\)$/, ''),
+        Math.max(most.get(line.label.replace(/ \(\d+\)$/, '')) ?? 0, line.amountCents),
+      );
+  const runaway = quote.lines.slice(1).find((line) => {
+    const before = most.get(line.label.replace(/ \(\d+\)$/, ''));
+    return (
+      before !== undefined && line.amountCents > before * 2.5 && line.amountCents - before > 5000
+    );
+  });
+  if (runaway)
+    doubts.push(
+      `Its ${runaway.label.replace(/ \(\d+\)$/, '').toLowerCase()} is far more than you’ve charged for it.`,
+    );
+  const dearest = Math.max(...examples.map((example) => example.totalCents));
+  if (quote.totalCents > dearest * 2) doubts.push('It’s more than twice anything you’ve charged.');
+  return doubts;
+}
+
+/** The share of the owner's own quotes the formula gives back within 10%. */
+const givenBack = (gaps: (number | null)[]) =>
+  gaps.filter((gap) => gap !== null && gap <= 10).length / (gaps.length || 1);
+
+/**
+ * Whether the formula is trusted to price firmly: it has to give back most of the owner's own
+ * quotes within 10%. Owners who price by eye stray a few percent job to job, so a formula that has
+ * them right still can't match every quote to the dollar.
  */
 export function formulaFits(gaps: (number | null)[]) {
-  if (gaps.length < 3) return false;
-  const close = gaps.filter((gap) => gap !== null && gap <= 10).length;
-  return close / gaps.length >= 0.8;
+  return gaps.length >= 3 && givenBack(gaps) >= 0.6;
+}
+
+/**
+ * Whether the formula still prices, as a range, when it doesn't fit: it gives back at least 40%
+ * of the owner's quotes. One that misses a good few still prices new jobs far closer than the
+ * AI's usual draft does (on the benchmark, 57% within 10% against 37% for a formula giving back
+ * 70–79% of the owner's quotes, and the draft was 130–240% off for one giving back 56%), so only
+ * one that misses most of them is left to the AI.
+ */
+export function formulaUsable(gaps: (number | null)[]) {
+  return gaps.length >= 3 && givenBack(gaps) >= 0.4;
 }

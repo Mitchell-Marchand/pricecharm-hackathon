@@ -173,6 +173,14 @@ export function termsOfService(operator?: Operator): LegalDocument {
               don’t pay for them.
             </li>
             <li>
+              If you enter a promotional code before you first add a payment method, the days it
+              gives are free instead, starting when you add the payment method. We don’t charge for
+              quotes that count in those days, even if a customer accepts one later, and a
+              subscription’s free trial lasts until they end. After that your plan’s fees apply,
+              unless you cancel. It’s one code per business. A code has no cash value, and we may
+              stop offering one at any time without changing days you already have.
+            </li>
+            <li>
               A subscription includes a set number of quotes that count each calendar month, with a
               fee for each one past that. A new subscription may start with a free trial; you give a
               payment method to start it, and unless you cancel before the trial ends, the

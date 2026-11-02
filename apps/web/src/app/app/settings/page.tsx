@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
+import { CodeBox } from '@/components/owner/CodeBox';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { QuotePageSettings } from '@/components/owner/QuotePageSettings';
 import { WhatsAppSettings } from '@/components/owner/WhatsAppSettings';
@@ -435,12 +436,18 @@ function BillingDetails({
             : 'Choose how you’d like to pay and add a card. Quotes wait for you until then.'}{' '}
           Your own tests are always free.
         </p>
-        {billing.status === 'trialing' && billing.periodEnd && (
+        {billing.code ? (
+          <p className="mt-2 text-sm text-ink-2">
+            {billing.code.endsAt
+              ? `With code ${billing.code.code}, quotes are free until ${shortDate(billing.code.endsAt)}.`
+              : `With code ${billing.code.code}, your first ${billing.code.days} days are free once you add a card.`}
+          </p>
+        ) : billing.status === 'trialing' && billing.periodEnd ? (
           <p className="mt-2 text-sm text-ink-2">
             Your free week ends {shortDate(billing.periodEnd)}.
           </p>
-        )}
-        {billing.firstMonth?.endsAt && pricing.firstMonthMaxCents ? (
+        ) : null}
+        {billing.firstMonth?.endsAt && pricing.firstMonthMaxCents && !billing.code ? (
           <p className="mt-2 text-sm text-ink-2">
             {billing.firstMonth.waivedCents > 0
               ? `Your quote fees have reached the first-month max, so quotes are free until ${shortDate(billing.firstMonth.endsAt)}.`
@@ -458,6 +465,11 @@ function BillingDetails({
         </p>
         {!billing.canSend && billing.reason && (
           <p className="mt-3 text-sm text-stop">{billing.reason}</p>
+        )}
+        {billing.checkoutAvailable && (
+          <div className="mt-3 flex flex-col">
+            <CodeBox billing={billing} onChange={onChange} />
+          </div>
         )}
       </div>
 

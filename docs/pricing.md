@@ -133,3 +133,40 @@ npm run bench:compare --workspace @pricecharm/api -- old.json new.json
 ```
 
 It counts the jobs the change fixed and broke, with an exact McNemar test on the split, and the owners who came out better or worse. One 30-owner seed moves about 5 points either way by chance, so a single run can't settle a small change; a paired comparison can.
+
+### Trades
+
+`--trades classic`, the default, is window cleaning, pressure washing and gutters, as every run before November 2026 was, so old seeds still compare. `--trades wide` adds nine trades that price their own ways ([src/bench/wide-trades.ts](../apps/api/src/bench/wide-trades.ts), from the research in `research_notes/Benchmark trade prices/`):
+
+- house cleaning by bedrooms and bathrooms, with regular-visit discounts;
+- carpet by the room;
+- detailing by vehicle size;
+- mowing by lot-size band and how often;
+- trees by height tier;
+- fences by the foot and material;
+- junk by share of the truck;
+- moving by crew and hour;
+- handyman by the task or the hour.
+
+### Measures
+
+Every report and comparison measures prices the same way ([src/bench/metrics.ts](../apps/api/src/bench/metrics.ts)):
+
+- within 10% and 15%;
+- median, mean and 90th-percentile miss;
+- the share priced high, and the average signed miss;
+- the worst miss.
+
+A job with no price counts as a 100% miss. Each measure is reported overall, by trade, by how the owner prices, and by whether the owner's own past jobs and practice quotes showed what the job needed. When they didn't, no pricing could be sure without asking, so those jobs are counted apart from the ones it could have priced right. Ranges come from drawing owners again with replacement, keeping each owner's jobs together.
+
+Formula quotes it doubts go to a real customer as a range. For example, a size far from any the owner priced, a size between two of their prices that jump, a rate far from theirs, or less than anything they've charged. The report shows how close the firm quotes and the ranged ones came, and how many firm quotes were more than 25% or 50% off.
+
+### Deciding
+
+A change is kept when within 10% or the mean miss gets better past what chance would do, measured by owner-resampled ranges on paired jobs or McNemar. Neither can get clearly worse, and no trade, pricing shape or kind of job can get clearly worse. `bench:compare` prints the verdict.
+
+Changes to how prices are worked out from the model's answers are compared on free replays. Changes to what the model is asked are compared on the same fresh seeds, run both ways.
+
+### The sealed test set
+
+Seeds 9001–9100 and three held-out trades are sealed: painting, pest control and pool service, built by someone who never saw the pricing code. Nothing is tuned on them. The benchmark refuses them without `--sealed`, and `--trades sealed` is every trade. Each sealed run is written to `bench-results/sealed-runs.log` with when, what and which code, so it's plain how often the set has been looked at. Run it only at milestones.

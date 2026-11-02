@@ -462,3 +462,99 @@ test('a size given as an add-on’s count is dropped, not a failed read', async 
     { name: 'Downspout flush', count: 3 },
   ]);
 });
+
+test('asking the same question again keeps its own saved answer', async () => {
+  const saved: Record<string, unknown[]> = {};
+  ai.useSavedAnswers({
+    replayOnly: false,
+    answer: () => undefined,
+    keep: (key, _operation, answer) => {
+      saved[key] = [...(saved[key] ?? []), answer];
+    },
+  });
+  const again = (asking?: number) =>
+    ai.requestJson(
+      'intake_turn',
+      'Reply to the customer.',
+      { message: 'I have 12 windows.' },
+      replyJson,
+      replySchema,
+      [],
+      [],
+      { asking },
+    );
+  try {
+    const replies = ['First.', 'Second.'];
+    globalThis.fetch = async () => response({ reply: replies.shift() });
+    await again();
+    await again(1);
+    // The first asking is saved as it always was, so older saved runs still replay.
+    assert.deepEqual(
+      saved[
+        ai.answerKey('intake_turn', 'mock-model', 'Reply to the customer.', {
+          message: 'I have 12 windows.',
+        })
+      ],
+      [{ reply: 'First.' }],
+    );
+    assert.deepEqual(
+      saved[
+        ai.answerKey('intake_turn#1', 'mock-model', 'Reply to the customer.', {
+          message: 'I have 12 windows.',
+        })
+      ],
+      [{ reply: 'Second.' }],
+    );
+  } finally {
+    ai.useSavedAnswers(null);
+  }
+});
+
+test('a formula quote is the middle of its readings, and a range when they disagree', async () => {
+  const { priceFromFormula } = await import('../src/pricing/formula-draft.js');
+  const reading = (rateCents: number) => ({
+    formula: {
+      services: [{ name: 'Windows', unit: 'windows', rateCents, points: [], minimumCents: null }],
+      surcharges: [],
+      addOns: [],
+      bundlePercent: null,
+      roundToCents: 100,
+      minimumCents: null,
+      itemizes: true,
+    },
+    notes: [],
+    examples: [],
+    gaps: [0, 0, 0],
+    fits: true,
+  });
+  globalThis.fetch = async () =>
+    response({
+      service: 'Windows',
+      size: 20,
+      surcharges: [],
+      addOns: [],
+      otherServices: [],
+      uncovered: '',
+      unpriced: '',
+    });
+  const input = {
+    serviceName: 'Windows',
+    conversation: [{ from: 'customer' as const, text: '20 windows, please.' }],
+    spec: null,
+  };
+  const close = await priceFromFormula(
+    { ...reading(1000), also: [reading(1020), reading(990)] },
+    input,
+  );
+  assert.equal(close.drafted?.lines[0].amountCents, 20000);
+  assert.equal(close.drafted?.confidence, 'high');
+  assert.deepEqual(close.use.used && close.use.readings, [19800, 20000, 20400]);
+
+  const apart = await priceFromFormula(
+    { ...reading(1000), also: [reading(1500), reading(900)] },
+    input,
+  );
+  assert.equal(apart.drafted?.lines[0].amountCents, 20000);
+  assert.equal(apart.drafted?.confidence, 'low');
+  assert.match(apart.drafted?.reasoning ?? '', /anywhere from \$180 to \$300/);
+});

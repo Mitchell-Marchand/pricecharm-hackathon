@@ -4,6 +4,7 @@ import {
   ensureBillingAccount,
   feeForQuote,
   firstMonth,
+  freeUnderCode,
   getBilling,
   isPaying,
   isSubscription,
@@ -23,8 +24,9 @@ import { ApiError } from '../http.js';
  * - a subscription that covers a set number of quotes a month, then a fee for each one past it.
  * A payment method has to be on file first. An account can have `trial_quote_limit` free quotes
  * before that (none by default). For 30 days after the first card, quote fees on any plan stop at
- * the first-month max, and quotes past it still go out. Owner tests and repeat sends are never
- * billed.
+ * the first-month max, and quotes past it still go out. A code makes the days after the first
+ * card free instead, usually 30: quotes shown then aren't charged, even when accepted later, and
+ * what they would have cost is kept as waived. Owner tests and repeat sends are never billed.
  */
 const LIVE_SOURCES = "('live_auto','live_owner')";
 const MONTH_START = "DATE_FORMAT(UTC_DATE(),'%Y-%m-01')";
@@ -106,6 +108,8 @@ export async function liveBillingAccess(
       new Date(account.last_reconciled_at).getTime() < Date.now() - 86400000)
   )
     return { canSend: false, reason: 'We’re checking your billing. Try again in a few minutes.' };
+  // In a code's free days nothing is charged, so no spending limit is reached.
+  if (freeUnderCode(account)) return { canSend: true, trial: false };
   // On the accepted-quote plan the fee comes later, so the cap allows for it in case they say yes.
   const plan = account.plan as Plan;
   const { feeCents: fee } = await underFirstMonthMax(
@@ -170,12 +174,11 @@ export async function recordLiveDelivery(
   const account = await ensureBillingAccount(input.businessId, connection);
   const plan = PLANS.includes(account.plan) ? (account.plan as Plan) : null;
   const usage = await liveUsage(input.businessId, connection);
-  const { feeCents, waivedCents } = await underFirstMonthMax(
-    connection,
-    account,
-    access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered),
-    'delivered',
-  );
+  const fee = access.trial || !plan ? 0 : deliveryFee(plan, account, usage.covered);
+  const free = freeUnderCode(account);
+  const { feeCents, waivedCents } = free
+    ? { feeCents: 0, waivedCents: fee }
+    : await underFirstMonthMax(connection, account, fee, 'delivered');
   const usageId = await insertUsage(connection, account, {
     businessId: input.businessId,
     quoteId: input.quoteId,
@@ -202,6 +205,7 @@ export async function recordLiveDelivery(
         feeCents,
         waivedCents,
         trialCovered: access.trial,
+        ...(free ? { code: String(account.promo_code) } : {}),
         usageId,
       }),
     ],
@@ -271,7 +275,7 @@ export async function recordAcceptance(
   input: { businessId: string; quoteId: string; totalCents: number },
 ): Promise<{ recorded: boolean; feeCents: number }> {
   const [delivered] = await rows(
-    "SELECT plan,trial_covered FROM quote_usage WHERE business_id=? AND quote_id=? AND charge='delivered'",
+    "SELECT plan,trial_covered,created_at FROM quote_usage WHERE business_id=? AND quote_id=? AND charge='delivered'",
     [input.businessId, input.quoteId],
     connection,
   );
@@ -289,18 +293,17 @@ export async function recordAcceptance(
   const account = await ensureBillingAccount(input.businessId, connection);
   // The terms it was delivered under, even if the owner has since moved plans.
   const terms = planTariff('per_accepted');
-  const { feeCents, waivedCents } = await underFirstMonthMax(
-    connection,
-    account,
-    access.canSend
-      ? feeForQuote(input.totalCents, {
-          fee_basis_points: terms.basisPoints,
-          minimum_fee_cents: terms.minimumFeeCents,
-          maximum_fee_cents: terms.maximumFeeCents,
-        })
-      : 0,
-    'accepted',
-  );
+  const fee = access.canSend
+    ? feeForQuote(input.totalCents, {
+        fee_basis_points: terms.basisPoints,
+        minimum_fee_cents: terms.minimumFeeCents,
+        maximum_fee_cents: terms.maximumFeeCents,
+      })
+    : 0;
+  // Shown in a code's free days, it stays free, however long the customer took to say yes.
+  const { feeCents, waivedCents } = freeUnderCode(account, new Date(delivered.created_at))
+    ? { feeCents: 0, waivedCents: fee }
+    : await underFirstMonthMax(connection, account, fee, 'accepted');
   await insertUsage(
     connection,
     {

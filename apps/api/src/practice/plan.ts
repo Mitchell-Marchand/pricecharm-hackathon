@@ -17,26 +17,17 @@ export const SITUATIONS = [
   'A bigger job that combines two of their services and adds the first extra again, where the customer asks whether doing both together saves anything.',
 ];
 
-/** How the AI's private guess did on one finished practice customer. */
-export type PracticeMiss = {
-  service: string;
-  situation: string;
-  /** Percent between the AI's guess and the owner's quote, when both priced it. */
-  gap: number | null;
-  confidence: string | null;
-};
-
 export type PlanInput = {
   position: number;
   /** Customers in setup, which always follow SITUATIONS. */
   setupCount: number;
   services: string[];
-  /** Every size and price the business has taught it. */
-  points: PricePoint[];
   /** How many examples each service has, by lowercase name. */
   examples: Record<string, number>;
-  /** Finished practice customers, oldest first. */
-  finished: PracticeMiss[];
+  /** What earlier practice customers were planned to be. */
+  asked: string[];
+  /** Draws what each everyday customer asks for; Math.random unless a test sets it. */
+  random?: () => number;
 };
 
 /** The unit a service is most often priced by, and the sizes priced in it. */
@@ -70,52 +61,47 @@ export function focusSituation(service: string, points: PricePoint[]): string {
 }
 
 /**
- * The next practice customer, aimed where the AI knows least: a service it has never seen priced,
- * a job like one it just got wrong, then sizes outside what the owner has priced. Setup keeps its
- * fixed mix so every owner starts with the same range.
+ * The next practice customer. Setup keeps its fixed mix so every owner starts with the same range,
+ * then a service they've never priced, then everyday customers, drawn the way the benchmark's usual
+ * customers are: the main service most of the time, any size they usually do, and now and then an
+ * extra or two, bad shape, a hard-to-reach job, a second service or a regular schedule. On the
+ * benchmark with five past jobs (blind seed 22, 2026-11-01), six of these after setup took the
+ * owner's price within 10% from 65% to 78% of new jobs. Six aimed at what the owner hadn't shown,
+ * sizes twice or half any priced and extras the trade usually charges for, reached only 74%: odd
+ * jobs teach less than the ones that come in (aimedJob in src/bench/owners.ts).
  */
 export function planSituation(input: PlanInput): string {
   if (input.position < input.setupCount) return SITUATIONS[input.position % SITUATIONS.length];
-  const used = new Set(input.finished.map((run) => run.situation));
-  const fresh = (situation: string) => (used.has(situation) ? null : situation);
 
   for (const service of input.services) {
     if (input.examples[service.toLowerCase()]) continue;
-    const plan = fresh(
-      `A typical, clear job for their "${service}" service, sized like a usual job for it. They haven't priced this service here yet.`,
-    );
-    if (plan) return plan;
+    const plan = `A typical, clear job for their "${service}" service, sized like a usual job for it. They haven't priced this service here yet.`;
+    if (!input.asked.includes(plan)) return plan;
   }
 
-  const last = input.finished.at(-1);
-  if (
-    last &&
-    !last.situation.startsWith('Another') &&
-    ((last.gap !== null && last.gap > 15) || last.confidence === 'low')
-  )
-    return `Another "${last.service}" job like the last one, but a different size, so the AI can see how they scale it.`;
-
-  for (const service of input.services) {
-    const priced = pricedSizes(service, input.points);
-    if (!priced) continue;
-    const { unit, quantities } = priced;
-    const largest = Math.max(...quantities),
-      smallest = Math.min(...quantities);
-    const bigger = fresh(
-      `A bigger "${service}" job than they've priced so far, around ${formatQuantity(roundSize(largest * 2), unit)}.`,
-    );
-    if (bigger && !input.finished.some((run) => run.situation.startsWith(`A bigger "${service}"`)))
-      return bigger;
-    const smaller = fresh(
-      `A small "${service}" job, around ${formatQuantity(roundSize(smallest / 2), unit)}, near the low end of what they'd take on.`,
-    );
-    if (
-      smaller &&
-      smallest / 2 >= 1 &&
-      !input.finished.some((run) => run.situation.startsWith(`A small "${service}"`))
-    )
-      return smaller;
-  }
-
-  return SITUATIONS[input.position % SITUATIONS.length];
+  const random = input.random ?? Math.random;
+  const chance = (share: number) => random() < share;
+  const [main, ...others] = input.services;
+  const service =
+    others.length && chance(0.3) ? others[Math.floor(random() * others.length)] : main;
+  const extras = chance(0.4) ? (chance(0.5) ? 1 : 2) : 0;
+  return [
+    `An everyday customer for their "${service}" service, like the ones they get all the time, with a job ${['on the smaller side', 'in the middle', 'on the bigger side'][Math.floor(random() * 3)]} of their usual jobs for it.`,
+    chance(0.35) ? 'It’s in rough shape, like heavy buildup or stains.' : 'It’s in normal shape.',
+    chance(0.45)
+      ? 'It’s harder to reach than most, like a second story, if that matters for this work.'
+      : '',
+    extras
+      ? `They want ${extras === 1 ? 'one extra' : 'two extras'} their customers often add.`
+      : 'No extras.',
+    service === main && others.length && chance(0.25)
+      ? 'They also want another of their services done in the same visit.'
+      : '',
+    chance(0.5)
+      ? 'If businesses in their trade do regular visits, they want it on a regular schedule.'
+      : '',
+    'If the work comes in versions, like materials or grades, they pick the one that suits them.',
+  ]
+    .filter(Boolean)
+    .join(' ');
 }

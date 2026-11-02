@@ -369,6 +369,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   '180 days',
                 ],
                 [
+                  'pricecharm_code (browser storage)',
+                  'Keeps a code from a link you followed until you choose a plan',
+                  'Until it’s used, or 30 days',
+                ],
+                [
                   'Browser storage',
                   'Lets you return to a quote request you started, and keeps unsent drafts',
                   'Until you clear it. Drafts last until you close the tab.',

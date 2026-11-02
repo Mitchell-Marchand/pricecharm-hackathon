@@ -80,7 +80,7 @@ test('prices that don’t scale evenly follow the owner’s own prices at each s
   assert.equal(mainWork(steeper, 200), 4000, 'Never under scaling straight down');
 });
 
-test('a formula is trusted only when it gives back nearly all the owner’s own prices', () => {
+test('a formula is trusted only when it gives back most of the owner’s own prices', async () => {
   const parts = {
     service: 'Exterior windows',
     size: 20,
@@ -96,8 +96,12 @@ test('a formula is trusted only when it gives back nearly all the owner’s own 
     [0, 20],
   );
   assert.equal(formulaFits([0, 2, 8, 1, 6]), true, 'An owner who prices by eye still fits');
-  assert.equal(formulaFits([0, 2, 40, 1, 30]), false);
+  assert.equal(formulaFits([0, 2, 40, 1, 30]), true, 'Three of five is most');
+  assert.equal(formulaFits([0, 25, 40, 1, 30]), false);
   assert.equal(formulaFits([0, 0]), false, 'Two examples are too few to trust');
+  const { formulaUsable } = await import('../src/pricing/formula.js');
+  assert.equal(formulaUsable([0, 25, 40, 1, 30]), true, 'Two of five still prices, as a range');
+  assert.equal(formulaUsable([0, 25, 40, 31, 30]), false);
 });
 
 test('rounding is what every amount the owner wrote shares', async () => {
@@ -172,6 +176,38 @@ test('a minimum on one service holds for the others', async () => {
   assert.equal(priceJob(perService, small)?.totalCents, 15000);
 });
 
+test('a minimum on one service doesn’t hold for one the owner charged less for', async () => {
+  const { priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const hvac: PriceFormula = {
+    ...formula,
+    services: [
+      { name: 'Tune-ups', unit: 'units', rateCents: 7000, points: [], minimumCents: null },
+      { name: 'Duct cleaning', unit: 'sq ft', rateCents: 28, points: [], minimumCents: 47000 },
+    ],
+    surcharges: [],
+    addOns: [],
+    bundlePercent: null,
+    roundToCents: 100,
+    minimumCents: null,
+  };
+  const job = (service: string, size: number) => ({
+    service,
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  // Ducts never go under $470, but one tune-up was $70.
+  const refined = refineFormula(hvac, [
+    { parts: job('Duct cleaning', 500), totalCents: 47000 },
+    { parts: job('Duct cleaning', 2000), totalCents: 56000 },
+    { parts: job('Tune-ups', 1), totalCents: 7000 },
+    { parts: job('Tune-ups', 2), totalCents: 14000 },
+  ]);
+  assert.equal(priceJob(refined, job('Tune-ups', 1))?.totalCents, 7000);
+  assert.equal(priceJob(refined, job('Duct cleaning', 400))?.totalCents, 47000);
+});
+
 test('a service charged only the minimum has no rate past the sizes charged', async () => {
   const { priceJob } = await import('../src/pricing/formula.js');
   // The prod test: 8 inside windows at the $150 minimum, which the AI read as $18.75 a window.
@@ -233,7 +269,13 @@ test('an add-on’s price is corrected to what the owner’s quotes say it cost'
     { parts: job(20), totalCents: 20000 },
     { parts: job(30), totalCents: 30000 },
   ]);
-  assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
+  assert.deepEqual(refined.addOns[0], {
+    name: 'Screens',
+    per: 'unit',
+    cents: 200,
+    unit: 'windows',
+    jobCents: 6000,
+  });
 });
 
 test('two sizes that round to the same price aren’t taken for size bands', async () => {
@@ -311,7 +353,13 @@ test('from one job, an add-on keeps how the AI read it’s charged, and a surcha
     { parts: job([], [{ name: 'Screens', count: null }]), totalCents: 20000 },
     { parts: job(['Second story'], []), totalCents: 20800 },
   ]);
-  assert.deepEqual(refined.addOns[0], { name: 'Screens', per: 'unit', cents: 200 });
+  assert.deepEqual(refined.addOns[0], {
+    name: 'Screens',
+    per: 'unit',
+    cents: 200,
+    unit: 'windows',
+    jobCents: 4000,
+  });
   assert.equal(refined.surcharges[0].flatCents, null);
   assert.equal(refined.surcharges[0].percent, 30);
 });
@@ -367,4 +415,384 @@ test('an owner who rounds to $25 isn’t taken for pricing by size bands', async
     cents: Math.round((size * 75) / 2500) * 2500,
   }));
   assert.notEqual(priceShape(points), 'bands');
+});
+
+test('a discount comes off the main work’s line, whether or not the owner itemizes', async () => {
+  const { priceJob } = await import('../src/pricing/formula.js');
+  const visits = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [
+      { name: 'Every two weeks', when: 'every two weeks', percent: -15, flatCents: null },
+      { name: 'Second story', when: 'two-story house', percent: 30, flatCents: null },
+    ],
+  };
+  const job = {
+    service: 'Exterior windows',
+    size: 20,
+    surcharges: ['Every two weeks', 'Second story'],
+    addOns: [],
+    otherServices: [],
+  };
+  assert.deepEqual(
+    priceJob(visits, job)?.lines.map((line) => [line.label, line.amountCents]),
+    [
+      ['Exterior windows, 20 windows', 13600],
+      ['Second story', 4800],
+    ],
+  );
+  assert.equal(priceJob({ ...visits, itemizes: false }, job)?.totalCents, 18400);
+});
+
+test('a charge on every quote the owner itemized is on every job, asked for or not', async () => {
+  const { priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const movers = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    addOns: [{ name: 'Trip charge', per: 'job' as const, cents: 10000 }],
+  };
+  const job = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  const quote = (size: number) => ({
+    parts: job(size),
+    totalCents: size * 800 + 9000,
+    lines: [
+      { label: `Exterior windows, ${size} windows`, amountCents: size * 800 },
+      { label: 'Trip charge', amountCents: 9000 },
+    ],
+  });
+  const refined = refineFormula(movers, [quote(20), quote(30), quote(40)]);
+  assert.deepEqual(refined.addOns[0], {
+    name: 'Trip charge',
+    per: 'job',
+    cents: 9000,
+    always: true,
+  });
+  assert.equal(priceJob(refined, job(25))?.totalCents, 29000);
+});
+
+test('an add-on’s line on the owner’s quote says what it cost, even when the main work is off', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  // The AI read the main work at $10 a window and brightening at the $85 the owner wrote; the
+  // owner's main work is $9 a window, so totals alone would move the $5 a job onto brightening.
+  const read = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    services: [{ ...formula.services[0], rateCents: 1000 }],
+    addOns: [{ name: 'Brightening', per: 'job' as const, cents: 8500 }],
+  };
+  const quote = (size: number) => ({
+    parts: {
+      service: 'Exterior windows',
+      size,
+      surcharges: [],
+      addOns: [{ name: 'Brightening', count: null }],
+      otherServices: [],
+    },
+    totalCents: size * 900 + 8500,
+    lines: [
+      { label: `Exterior windows, ${size} windows`, amountCents: size * 900 },
+      { label: 'Brightening', amountCents: 8500 },
+    ],
+  });
+  const refined = refineFormula(read, [quote(20), quote(30)]);
+  assert.deepEqual(refined.addOns[0], { name: 'Brightening', per: 'job', cents: 8500 });
+});
+
+test('jobs of about the same size can’t make a surcharge a flat amount', async () => {
+  const { refineFormula } = await import('../src/pricing/formula.js');
+  const flat = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [{ name: 'Second story', when: 'two-story', percent: null, flatCents: 6000 }],
+  };
+  const tall = (size: number, totalCents: number) => ({
+    parts: {
+      service: 'Exterior windows',
+      size,
+      surcharges: ['Second story'],
+      addOns: [],
+      otherServices: [],
+    },
+    totalCents,
+  });
+  // 25 and 28 windows: a flat $60 fits these two a little better, but can't be told from 30%.
+  const refined = refineFormula(flat, [tall(25, 26000), tall(28, 28400)]);
+  assert.equal(refined.surcharges[0].flatCents, null);
+  const percent = refined.surcharges[0].percent ?? 0;
+  assert.ok(percent >= 26 && percent <= 31, `${percent}%`);
+});
+
+test('below a band owner’s sizes, a small job costs the business’s minimum', async () => {
+  const { priceJob } = await import('../src/pricing/formula.js');
+  const bands = {
+    ...formula,
+    minimumCents: 25800,
+    roundToCents: 100,
+    services: [
+      {
+        name: 'Driveways',
+        unit: 'sq ft',
+        rateCents: null,
+        shape: 'bands' as const,
+        minimumCents: null,
+        points: [
+          { size: 900, cents: 33000 },
+          { size: 1080, cents: 39000 },
+          { size: 1320, cents: 52500 },
+        ],
+      },
+    ],
+  };
+  const job = { service: 'Driveways', size: 550, surcharges: [], addOns: [], otherServices: [] };
+  assert.equal(priceJob(bands, job)?.totalCents, 25800);
+});
+
+test('a small job the AI read as a price, at the owner’s cheapest total, is their minimum', async () => {
+  const { priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  // $9.50 a window, and $104 for both 8 and 12 windows, which no rate gives: the AI put the 8 down
+  // as a price of its own.
+  const read = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    addOns: [],
+    services: [
+      {
+        name: 'Exterior windows',
+        unit: 'windows',
+        rateCents: 950,
+        minimumCents: null,
+        points: [
+          { size: 8, cents: 10400 },
+          { size: 20, cents: 19000 },
+          { size: 30, cents: 28500 },
+          { size: 40, cents: 38000 },
+        ],
+      },
+    ],
+  };
+  const job = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  const refined = refineFormula(read, [
+    { parts: job(8), totalCents: 10400 },
+    { parts: job(12), totalCents: 10400 },
+    { parts: job(20), totalCents: 19000 },
+    { parts: job(30), totalCents: 28500 },
+    { parts: job(40), totalCents: 38000 },
+  ]);
+  assert.equal(refined.minimumCents, 10400);
+  assert.equal(priceJob(refined, job(5))?.totalCents, 10400);
+});
+
+test('a second count, like bathrooms, adds its price past the ones the main price includes', async () => {
+  const { priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const cleaning = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    addOns: [],
+    services: [
+      {
+        name: 'Standard clean',
+        unit: 'bedrooms',
+        rateCents: 4000,
+        points: [],
+        minimumCents: null,
+        extra: { unit: 'bathrooms', rateCents: 3000, included: 1 },
+      },
+    ],
+  };
+  const job = (size: number, extraSize: number | null) => ({
+    service: 'Standard clean',
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+    extraSize,
+  });
+  assert.equal(priceJob(cleaning, job(3, 2))?.totalCents, 15000);
+  assert.equal(priceJob(cleaning, job(3, 1))?.totalCents, 12000);
+  assert.equal(priceJob(cleaning, job(3, null)), null, 'Without the count, the formula can’t say');
+  // The owner charges $25 a bathroom past the first.
+  const refined = refineFormula(cleaning, [
+    { parts: job(3, 2), totalCents: 14500 },
+    { parts: job(2, 3), totalCents: 13000 },
+    { parts: job(4, 1), totalCents: 16000 },
+  ]);
+  assert.deepEqual(refined.services[0].extra, { unit: 'bathrooms', rateCents: 2500, included: 1 });
+});
+
+test('a quote it can’t back with the owner’s own quotes is one it doubts', async () => {
+  const { doubtsAbout, priceJob } = await import('../src/pricing/formula.js');
+  const plainFormula = { ...formula, minimumCents: null, roundToCents: 100 };
+  const job = (size: number) => ({
+    service: 'Exterior windows',
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  const examples = [20, 25, 30, 35].map((size) => ({ parts: job(size), totalCents: size * 800 }));
+  const doubts = (size: number) =>
+    doubtsAbout(plainFormula, examples, job(size), priceJob(plainFormula, job(size))!);
+  assert.deepEqual(doubts(28), [], 'Inside what they priced, nothing to doubt');
+  assert.ok(doubts(60).some((doubt) => /much bigger/.test(doubt)));
+  assert.ok(doubts(10).some((doubt) => /much smaller/.test(doubt)));
+  assert.ok(doubts(10).some((doubt) => /less than anything/.test(doubt)));
+  assert.deepEqual(
+    doubtsAbout(plainFormula, [], job(60), priceJob(plainFormula, job(60))!),
+    [],
+    'With none of their quotes to go on, it says nothing',
+  );
+});
+
+test('a job lifted well up to a minimum its service was never charged is one it doubts', async () => {
+  const { doubtsAbout, priceJob } = await import('../src/pricing/formula.js');
+  const floored = { ...formula, minimumCents: 30000, roundToCents: 100, surcharges: [] };
+  const job = (service: string, size: number) => ({
+    service,
+    size,
+    surcharges: [],
+    addOns: [],
+    otherServices: [],
+  });
+  // The $300 minimum was only ever charged for outside windows.
+  const examples = [
+    { parts: job('Exterior windows', 20), totalCents: 30000 },
+    { parts: job('Exterior windows', 40), totalCents: 32000 },
+    { parts: job('Interior windows', 60), totalCents: 36000 },
+    { parts: job('Interior windows', 70), totalCents: 42000 },
+  ];
+  const lifted = (parts: ReturnType<typeof job>) =>
+    doubtsAbout(floored, examples, parts, priceJob(floored, parts)!).some((doubt) =>
+      /lifted to your minimum/.test(doubt),
+    );
+  assert.equal(lifted(job('Interior windows', 20)), true);
+  assert.equal(lifted(job('Exterior windows', 25)), false, 'Outside windows were charged it');
+});
+
+test('at a size the owner priced, the main work is their own price there', () => {
+  // Movers whose crew grows with the home: one line through these misses every one of them.
+  const movers = {
+    name: 'Local moves',
+    unit: 'bedrooms',
+    rateCents: null,
+    shape: 'fit' as const,
+    minimumCents: null,
+    points: [
+      { size: 1, cents: 58300 },
+      { size: 2, cents: 86400 },
+      { size: 3, cents: 157700 },
+      { size: 4, cents: 257500 },
+      { size: 4, cents: 252500 },
+    ],
+  };
+  assert.equal(mainWork(movers, 1), 58300);
+  assert.equal(mainWork(movers, 4), 255000, 'The average of what they charged at that size');
+  assert.notEqual(mainWork(movers, 2.5), null);
+});
+
+test('an add-on charged by the room on carpet keeps the one price it had on a rug', async () => {
+  const { doubtsAbout, priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const carpets = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    services: [
+      { name: 'Carpet', unit: 'rooms', rateCents: 6000, points: [], minimumCents: null },
+      { name: 'Area rugs', unit: 'sq ft', rateCents: 150, points: [], minimumCents: null },
+    ],
+    // The AI read it as one price, from the rug.
+    addOns: [{ name: 'Pet odor', per: 'job' as const, cents: 3500 }],
+  };
+  const job = (service: string, size: number) => ({
+    service,
+    size,
+    surcharges: [],
+    addOns: [{ name: 'Pet odor', count: null }],
+    otherServices: [],
+  });
+  // $35 a room on carpet; a rug counts as one room.
+  const examples = [
+    { parts: job('Carpet', 3), totalCents: 3 * 6000 + 3 * 3500 },
+    { parts: job('Carpet', 5), totalCents: 5 * 6000 + 5 * 3500 },
+    { parts: job('Area rugs', 100), totalCents: 100 * 150 + 3500 },
+  ];
+  const refined = refineFormula(carpets, examples);
+  assert.equal(priceJob(refined, job('Carpet', 4))?.totalCents, 4 * 6000 + 4 * 3500);
+  const rug = job('Area rugs', 80);
+  const quote = priceJob(refined, rug)!;
+  assert.equal(quote.totalCents, 80 * 150 + 3500);
+  assert.ok(!doubtsAbout(refined, examples, rug, quote).some((doubt) => /other jobs/.test(doubt)));
+});
+
+test('an add-on priced by the window or the system isn’t multiplied by square feet', async () => {
+  const { doubtsAbout, priceJob, refineFormula } = await import('../src/pricing/formula.js');
+  const hvac = {
+    ...formula,
+    minimumCents: null,
+    roundToCents: 100,
+    surcharges: [],
+    services: [
+      { name: 'Tune-ups', unit: 'units', rateCents: 15000, points: [], minimumCents: null },
+      { name: 'Duct cleaning', unit: 'sq ft', rateCents: 25, points: [], minimumCents: null },
+    ],
+    addOns: [{ name: 'Blower cleaning', per: 'unit' as const, cents: 10900 }],
+  };
+  const tuneUp = (units: number) => ({
+    service: 'Tune-ups',
+    size: units,
+    surcharges: [],
+    addOns: [{ name: 'Blower cleaning', count: null }],
+    otherServices: [],
+  });
+  const examples = [1, 2, 3].map((units) => ({
+    parts: tuneUp(units),
+    totalCents: units * 15000 + units * 10900,
+  }));
+  const refined = refineFormula(hvac, examples);
+  const ducts = { ...tuneUp(1500), service: 'Duct cleaning' };
+  const quote = priceJob(refined, ducts)!;
+  assert.equal(
+    quote.lines[1].amountCents,
+    21800,
+    'What it came to on the tune-ups it was quoted on',
+  );
+  // The other way round: per room, quoted only on rugs measured in square feet.
+  const carpet = {
+    ...refined,
+    services: [{ name: 'Carpet', unit: 'rooms', rateCents: 6000, points: [], minimumCents: null }],
+    addOns: [
+      { name: 'Pet odor', per: 'unit' as const, cents: 5000, unit: 'sq ft', jobCents: 540000 },
+    ],
+  };
+  const rooms = {
+    service: 'Carpet',
+    size: 5,
+    surcharges: [],
+    addOns: [{ name: 'Pet odor', count: null }],
+    otherServices: [],
+  };
+  assert.equal(priceJob(carpet, rooms)?.lines[1].amountCents, 25000, 'The more modest reading');
+  assert.ok(doubtsAbout(refined, examples, ducts, quote).some((doubt) => /other jobs/.test(doubt)));
 });

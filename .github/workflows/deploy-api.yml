@@ -75,7 +75,7 @@ jobs:
           mkdir -p release/apps/api release/apps/web
           cp package.json package-lock.json release/
           cp -R packages release/
-          cp -R apps/api/package.json apps/api/dist apps/api/migrations apps/api/deploy apps/api/docs release/apps/api/
+          cp -R apps/api/package.json apps/api/dist apps/api/migrations apps/api/deploy release/apps/api/
           cp apps/web/package.json release/apps/web/
           tar -C release -czf pricecharm-api.tar.gz .
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

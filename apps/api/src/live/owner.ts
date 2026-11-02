@@ -12,7 +12,13 @@ import { LEARNING_STYLES, restyle, type LearningStyle } from '../pricing/style.j
 import { charmSettingsInput, saveCharmSettings, settingsFromRow } from '../charm.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { owner } from '../auth.js';
-import { billingProvider, changePlan, PLANS, reconcileStripeCustomer } from '../billing.js';
+import {
+  billingProvider,
+  changePlan,
+  PLANS,
+  reconcileStripeCustomer,
+  redeemCode,
+} from '../billing.js';
 import { consumeAuthRateLimit } from '../verification.js';
 import { liveBillingAccess, liveBillingSummary } from './billing.js';
 import { chatEmailLink, markSent, whatsAppClosed } from './chat.js';
@@ -441,6 +447,19 @@ ownerQuotesRouter.post('/app/billing/plan', async (req, res) => {
   await consumeAuthRateLimit(`billing-plan:${businessId}`, 20, 3600_000);
   await changePlan(businessId, plan);
   await recordMilestone(undefined, businessId, 'plan_chosen', plan);
+  res.json(ok(await liveBillingSummary(businessId)));
+});
+
+/** Puts a code on the account, for free days from the first card. */
+ownerQuotesRouter.post('/app/billing/code', async (req, res) => {
+  const { businessId } = owner(req);
+  const { code } = z
+    .object({ code: z.string().trim().min(1).max(60) })
+    .strict()
+    .parse(req.body);
+  // Enough tries for typos, not enough to guess codes.
+  await consumeAuthRateLimit(`billing-code:${businessId}`, 10, 3600_000);
+  await redeemCode(businessId, code);
   res.json(ok(await liveBillingSummary(businessId)));
 });
 
