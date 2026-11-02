@@ -5,8 +5,10 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiMode, aiProvider, modelFor, runWithAiUsage, useSavedAnswers } from './ai/index.js';
+import { intakeTurn, type IntakeTurn } from './ai/intake.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { describeComparison, type SavedRun } from './bench/compare.js';
+import { customerTurn, jobFacts, practiceFacts } from './bench/customer.js';
 import {
   closeness,
   describeCloseness,
@@ -43,11 +45,13 @@ import {
   type SimJob,
   type SimOwner,
 } from './bench/owners.js';
+import { questionChecklist } from './charm-notes.js';
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
   formulaExamples,
   holdFailedFormulas,
+  priceDrivers,
   learnedFormula,
   priceFromFormula,
   type Learned,
@@ -153,6 +157,11 @@ PLANS.usual = [
   ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
 ];
 const PLAN = 'experiments';
+/**
+ * The most questions a --chat run's customer chat asks before the job is priced anyway. A live
+ * chat has no limit; nearly every benchmark chat is done well before this.
+ */
+const CHAT_TURNS = 12;
 
 function option(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -186,6 +195,8 @@ async function seedOwner(
   plan: Customer[],
   past: number,
   offerings: ReturnType<typeof tradeOfferings>,
+  /** Whether practice customers carry the facts and questions a --chat run's checklist is made from. */
+  questions = false,
 ) {
   const id = randomUUID();
   const jobs: SimJob[] = [];
@@ -239,7 +250,7 @@ async function seedOwner(
     const runId = randomUUID();
     const finished = new Date(start.getTime() + (position + 1) * 60_000);
     await mutate(
-      "INSERT INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,finished_at) VALUES (?,?,?,'finished',?,'quote',?,?)",
+      "INSERT INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,finished_at,asked_json) VALUES (?,?,?,'finished',?,'quote',?,?,?)",
       [
         runId,
         id,
@@ -250,7 +261,7 @@ async function seedOwner(
           place: owner.area,
           serviceName: job.service,
           opener: '',
-          facts: [],
+          facts: questions ? practiceFacts(owner, job) : [],
           photos: [],
           suggestions: [],
           siteVisitLikely: false,
@@ -276,6 +287,7 @@ async function seedOwner(
           issuedAt: finished.toISOString(),
         }),
         finished,
+        JSON.stringify(questions ? practiceFacts(owner, job).map((fact) => fact.key) : []),
       ],
     );
     const said = [
@@ -324,6 +336,17 @@ type Test = {
    * (src/bench/metrics.ts); empty when all of it was there to learn.
    */
   gaps: string[];
+  /**
+   * With --chat: how the customer chat went, the questions it asked, whether it said it had
+   * enough, and what the price depends on that the customer never told it.
+   */
+  chat?: {
+    questions: number;
+    ready: boolean;
+    told: string[];
+    missing: string[];
+    said: { from: 'customer' | 'assistant'; text: string }[];
+  };
   failed?: string;
 };
 
@@ -606,6 +629,8 @@ async function main() {
   const curve = process.argv.includes('--curve');
   const formulaOnly = process.argv.includes('--formula-only');
   const formula = formulaOnly || process.argv.includes('--formula');
+  const chat = process.argv.includes('--chat');
+  if (chat && !formulaOnly) throw new Error('--chat runs with --formula-only.');
   if (curve && formulaOnly)
     throw new Error(
       '--curve compares the Charm’s usual drafts, so it can’t run with --formula-only.',
@@ -662,6 +687,7 @@ async function main() {
       plan,
       past,
       offerings,
+      chat,
     );
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
@@ -714,6 +740,75 @@ async function main() {
     );
   const counted = <T>(businessId: string, task: () => Promise<T>) =>
     retried(() => tallied(businessId, task));
+  /**
+   * A customer chat for a new job: the simulated customer (src/bench/customer.ts) opens, the app's
+   * chat asks, and they answer, until the chat has enough or has asked CHAT_TURNS times.
+   */
+  const chatFor = async (test: Test, owner: SimOwner) => {
+    const facts = jobFacts(owner, test.job);
+    const said: { from: 'customer' | 'assistant'; text: string }[] = [];
+    const told = new Set<string>();
+    const answer = async () => {
+      const turn = await counted(test.businessId, () =>
+        customerTurn({
+          trade: owner.trade,
+          facts,
+          wording: test.message,
+          conversation: said,
+          model,
+        }),
+      );
+      said.push({ from: 'customer', text: turn.reply });
+      for (const key of turn.told) told.add(key);
+    };
+    await answer();
+    const checklist = await questionChecklist(test.businessId);
+    const drivers = priceDrivers(
+      await learnedFormula(test.businessId, {}, model).catch(() => null),
+    );
+    let last = null as IntakeTurn | null;
+    for (let turn = 0; turn < CHAT_TURNS; turn++) {
+      const previous = last;
+      last = await counted(test.businessId, () =>
+        intakeTurn(
+          {
+            business: {
+              name: owner.name,
+              trade: owner.trade,
+              services: owner.rules.services.map((rule) => rule.name),
+              area: owner.area,
+              radiusMiles: null,
+            },
+            checklist,
+            drivers,
+            serviceName: previous?.serviceName ?? '',
+            conversation: said,
+            photosReceived: 0,
+          },
+          [],
+        ),
+      );
+      said.push({ from: 'assistant', text: last.reply });
+      if (last.ready) break;
+      await answer();
+    }
+    test.chat = {
+      questions: said.filter((message) => message.from === 'assistant').length,
+      ready: Boolean(last?.ready),
+      told: [...told],
+      missing: facts.filter((fact) => fact.needed && !told.has(fact.key)).map((fact) => fact.key),
+      said,
+    };
+    return {
+      serviceName: last?.serviceName ?? '',
+      // The owner's side of a live chat is the assistant's, as the live draft reads it.
+      conversation: said.map((message) => ({
+        from: message.from === 'customer' ? ('customer' as const) : ('owner' as const),
+        text: message.text,
+      })),
+      spec: last?.spec ?? null,
+    };
+  };
   /** Each owner's formula from before pricing started, so the report never works one out again. */
   const formulas = new Map<string, Learned | null>();
   const tasks: (() => Promise<void>)[] = [];
@@ -744,9 +839,15 @@ async function main() {
     if (formula)
       tasks.push(async () => {
         try {
+          // With --chat, the customer says a detail or two and the app's customer chat asks for
+          // the rest, as in a live chat, and the job is priced from what it learned.
+          const request = chat
+            ? await chatFor(test, owner)
+            : { serviceName: test.job.service, conversation, spec };
           // Where the formula can't price it, the usual draft does, as in a live quote.
           const { drafted, use } = await counted(test.businessId, async () => {
-            const input = { businessId: test.businessId, serviceName: test.job.service };
+            const input = { businessId: test.businessId, serviceName: request.serviceName };
+            const { conversation, spec } = request;
             const learned = await learnedFormula(test.businessId, {}, model).catch(() => null);
             const priced = await priceFromFormula(learned, { ...input, conversation, spec, model });
             return priced.drafted
@@ -953,6 +1054,32 @@ async function main() {
       formula ? (test) => test.formula?.cents : (test) => test.charm.full?.cents,
     ),
   );
+  const chats = scored.filter((test) => test.chat);
+  if (chats.length) {
+    const asked = chats.map((test) => test.chat!.questions).sort((a, b) => a - b);
+    const complete = chats.filter((test) => !test.chat!.missing.length);
+    const missed = new Map<string, number>();
+    for (const test of chats)
+      for (const key of test.chat!.missing) missed.set(key, (missed.get(key) ?? 0) + 1);
+    const priced = (subset: Test[]) =>
+      subset.map((test) => ({ cents: test.formula?.cents, ownerCents: test.ownerCents }));
+    out.push(
+      '',
+      'Customer chats:',
+      `  The chat asked ${asked[Math.floor(asked.length / 2)]} questions (the middle chat) and said it had enough in ${share(chats.filter((test) => test.chat!.ready).length, chats.length)}.`,
+      `  It learned everything the price depends on in ${share(complete.length, chats.length)}.`,
+      ...(missed.size
+        ? [
+            `  Never learned: ${[...missed.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .map(([key, n]) => `${key} ${n}`)
+              .join(', ')}.`,
+          ]
+        : []),
+      ...lines('  Learned everything', priced(complete)),
+      ...lines('  Missed something', priced(chats.filter((test) => test.chat!.missing.length))),
+    );
+  }
   out.push('', 'By trade:');
   for (const trade of trades) {
     const subset = scored.filter((test) => owners[test.owner].trade === trade);

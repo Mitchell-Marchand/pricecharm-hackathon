@@ -399,6 +399,44 @@ test('an aimed customer asks for what the trade usually charges for and this own
   assert.deepEqual([bigger.service, bigger.quantity], ['Carpet', 6]);
 });
 
+test('a chat customer knows each fact of the job, and which ones the price depends on', async () => {
+  const { jobFacts, practiceFacts } = await import('../src/bench/customer.js');
+  const rule = { step: 1, volume: null, bands: null, height: false };
+  const carpets = owner('carpet', {
+    services: [
+      { ...rule, name: 'Carpet', unit: 'rooms', rate: 6000, sizes: [1, 8] },
+      { ...rule, name: 'Area rugs', unit: 'sq ft', rate: 150, sizes: [24, 150] },
+    ],
+    addOns: [{ label: 'Pet odor treatment', per: 'job', cents: 3000 }],
+  });
+  const job = {
+    ...plainJob,
+    service: 'Carpet',
+    quantity: 4,
+    heavy: true,
+    addOns: [{ label: 'Pet odor treatment' }],
+  };
+  const facts = jobFacts(carpets, job);
+  assert.deepEqual(
+    facts.map(({ key, needed }) => [key, needed]),
+    [
+      ['service', true],
+      ['size', true],
+      ['condition', true],
+      ['extra1', true],
+    ],
+  );
+  assert.match(facts[1].text, /4 rooms/);
+  assert.deepEqual(
+    practiceFacts(carpets, { ...job, heavy: false }).map((fact) => fact.question),
+    [
+      'About how many rooms is it?',
+      'What shape is it in right now?',
+      'Anything else you’d like done while we’re there?',
+    ],
+  );
+});
+
 test('a detailer scales the price by vehicle size, and junk is a share of the truck', () => {
   const detailer = owner('detailing', {
     services: [
