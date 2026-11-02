@@ -188,6 +188,8 @@ export function JobImports({
   }
 
   const waiting = sending.length + imports.filter((item) => item.status === 'reading').length;
+  // Files with no job in them are left to remove, with nothing to save.
+  const saveable = waiting > 0 || ready.length > 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -199,9 +201,11 @@ export function JobImports({
           <h2 id="imports-title" className="t-h3">
             Check these jobs
           </h2>
-          <p className="mt-1 text-sm text-ink-2">
-            Read from your files. Fix anything that&apos;s off, then save them together.
-          </p>
+          {saveable && (
+            <p className="mt-1 text-sm text-ink-2">
+              Read from your files. Fix anything that&apos;s off, then save them together.
+            </p>
+          )}
           <ul className="mt-4 flex flex-col divide-y divide-line" aria-label="Jobs from your files">
             {sending.map((item) => (
               <PendingRow key={`sending-${item.key}`} filename={item.filename} text="Sending…" />
@@ -241,22 +245,24 @@ export function JobImports({
               ),
             )}
           </ul>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-            <p className="text-sm text-muted" role="status">
-              {waiting
-                ? `${waiting} still reading. You can save these now and the rest after.`
-                : ready.length
-                  ? 'Saved jobs teach it your prices straight away.'
-                  : ''}
-            </p>
-            <Button onClick={() => void save()} disabled={!ready.length || saving}>
-              {saving
-                ? 'Saving…'
-                : ready.length
-                  ? `Save ${ready.length} ${ready.length === 1 ? 'job' : 'jobs'}`
-                  : 'Save jobs'}
-            </Button>
-          </div>
+          {saveable && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+              <p className="text-sm text-muted" role="status">
+                {waiting
+                  ? `${waiting} still reading. You can save these now and the rest after.`
+                  : ready.length
+                    ? 'Saved jobs teach it your prices straight away.'
+                    : ''}
+              </p>
+              <Button onClick={() => void save()} disabled={!ready.length || saving}>
+                {saving
+                  ? 'Saving…'
+                  : ready.length
+                    ? `Save ${ready.length} ${ready.length === 1 ? 'job' : 'jobs'}`
+                    : 'Save jobs'}
+              </Button>
+            </div>
+          )}
         </section>
       )}
 

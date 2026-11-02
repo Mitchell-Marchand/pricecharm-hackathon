@@ -192,9 +192,12 @@ export async function addMessage(
   );
 }
 
-/** The first thing a customer reads. It says it's an assistant, not a person. */
-export const greeting = (businessName: string) =>
-  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes. What do you need done?`;
+/**
+ * The first thing a customer reads. It says it's an assistant, not a person, and names the person
+ * behind the business when there is one, the same words the chat shows before it starts.
+ */
+export const greeting = (businessName: string, ownerName?: string) =>
+  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes${ownerName ? `, then ${ownerName} takes it from there` : ''}. What do you need done?`;
 
 /** Who a WhatsApp chat is with: Meta's ID for them on the business's number, and what Meta shares. */
 export type ChannelCustomer = {
@@ -243,7 +246,7 @@ export async function startChat(
         businessId: String(business.id),
         chatId: id,
         sender: 'assistant',
-        text: greeting(String(business.name)),
+        text: greeting(String(business.name), await contactName(business, connection)),
         chips: offered.slice(0, 6),
       });
   });
@@ -529,15 +532,17 @@ export async function customerMessage(req: Request, text: string) {
   if (Number(count.count) >= MAX_MESSAGES)
     throw new ApiError(422, 'CHAT_LONG', 'This chat is full. Start a new one to keep going.');
   const [previous] = await rows(
-    'SELECT sender FROM lead_messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 1',
+    'SELECT sender,text FROM lead_messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 1',
     [chat.id],
   );
-  await addMessage(undefined, {
-    businessId: String(business.id),
-    chatId: String(chat.id),
-    sender: 'customer',
-    text,
-  });
+  // When an answer fails, the chat puts the message back to send again. It's already saved.
+  if (previous?.sender !== 'customer' || previous.text !== text)
+    await addMessage(undefined, {
+      businessId: String(business.id),
+      chatId: String(chat.id),
+      sender: 'customer',
+      text,
+    });
   if (chat.status === 'chatting' && !chat.human_handoff) await runIntake(req, business, chat);
   else if (chat.status !== 'chatting' && chat.status !== 'contact') {
     if (chat.source !== 'test') await notifyOwner(String(business.id), String(chat.id), 'message');

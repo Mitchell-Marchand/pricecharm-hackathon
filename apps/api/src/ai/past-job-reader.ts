@@ -106,11 +106,11 @@ export async function readPastJob(input: {
 - serviceName: exactly one of the business's services listed in the input, or an empty string if none fits.
 - description: one or two plain sentences about the work, such as what was done, how big it was and any extras. No names, street addresses, phone numbers, emails or account numbers.
 - priceCents: what the customer paid for the job, in cents. Leave out tax when it's listed separately. Null if the total isn't clear.
-- size: the measured size or count if it's stated, like "900 sq ft" or "24 windows". duration: how long it took, if stated. when: the month and year of the job, like "June 2026".
+- size: the measured size or count if it's stated, like "900 sq ft" or "24 windows". When parts of the job are the same kind of work in the same unit, like a patio and a walkway, it's their total, like "620 sq ft". duration: how long it took, if stated. when: the month and year of the job, like "June 2026".
 - materialsCents: materials cost if it's listed separately, else null.
 - discount: discountKind "amount" with discountValue in cents, or "percent" with a whole-number percent, plus the reason if one is given. Otherwise discountKind "none" and discountValue null.
 - notes: anything the document says made the job cost more or less. Otherwise empty.
-- Only use what the document shows. Never guess a value. In issues, briefly name anything missing or unclear, in plain words.`,
+- Only use what the document shows. Never guess a value. In issues, briefly name anything the owner should check, in a short plain sentence: a price, service or size that's missing or unclear, or a second job on the same document. Duration, date, materials and discounts are optional, so never say they're missing.`,
     { services: input.services },
     resultJson,
     resultSchema,

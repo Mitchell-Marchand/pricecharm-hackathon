@@ -659,11 +659,15 @@ async function insightsFor(
     // With a size it's simple division, the same size the rate card reads. The AI only words it
     // when there's no size to divide by.
     const spec = specFromScenario(scenario);
-    // A price the same as the least they've charged for another job is likely their minimum,
-    // which says nothing about a rate, so it's said as it is.
+    // A price at or under the least they've charged for this service is likely their minimum,
+    // which says nothing about a rate, so it's said as it is. Other services' minimums can be
+    // lower, so they're only used when this service has no other prices.
     const others = (await loadPricingData(businessId, { excludeRunId: runId })).points;
+    const service = scenario.serviceName.trim().toLowerCase();
+    const sameService = others.filter((point) => point.service.trim().toLowerCase() === service);
+    const compared = sameService.length ? sameService : others;
     const atMinimum =
-      others.length > 0 && main.amountCents <= Math.min(...others.map((point) => point.cents));
+      compared.length > 0 && main.amountCents <= Math.min(...compared.map((point) => point.cents));
     let rate = '';
     try {
       rate =

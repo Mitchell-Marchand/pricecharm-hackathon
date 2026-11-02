@@ -44,6 +44,11 @@ test('sizes come out of the way people write them', () => {
     ['Front beds refreshed, 6 yards of mulch', 6, 'yards'],
     ['Somewhere between 20 to 25 windows', 22.5, 'windows'],
     ['Two-car driveway wash.', 2, 'cars'],
+    ['Two-car driveway, about 800 sq ft. Moss along the edges.', 800, 'sq ft'],
+    ['regular 2 car driveway, maybe 40 by 20', 800, 'sq ft'],
+    ['3 bedroom house, 1,800 sq ft', 1800, 'sq ft'],
+    ['3 bedrooms, 2 baths, about 1,800 sq ft', 3, 'bedrooms'],
+    ['Detailed 2 cars, about 3 hours', 2, 'cars'],
     ['Half a truckload from a garage', 0.5, 'loads'],
   ];
   for (const [text, quantity, unit] of cases)
