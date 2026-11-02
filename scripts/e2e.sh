@@ -13,7 +13,7 @@ api_port=${E2E_API_PORT:-4200}
 web_port=${E2E_WEB_PORT:-3300}
 export DOTENV_CONFIG_PATH=/dev/null NODE_ENV=test APP_ENV=test EXPOSE_DEV_TOKENS=1 \
   AI_PROVIDER=demo MAIL_PROVIDER=local BILLING_PROVIDER=local LOCAL_SETUPS_PER_ADDRESS=500 \
-  LOCAL_REQUESTS_PER_MINUTE=2000 \
+  LOCAL_REQUESTS_PER_MINUTE=2000 LOCAL_SIGNUPS_PER_ADDRESS=100 \
   APP_ORIGIN="http://localhost:$web_port,http://127.0.0.1:$web_port" \
   PUBLIC_APP_URL="http://localhost:$web_port"
 export DB_HOST=${DB_HOST:-127.0.0.1} DB_PORT=${DB_PORT:-3307} DB_NAME=${DB_NAME:-quoting_test} \
@@ -25,7 +25,9 @@ if [ "$DB_PORT" = 3307 ] && [ "$DB_NAME" = quoting_test ] && [ "${E2E_RESET_DB:-
     -e "DROP DATABASE IF EXISTS quoting_test; CREATE DATABASE quoting_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 fi
 npm run migrate --workspace @pricecharm/api
-API_BASE_URL="http://127.0.0.1:$api_port" npm run build --workspace @pricecharm/web
+# A made-up pixel id puts Meta's pixel in the build; the tests block Meta and stand in for it.
+API_BASE_URL="http://127.0.0.1:$api_port" NEXT_PUBLIC_META_PIXEL_ID=1234567890 \
+  npm run build --workspace @pricecharm/web
 
 standalone=apps/web/.next/standalone/apps/web
 rm -rf "$standalone/.next/static" "$standalone/public"

@@ -144,6 +144,14 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 every day.
               </li>
               <li>
+                On our public pages and the setup pages, Meta’s pixel: the pages you open, and
+                whether you made an account or added a card, so we can measure our ads on Facebook
+                and Instagram. It never runs on quote links, the quote button on a business’s
+                website or the owner’s account pages. We don’t use it in Europe or the UK, or if
+                your browser sends a Do Not Track or Global Privacy Control signal. See{' '}
+                <SectionLink id="sharing">Who we share it with</SectionLink>.
+              </li>
+              <li>
                 If you’re in Europe or the UK, we ask before recording how you use the website or
                 your account.
               </li>
@@ -228,7 +236,10 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 <DocumentLink to="terms">Terms of Service</DocumentLink>.
               </li>
             </ul>
-            <p>We don’t sell personal information, and we don’t use it for advertising.</p>
+            <p>
+              We don’t sell personal information. The only advertising use is Meta’s pixel, above,
+              for our own ads.
+            </p>
           </>
         ),
       },
@@ -320,6 +331,13 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               handles them under its own terms and privacy policy.
             </p>
             <p>
+              <strong>Meta’s pixel.</strong> On our public pages and the setup pages, the pixel
+              sends Meta the pages you open, whether you made an account or added a card, your IP
+              address and browser, and Meta’s cookies. It doesn’t receive what you type. Meta uses
+              this to measure our ads and choose who sees them, under its own terms and privacy
+              policy, and may match it to a Facebook or Instagram account.
+            </p>
+            <p>
               <strong>Combined figures.</strong> We may share the combined figures described in{' '}
               <SectionLink id="use">How we use it</SectionLink>. They don’t identify any business or
               person.
@@ -346,9 +364,10 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
         body: (
           <>
             <p>
-              We don’t use advertising cookies or analytics cookies. Besides what PriceCharm needs
-              to work, browser storage holds the id that ties one visit together and, in Europe and
-              the UK, your answer about recordings.
+              We don’t use analytics cookies. Meta’s pixel sets advertising cookies on our public
+              pages and the setup pages, where it runs. Besides that and what PriceCharm needs to
+              work, browser storage holds the id that ties one visit together and, in Europe and the
+              UK, your answer about recordings.
             </p>
             <LegalTable
               head={['Name', 'What it’s for', 'How long it lasts']}
@@ -388,6 +407,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Remembers whether you agreed to recordings, in Europe and the UK',
                   'Until you clear it',
                 ],
+                ['_fbp (Meta)', 'Lets Meta recognize this browser, to measure our ads', '90 days'],
+                ['_fbc (Meta)', 'Records that you came from one of our ads', '90 days'],
               ]}
             />
             <p>
@@ -512,9 +533,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               replying to our answer. We won’t treat you differently for using any of these rights.
             </p>
             <p>
-              We don’t sell personal information or share it for cross-context behavioral
-              advertising, as California law defines those terms. We don’t use sensitive personal
-              information for any purpose that would give you a right to limit it.
+              We don’t sell personal information. Meta’s pixel on our public pages and the setup
+              pages may count as sharing for cross-context behavioral advertising, as California law
+              defines it. To opt out, turn on Global Privacy Control in your browser and we won’t
+              load the pixel. We don’t use sensitive personal information for any purpose that would
+              give you a right to limit it.
             </p>
             <p>
               If you’re in the UK or EU: we rely on our contract with you to run your account; on

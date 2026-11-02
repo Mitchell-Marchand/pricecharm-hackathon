@@ -10,6 +10,7 @@ import { Button, Field, TextInput } from '@/components/ui';
 import { register } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
 import { useHumanCheck } from '@/lib/human-check';
+import { pixelEvent } from '@/lib/meta-pixel';
 import { useOnboarding } from '@/lib/onboarding';
 import { tradeName } from '@/lib/trades';
 
@@ -54,6 +55,7 @@ export default function AccountStep() {
         },
         await human.headers(),
       );
+      pixelEvent('CompleteRegistration');
       // The try page needs the account's quote link, so wait for it.
       await reload();
       await goTo('try');

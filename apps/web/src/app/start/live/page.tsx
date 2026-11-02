@@ -14,6 +14,7 @@ import { ShareSections } from '@/components/share/ShareSections';
 import { Button, ButtonLink } from '@/components/ui';
 import { loadMe, loadShare, type CharmView, type Me, type Share } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
+import { pixelEvent } from '@/lib/meta-pixel';
 import { useOnboarding } from '@/lib/onboarding';
 import {
   choosePlan,
@@ -73,7 +74,10 @@ export default function LiveStep() {
           const fresh = await syncBilling();
           if (stopped) return;
           setBilling(fresh);
-          if (fresh.canSend) break;
+          if (fresh.canSend) {
+            pixelEvent('AddPaymentInfo');
+            break;
+          }
         } catch (syncError) {
           setError(errorMessage(syncError));
           break;

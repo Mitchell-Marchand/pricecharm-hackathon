@@ -49,6 +49,8 @@ jobs:
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
           # PostHog project key for session recordings. Public by design; empty turns them off.
           NEXT_PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+          # Meta pixel for measuring ads. Public by design; empty leaves it out.
+          NEXT_PUBLIC_META_PIXEL_ID: ${{ vars.META_PIXEL_ID }}
       - name: Package an immutable release
         # Standalone output mirrors the monorepo, so the server lives at apps/web/server.js inside it.
         run: |
