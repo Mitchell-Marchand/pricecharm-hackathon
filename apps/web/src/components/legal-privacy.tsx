@@ -119,6 +119,14 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 scrambled form of your IP address that changes every day, never the address itself.
               </li>
             </ul>
+            <h3>From service businesses’ websites</h3>
+            <ul>
+              <li>
+                If you run a service business, the contact details it publishes on its own website:
+                its name, email address, phone number, trade and city. We use them only to show you
+                our ads on Facebook and Instagram. To be left out, email {mail}.
+              </li>
+            </ul>
             <h3>Collected automatically</h3>
             <ul>
               <li>
@@ -237,8 +245,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               </li>
             </ul>
             <p>
-              We don’t sell personal information. The only advertising use is Meta’s pixel, above,
-              for our own ads.
+              We don’t sell personal information. The only advertising uses are Meta’s pixel and
+              businesses’ published contact details, both above, for our own ads.
             </p>
           </>
         ),
@@ -336,6 +344,12 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               address and browser, and Meta’s cookies. It doesn’t receive what you type. Meta uses
               this to measure our ads and choose who sees them, under its own terms and privacy
               policy, and may match it to a Facebook or Instagram account.
+            </p>
+            <p>
+              <strong>Meta’s ad audiences.</strong> To show our ads to service businesses, we give
+              Meta the published contact details described above. They’re scrambled before they’re
+              sent, and Meta deletes them once it has matched them to Facebook and Instagram
+              accounts.
             </p>
             <p>
               <strong>Combined figures.</strong> We may share the combined figures described in{' '}
@@ -534,10 +548,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
             </p>
             <p>
               We don’t sell personal information. Meta’s pixel on our public pages and the setup
-              pages may count as sharing for cross-context behavioral advertising, as California law
-              defines it. To opt out, turn on Global Privacy Control in your browser and we won’t
-              load the pixel. We don’t use sensitive personal information for any purpose that would
-              give you a right to limit it.
+              pages, and giving Meta businesses’ published contact details, may count as sharing for
+              cross-context behavioral advertising, as California law defines it. To opt out of the
+              pixel, turn on Global Privacy Control in your browser and we won’t load it. To opt out
+              of the contact lists, email {mail}. We don’t use sensitive personal information for
+              any purpose that would give you a right to limit it.
             </p>
             <p>
               If you’re in the UK or EU: we rely on our contract with you to run your account; on
