@@ -74,27 +74,48 @@ function normalize(text: string) {
 }
 
 /**
+ * A count used to describe something else, like "two-car driveway" or "3 bedroom house": the
+ * number is joined to its unit by a hyphen, or the unit stays singular before another word.
+ */
+function describesSomethingElse(joined: string, quantity: number, rest: string) {
+  const word = /^[a-z]+/.exec(rest)?.[0] ?? '';
+  const after = rest.slice(word.length);
+  if (!/^[\s-]+[a-z]/.test(after)) return false;
+  return joined.includes('-') || (quantity > 1 && !word.endsWith('s') && word !== 'people');
+}
+
+/**
  * The first size in the text: "About 900 sq ft" is 900 sq ft, "a 12 by 16 deck" is 192 sq ft,
- * "20 to 25 windows" is 22.5 windows. Prices are skipped. Null when there's no size.
+ * "20 to 25 windows" is 22.5 windows. A count that only describes the job gives way to a size
+ * after it, so "two-car driveway, about 800 sq ft" is 800 sq ft. Prices are skipped. Null when
+ * there's no size.
  */
 export function parseQuantity(text: string): { quantity: number; unit: string } | null {
   const source = normalize(text);
   const number = /(?<![$\d.])(\d+(?:\.\d+)?)(?:\s*(?:-|–|to)\s*(\d+(?:\.\d+)?))?/g;
+  let described: { quantity: number; unit: string } | null = null;
   for (const match of source.matchAll(number)) {
     const first = Number(match[1]);
     const quantity = match[2] ? (first + Number(match[2])) / 2 : first;
-    let rest = source.slice((match.index ?? 0) + match[0].length).replace(/^[\s-]+/, '');
+    const after = source.slice((match.index ?? 0) + match[0].length);
+    const joined = /^[\s-]*/.exec(after)![0];
+    let rest = after.slice(joined.length);
     // "12 by 16", "12x16": an area, in square feet unless another unit follows.
     const area = /^(?:x|×|by)\s*(\d+(?:\.\d+)?)\s*(?:f(?:ee|oo)?t\b|')?/.exec(rest);
     if (area && !match[2]) return { quantity: first * Number(area[1]), unit: 'sq ft' };
     const direct = UNITS.find((item) => item.pattern.test(rest));
-    if (direct && quantity > 0) return { quantity, unit: direct.unit };
+    if (direct && quantity > 0) {
+      if (!direct.count || !describesSomethingElse(joined, quantity, rest))
+        return { quantity, unit: direct.unit };
+      described ??= { quantity, unit: direct.unit };
+      continue;
+    }
     // "2 AC units", "3 large windows": one word in between, for things you count.
     rest = rest.replace(/^[a-z]+[\s-]+/, '');
     const counted = UNITS.find((item) => item.count && item.pattern.test(rest));
     if (counted && quantity > 0) return { quantity, unit: counted.unit };
   }
-  return null;
+  return described;
 }
 
 /** "1,200", "2.5": a size's number, rounded the way people say it. */

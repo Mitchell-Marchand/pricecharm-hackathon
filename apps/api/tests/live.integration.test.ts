@@ -639,10 +639,22 @@ test(
     const photoAgent = customerAgent();
     const photographer = await chat(shop.slug, photoAgent);
     await photographer.call('post', '/messages', { text: 'Driveways' }).expect(200);
+    // An answer that failed leaves the message saved, and the chat sends it again. It's kept once.
+    await mutate(
+      "INSERT INTO lead_messages (id,business_id,chat_id,sender,text) SELECT ?,business_id,id,'customer',? FROM lead_chats WHERE id=?",
+      [randomUUID(), 'About 600 sq ft, two cars.', photographer.id],
+    );
     const askedForPhoto = await photographer.call('post', '/messages', {
       text: 'About 600 sq ft, two cars.',
     });
     assert.deepEqual(askedForPhoto.body.data.messages.at(-1).chips, ['Skip photos']);
+    assert.equal(
+      askedForPhoto.body.data.messages.filter(
+        (message: { text: string }) => message.text === 'About 600 sq ft, two cars.',
+      ).length,
+      1,
+      'Sent again after a failed answer, it isn’t saved twice',
+    );
     const driveway = await sharp({
       create: { width: 60, height: 40, channels: 3, background: '#8a8f96' },
     })
