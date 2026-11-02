@@ -15,8 +15,13 @@ test(
   { skip: !enabled },
   async () => {
     process.env.SIGNUPS_EMAIL = 'signups@example.test';
+    process.env.TRUST_PROXY = '1';
     try {
-      const browser = request.agent(createApp());
+      // An address of its own, since the other tests use up 127.0.0.1's ten setups a day.
+      const suffix = randomUUID();
+      const browser = request
+        .agent(createApp())
+        .set('X-Forwarded-For', `2001:db8:${suffix.slice(0, 4)}:${suffix.slice(9, 13)}::1`);
       await browser.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
       const name = `Alert Test Plumbing ${randomUUID().slice(0, 8)}`;
       await browser
@@ -59,6 +64,7 @@ test(
       assert.match(sent[2].text, /Plan: pay per quote/);
     } finally {
       delete process.env.SIGNUPS_EMAIL;
+      delete process.env.TRUST_PROXY;
     }
   },
 );
