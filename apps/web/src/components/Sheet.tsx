@@ -63,7 +63,9 @@ export function Sheet({
           </header>
           <div
             className={cx(
-              'min-h-0 flex-1 overflow-y-auto overscroll-contain',
+              // Sized by its content, not from zero: a phone sheet has no set height, and Safari
+              // shrinks a zero-based body in it down to its padding.
+              'min-h-0 flex-auto overflow-y-auto overscroll-contain',
               !flush && 'px-5 py-5 sm:px-6',
             )}
           >
