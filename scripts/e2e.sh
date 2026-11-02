@@ -25,7 +25,9 @@ if [ "$DB_PORT" = 3307 ] && [ "$DB_NAME" = quoting_test ] && [ "${E2E_RESET_DB:-
     -e "DROP DATABASE IF EXISTS quoting_test; CREATE DATABASE quoting_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 fi
 npm run migrate --workspace @pricecharm/api
-API_BASE_URL="http://127.0.0.1:$api_port" npm run build --workspace @pricecharm/web
+# A made-up pixel id puts Meta's pixel in the build; the tests block Meta and stand in for it.
+API_BASE_URL="http://127.0.0.1:$api_port" NEXT_PUBLIC_META_PIXEL_ID=1234567890 \
+  npm run build --workspace @pricecharm/web
 
 standalone=apps/web/.next/standalone/apps/web
 rm -rf "$standalone/.next/static" "$standalone/public"

@@ -11,6 +11,12 @@ export default defineConfig({
     navigationTimeout: 30000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // The e2e build has a Meta pixel id. No test reaches Meta; meta-pixel.spec.ts stands in for it.
+    launchOptions: {
+      args: [
+        '--host-resolver-rules=MAP connect.facebook.net ~NOTFOUND, MAP www.facebook.com ~NOTFOUND',
+      ],
+    },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   reporter: [['list']],

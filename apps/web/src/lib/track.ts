@@ -55,6 +55,15 @@ export function setConsent(value: 'yes' | 'no') {
   window.dispatchEvent(new Event('pc-consent'));
 }
 
+/**
+ * The browser asks not to be tracked: no screen recordings and no Meta pixel, though our own
+ * counts still go on.
+ */
+export function declinesTracking(): boolean {
+  const browser = navigator as Navigator & { globalPrivacyControl?: boolean };
+  return Boolean(browser.globalPrivacyControl) || browser.doNotTrack === '1';
+}
+
 export function trackingAllowed(path = typeof window === 'undefined' ? '' : location.pathname) {
   if (typeof window === 'undefined' || isCustomerPage(path)) return false;
   return !needsConsent() || consent() === 'yes';

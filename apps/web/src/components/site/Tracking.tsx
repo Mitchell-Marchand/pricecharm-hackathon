@@ -6,6 +6,7 @@ import type { PostHog } from 'posthog-js';
 import { Button } from '@/components/ui';
 import {
   consent,
+  declinesTracking,
   flush,
   forwardTo,
   isCustomerPage,
@@ -26,12 +27,6 @@ const NOT_RECORDED = /^\/(q|embed|approve|reset-password|verify-email|start\/res
 const IDLE_MS = 30_000;
 const INTERACTIVE =
   'button, a[href], [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="switch"], summary, label';
-
-/** The browser asks not to be tracked: no screen recordings, though the counts still go on. */
-function declinesRecording(): boolean {
-  const browser = navigator as Navigator & { globalPrivacyControl?: boolean };
-  return Boolean(browser.globalPrivacyControl) || browser.doNotTrack === '1';
-}
 
 function device(): string {
   const width = window.innerWidth;
@@ -359,7 +354,7 @@ export function Tracking() {
   // Session recordings, on the owner side only, with typing and customers' details masked.
   const recordable = !NOT_RECORDED.test(path);
   useEffect(() => {
-    if (!allowed || !recordable || !POSTHOG_KEY || declinesRecording()) return;
+    if (!allowed || !recordable || !POSTHOG_KEY || declinesTracking()) return;
     let stopListening: (() => void) | undefined;
     let cancelled = false;
     void import('posthog-js').then(({ default: client }) => {

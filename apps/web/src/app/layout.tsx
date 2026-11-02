@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Archivo, IBM_Plex_Mono, Public_Sans } from 'next/font/google';
 import { CodeFromLink } from '@/components/site/CodeFromLink';
+import { MetaPixel } from '@/components/site/MetaPixel';
 import { Tracking } from '@/components/site/Tracking';
 import { VisitCounter } from '@/components/site/VisitCounter';
 import { SITE_URL } from '@/lib/site';
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <VisitCounter />
         <CodeFromLink />
         <Tracking />
+        <MetaPixel />
       </body>
     </html>
   );
