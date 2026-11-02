@@ -558,3 +558,73 @@ test('a formula quote is the middle of its readings, and a range when they disag
   assert.equal(apart.drafted?.confidence, 'low');
   assert.match(apart.drafted?.reasoning ?? '', /anywhere from \$180 to \$300/);
 });
+
+test('the customer chat asks once about the owner’s extras before it’s ready', async () => {
+  const { intakeTurn } = await import('../src/ai/intake.js');
+  const { chargedExtras } = await import('../src/pricing/formula-draft.js');
+  const formula = (addOns: { name: string; per: 'item' | 'job'; always?: boolean }[]) => ({
+    formula: {
+      services: [],
+      surcharges: [],
+      addOns: addOns.map((addOn) => ({ ...addOn, cents: 500 })),
+      bundlePercent: null,
+      roundToCents: 100,
+      minimumCents: null,
+      itemizes: true,
+    },
+    notes: [],
+    examples: [],
+    gaps: [],
+    fits: true,
+  });
+  const extras = chargedExtras({
+    ...formula([
+      { name: 'Screens', per: 'item' },
+      { name: 'Trip charge', per: 'job', always: true },
+    ]),
+    also: [
+      formula([
+        { name: 'screens', per: 'item' },
+        { name: 'Tracks', per: 'job' },
+      ]),
+    ],
+  });
+  assert.deepEqual(extras, [
+    { name: 'Screens', counted: true },
+    { name: 'Tracks', counted: false },
+  ]);
+  let sent = '';
+  globalThis.fetch = async (_url, init) => {
+    sent = String(init?.body);
+    return response({
+      reply: 'Would you like the screens cleaned too?',
+      chips: ['Screens', 'No thanks'],
+      askPhoto: false,
+      serviceName: 'Windows',
+      ready: false,
+      summary: '',
+      outOfScope: '',
+      spec: { quantity: 20, unit: 'windows', condition: '', access: '', extras: [], timing: '' },
+    });
+  };
+  const business = {
+    name: 'Clear View',
+    trade: 'Window cleaning',
+    area: 'Austin',
+    radiusMiles: null,
+  };
+  const turn = {
+    checklist: [],
+    serviceName: 'Windows',
+    conversation: [{ from: 'customer' as const, text: '20 windows, please.' }],
+    photosReceived: 0,
+  };
+  await intakeTurn({ ...turn, business: { ...business, services: ['Windows'] }, extras }, []);
+  assert.match(sent, /any of the owner's extras that fit this job, naming them/);
+  assert.match(sent, /ask how many/);
+  assert.match(sent, /\\"name\\":\\"Tracks\\"/, 'The extras go in as data');
+  assert.doesNotMatch(sent, /another of the business's services/, 'It has one service');
+  await intakeTurn({ ...turn, business: { ...business, services: ['Windows', 'Gutters'] } }, []);
+  assert.match(sent, /like another of the business's services done at the same time/);
+  assert.doesNotMatch(sent, /ask how many/);
+});

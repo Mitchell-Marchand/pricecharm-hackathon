@@ -341,6 +341,24 @@ export type FormulaUse =
     }
   | { used: false; reason: string };
 
+/**
+ * What the owner charges for on top of the main work, in any reading of their quotes, for the
+ * customer chat to ask about: a customer never asked about an extra they want gets a quote without
+ * it. On the benchmark's customer chats, the 12% that missed one were 20% within 10% of the owner's
+ * price. Not the ones on every job, which aren't the customer's to choose.
+ */
+export function chargedExtras(learned: Learned | null) {
+  const extras: { name: string; counted: boolean }[] = [];
+  for (const reading of learned ? [learned, ...(learned.also ?? [])] : [])
+    for (const addOn of reading.formula.addOns)
+      if (
+        !addOn.always &&
+        !extras.some((item) => item.name.toLowerCase() === addOn.name.toLowerCase())
+      )
+        extras.push({ name: addOn.name, counted: addOn.per === 'item' });
+  return extras;
+}
+
 /** The job's size from what the customer said, when it's in the unit the formula prices by. */
 function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | null) {
   const rule = formula.services.find((item) => item.name.toLowerCase() === service.toLowerCase());

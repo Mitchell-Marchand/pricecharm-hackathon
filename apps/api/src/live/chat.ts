@@ -17,6 +17,8 @@ import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
 import { draftForBusiness } from '../pricing/draft.js';
+import { chargedExtras, currentFormula } from '../pricing/formula-draft.js';
+import { loadPricingData } from '../pricing/history.js';
 import { businessReadiness, type ServiceReadiness } from '../pricing/readiness.js';
 import {
   priceStyle,
@@ -453,6 +455,15 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
   const [read] = await rows('SELECT photo_reading_json FROM lead_chats WHERE id=?', [chat.id]);
   const photos = read ? photoReading(read) : null;
   const checklist = await questionChecklist(String(business.id));
+  // What the owner charges for besides the main work, so the chat asks whether they want any.
+  const extras =
+    aiMode === 'demo'
+      ? []
+      : chargedExtras(
+          await loadPricingData(String(business.id))
+            .then((data) => currentFormula(String(business.id), data))
+            .catch(() => null),
+        );
   const contactFirst = Boolean(business.contact_first) && !hasContact(chat);
   const turn = await withChatUsage(req, business, chat, async () =>
     intakeTurn(
@@ -465,6 +476,7 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
           radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
         },
         checklist,
+        extras,
         serviceName: String(chat.service_name),
         conversation: messages.map((message) => ({
           from: message.sender as 'customer' | 'assistant',
