@@ -49,7 +49,6 @@ import { questionChecklist } from './charm-notes.js';
 import { closeDatabase, mutate } from './db.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
-  chargedExtras,
   formulaExamples,
   holdFailedFormulas,
   learnedFormula,
@@ -760,9 +759,6 @@ async function main() {
     };
     await answer();
     const checklist = await questionChecklist(test.businessId);
-    const extras = chargedExtras(
-      await learnedFormula(test.businessId, {}, model).catch(() => null),
-    );
     let last = null as IntakeTurn | null;
     for (let turn = 0; turn < CHAT_TURNS; turn++) {
       const previous = last;
@@ -777,7 +773,6 @@ async function main() {
               radiusMiles: null,
             },
             checklist,
-            extras,
             serviceName: previous?.serviceName ?? '',
             conversation: said,
             photosReceived: 0,
