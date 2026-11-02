@@ -50,6 +50,15 @@ function requestsPerMinute(): number {
   return local > 0 && process.env.NODE_ENV !== 'production' && !isDeployed() ? local : 300;
 }
 
+/**
+ * Accounts one address may make in 15 minutes. The browser tests sign up more than that from one
+ * address, so a local run can raise it with LOCAL_SIGNUPS_PER_ADDRESS. Deployed servers ignore that.
+ */
+function signupsPerAddress(): number {
+  const local = Number(process.env.LOCAL_SIGNUPS_PER_ADDRESS);
+  return local > 0 && process.env.NODE_ENV !== 'production' && !isDeployed() ? local : 10;
+}
+
 export function createApp() {
   validateRuntimeConfiguration();
   const app = express();
@@ -160,7 +169,12 @@ export function createApp() {
     visitsRouter,
     activityRouter,
   );
-  app.post('/api/v1/auth/register', rateLimit(10, 15 * 60_000), requireHuman('signup'), register);
+  app.post(
+    '/api/v1/auth/register',
+    rateLimit(signupsPerAddress(), 15 * 60_000),
+    requireHuman('signup'),
+    register,
+  );
   app.post('/api/v1/auth/login', rateLimit(15, 15 * 60_000), login);
   app.post('/api/v1/auth/logout', logout);
   app.get('/api/v1/auth/me', requireOwner, me);

@@ -13,7 +13,7 @@ api_port=${E2E_API_PORT:-4200}
 web_port=${E2E_WEB_PORT:-3300}
 export DOTENV_CONFIG_PATH=/dev/null NODE_ENV=test APP_ENV=test EXPOSE_DEV_TOKENS=1 \
   AI_PROVIDER=demo MAIL_PROVIDER=local BILLING_PROVIDER=local LOCAL_SETUPS_PER_ADDRESS=500 \
-  LOCAL_REQUESTS_PER_MINUTE=2000 \
+  LOCAL_REQUESTS_PER_MINUTE=2000 LOCAL_SIGNUPS_PER_ADDRESS=100 \
   APP_ORIGIN="http://localhost:$web_port,http://127.0.0.1:$web_port" \
   PUBLIC_APP_URL="http://localhost:$web_port"
 export DB_HOST=${DB_HOST:-127.0.0.1} DB_PORT=${DB_PORT:-3307} DB_NAME=${DB_NAME:-quoting_test} \
