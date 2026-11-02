@@ -369,6 +369,36 @@ test('a stretch customer is a plain job past any size priced for the service pri
   );
 });
 
+test('an aimed customer asks for what the trade usually charges for and this owner hasn’t priced', async () => {
+  const { aimedJob, tradeOfferings } = await import('../src/bench/owners.js');
+  const rule = { step: 1, volume: null, bands: null, height: false };
+  const services = [
+    { ...rule, name: 'Carpet', unit: 'rooms', rate: 6000, sizes: [1, 8] as [number, number] },
+    { ...rule, name: 'Area rugs', unit: 'sq ft', rate: 150, sizes: [24, 150] as [number, number] },
+  ];
+  const odor = { label: 'Pet odor treatment', per: 'job' as const, cents: 3000 };
+  const stairs = { label: 'Stairs', per: 'job' as const, cents: 4000 };
+  const protector = { label: 'Protector', per: 'job' as const, cents: 2500 };
+  const mine = owner('carpet', { services, addOns: [stairs, protector] });
+  const others = [
+    owner('carpet', { services, addOns: [odor, stairs] }),
+    owner('carpet', { services, addOns: [odor] }),
+  ];
+  const offerings = tradeOfferings([mine, ...others]);
+  assert.deepEqual(offerings.get('carpet')!.extras, ['Pet odor treatment', 'Stairs', 'Protector']);
+  const shown = [{ ...plainJob, service: 'Carpet', quantity: 3, addOns: [{ label: 'Stairs' }] }];
+  const asked = new Set<string>();
+  // The trade's most usual extra, which this owner doesn't offer: they price the job without it.
+  const odorJob = aimedJob(seeded(1), mine, 'extra', offerings, shown, asked)!;
+  assert.deepEqual(odorJob.addOns, []);
+  // Stairs were priced, so the next is the protector, which they do charge for.
+  const next = aimedJob(seeded(2), mine, 'extra', offerings, shown, asked)!;
+  assert.deepEqual(next.addOns, [{ label: 'Protector', count: undefined }]);
+  assert.equal(aimedJob(seeded(3), mine, 'extra', offerings, shown, asked), null);
+  const bigger = aimedJob(seeded(4), mine, 'size', offerings, shown, asked)!;
+  assert.deepEqual([bigger.service, bigger.quantity], ['Carpet', 6]);
+});
+
 test('a detailer scales the price by vehicle size, and junk is a share of the truck', () => {
   const detailer = owner('detailing', {
     services: [

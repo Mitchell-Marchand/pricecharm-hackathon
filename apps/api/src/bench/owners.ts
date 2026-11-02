@@ -692,6 +692,125 @@ export function stretchSize(
   return side === 'bigger' || around < Math.min(...priced) ? { service, around } : null;
 }
 
+/**
+ * What businesses in each trade charge for besides the main work, most common first: extras, the
+ * choices each service offers, and regular schedules. The AI writing practice customers knows
+ * this much about a trade, and not one owner's own list.
+ */
+export function tradeOfferings(owners: SimOwner[]) {
+  const ranked = (labels: string[]) => {
+    const counts = new Map<string, number>();
+    for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([label]) => label);
+  };
+  const trades = new Map<TradeId, SimOwner[]>();
+  for (const owner of owners)
+    trades.set(owner.tradeId, [...(trades.get(owner.tradeId) ?? []), owner]);
+  return new Map(
+    [...trades.entries()].map(([trade, those]) => [
+      trade,
+      {
+        extras: ranked(those.flatMap((owner) => owner.rules.addOns.map((addOn) => addOn.label))),
+        choices: (service: string) =>
+          ranked(
+            those.flatMap(
+              (owner) =>
+                owner.rules.services
+                  .find((rule) => rule.name === service)
+                  ?.options?.map((option) => option.label) ?? [],
+            ),
+          ),
+        schedules: ranked(
+          those.flatMap((owner) => owner.rules.recurring?.map((item) => item.label) ?? []),
+        ),
+      },
+    ]),
+  );
+}
+
+export type Aim = 'size' | 'extra' | 'choice' | 'schedule';
+
+/**
+ * A practice customer aimed at what the owner hasn't shown: a size past any they priced, or the
+ * extra, choice or schedule most businesses in the trade offer that this owner hasn't priced and
+ * no customer has asked for yet. When the owner doesn't offer it, the customer still asks, and the
+ * owner prices the job without it. Null when there's nothing left of that kind to ask for. On
+ * 2026-11-01, with five past jobs (blind seed 22), six of these after setup left 20% of new jobs
+ * needing something never shown against 26% for six usual customers, yet priced worse: 74.2%
+ * within 10% against 78.4% (setup alone 65%). Odd jobs teach less than the jobs that come in, so
+ * the app doesn't aim practice this way.
+ */
+export function aimedJob(
+  rng: Rng,
+  owner: SimOwner,
+  aim: Aim,
+  offerings: ReturnType<typeof tradeOfferings>,
+  shown: SimJob[],
+  asked: Set<string>,
+): SimJob | null {
+  const offered = offerings.get(owner.tradeId)!;
+  const [main] = owner.rules.services;
+  const plain = (service: string) => drawJob(rng, owner, service === main.name ? 'plain' : 'other');
+  if (aim === 'size') {
+    const sizes = sizesShown(shown);
+    for (const rule of owner.rules.services) {
+      const priced = sizes[rule.name.toLowerCase()] ?? [];
+      if (!priced.length) continue;
+      for (const [side, around] of [
+        ['bigger', roundSize(Math.max(...priced) * 2)],
+        ['smaller', roundSize(Math.min(...priced) / 2)],
+      ] as const) {
+        const key = `${side} ${rule.name}`;
+        if (asked.has(key) || around < 1) continue;
+        asked.add(key);
+        return stretchedJob(rng, owner, rule.name, around);
+      }
+    }
+    return null;
+  }
+  if (aim === 'extra') {
+    const seen = new Set(shown.flatMap((job) => job.addOns.map((addOn) => addOn.label)));
+    const label = offered.extras.find((item) => !seen.has(item) && !asked.has(`extra ${item}`));
+    if (!label) return null;
+    asked.add(`extra ${label}`);
+    const at = owner.rules.addOns.findIndex((addOn) => addOn.label === label);
+    return at === -1 ? plain(main.name) : drawJob(rng, owner, 'plain', at);
+  }
+  if (aim === 'choice')
+    for (const rule of owner.rules.services) {
+      const seen = new Set(
+        shown.filter((job) => job.service === rule.name).map((job) => job.option),
+      );
+      const label = offered
+        .choices(rule.name)
+        .find((item) => !seen.has(item) && !asked.has(`choice ${rule.name} ${item}`));
+      if (!label) continue;
+      asked.add(`choice ${rule.name} ${label}`);
+      const job = plain(rule.name);
+      // Not one of theirs, they price it the way they usually do it.
+      if (rule.options)
+        job.option = rule.options.some((option) => option.label === label)
+          ? label
+          : rule.options[0].label;
+      return job;
+    }
+  if (aim === 'schedule') {
+    const seen = new Set(shown.map((job) => job.frequency));
+    const label = offered.schedules.find(
+      (item) => !seen.has(item) && !asked.has(`schedule ${item}`),
+    );
+    if (!label) return null;
+    asked.add(`schedule ${label}`);
+    const job = plain(main.name);
+    if (owner.rules.recurring?.some((item) => item.label === label) && !main.once)
+      job.frequency = label;
+    return job;
+  }
+  return null;
+}
+
 /** A plain job for one service at the size given, nothing else asked. */
 export function stretchedJob(rng: Rng, owner: SimOwner, service: string, around: number): SimJob {
   const [main] = owner.rules.services;

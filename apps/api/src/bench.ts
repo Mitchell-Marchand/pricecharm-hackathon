@@ -18,6 +18,7 @@ import {
   type Priced,
 } from './bench/metrics.js';
 import {
+  aimedJob,
   customerMessage,
   drawJob,
   jobSpec,
@@ -30,6 +31,8 @@ import {
   sizesShown,
   stretchedJob,
   stretchSize,
+  tradeOfferings,
+  type Aim,
   BLIND_TRADES,
   CLASSIC_TRADES,
   HELD_OUT_TRADES,
@@ -102,7 +105,7 @@ type Shape = Parameters<typeof drawJob>[2];
  * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them
  * (experiments, since October 30). The plans setup used before are kept, so a run can compare.
  */
-type Customer = { shape: Shape; extra?: number; stretch?: 'bigger' | 'smaller' };
+type Customer = { shape: Shape; extra?: number; stretch?: 'bigger' | 'smaller'; aim?: Aim };
 
 const PLANS: Record<string, Customer[]> = {
   original: [
@@ -138,6 +141,17 @@ PLANS.stretch = [
   { shape: 'other', stretch: 'smaller' },
 ];
 PLANS.more = [...PLANS.experiments, { shape: 'other' }, { shape: 'other' }];
+// Setup's customers, then six aimed at what the owner hasn't shown (aimedJob in
+// src/bench/owners.ts), or six of the usual customers, which priced better.
+const AIMS: Aim[] = ['size', 'extra', 'choice', 'schedule'];
+PLANS.aimed = [
+  ...PLANS.experiments,
+  ...[0, 1, 2, 3, 4, 5].map((turn) => ({ shape: 'plain' as const, aim: AIMS[turn % AIMS.length] })),
+];
+PLANS.usual = [
+  ...PLANS.experiments,
+  ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
+];
 const PLAN = 'experiments';
 
 function option(name: string) {
@@ -171,6 +185,7 @@ async function seedOwner(
   start: Date,
   plan: Customer[],
   past: number,
+  offerings: ReturnType<typeof tradeOfferings>,
 ) {
   const id = randomUUID();
   const jobs: SimJob[] = [];
@@ -206,11 +221,18 @@ async function seedOwner(
     );
   }
   const services = owner.rules.services.map((rule) => rule.name);
-  for (const [position, { shape, extra, stretch }] of plan.entries()) {
+  const asked = new Set<string>();
+  // An aim with nothing left to ask for goes on to the next, as the app's plan does.
+  const aimed = (aim: Aim) =>
+    AIMS.map((_, turn) => AIMS[(AIMS.indexOf(aim) + turn) % AIMS.length]).reduce<SimJob | null>(
+      (found, next) => found ?? aimedJob(rng.practice, owner, next, offerings, jobs, asked),
+      null,
+    );
+  for (const [position, { shape, extra, stretch, aim }] of plan.entries()) {
     const size = stretch ? stretchSize(services, sizesShown(jobs), stretch) : null;
     const job = size
       ? stretchedJob(rng.practice, owner, size.service, size.around)
-      : drawJob(rng.practice, owner, shape, extra);
+      : ((aim && aimed(aim)) ?? drawJob(rng.practice, owner, shape, extra));
     jobs.push(job);
     const quote = ownerQuote(owner, job);
     const spec = jobSpec(owner, job);
@@ -602,6 +624,19 @@ async function main() {
   > = {};
   const callsOf = (operation: string) =>
     (calls[operation] ??= { answered: 0, input: 0, output: 0, failed: {} });
+  /**
+   * What each owner's calls took: working out their formula (every reading, and each of their
+   * quotes read for it), then pricing their new jobs.
+   */
+  type Stage = 'learning' | 'quoting';
+  let stage = 'learning' as Stage;
+  type Spent = { input: number; output: number; calls: number; failed: number };
+  const spent = new Map<string, Record<Stage, Spent>>();
+  const spentBy = (businessId: string) => {
+    const none = () => ({ input: 0, output: 0, calls: 0, failed: 0 });
+    if (!spent.has(businessId)) spent.set(businessId, { learning: none(), quoting: none() });
+    return spent.get(businessId)![stage];
+  };
   const replayFile = fileOption('replay');
   const earlier = replayFile
     ? ((JSON.parse(await readFile(replayFile, 'utf8')) as { answers?: Saved }).answers ?? null)
@@ -615,6 +650,7 @@ async function main() {
   const owners = simulatedOwners(seed, count, messy, tradeIds);
   const start = new Date(Date.now() - 86_400_000);
 
+  const offerings = tradeOfferings(owners);
   console.info(`Setting up ${count} simulated owners.`);
   const tests: Test[] = [];
   for (const [index, owner] of owners.entries()) {
@@ -625,6 +661,7 @@ async function main() {
       start,
       plan,
       past,
+      offerings,
     );
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
@@ -658,12 +695,17 @@ async function main() {
           tokens.input += usage.inputTokens;
           tokens.output += usage.outputTokens;
           tokens.calls++;
+          const mine = spentBy(businessId);
+          mine.input += usage.inputTokens;
+          mine.output += usage.outputTokens;
+          mine.calls++;
           const kind = callsOf(usage.operation);
           kind.answered++;
           kind.input += usage.inputTokens;
           kind.output += usage.outputTokens;
         },
         failed: async (failure) => {
+          spentBy(businessId).failed++;
           const kind = callsOf(failure.operation);
           kind.failed[failure.reason] = (kind.failed[failure.reason] ?? 0) + 1;
         },
@@ -779,6 +821,7 @@ async function main() {
       3,
     );
   }
+  stage = 'quoting';
   console.info(`Pricing ${tests.length} new jobs with ${engine}: ${tasks.length} drafts.`);
   await pool(tasks, concurrency);
 
@@ -937,6 +980,44 @@ async function main() {
       '',
       `${tokens.calls} model calls: ${tokens.input.toLocaleString('en-US')} tokens in, ${tokens.output.toLocaleString('en-US')} out.`,
     );
+  // Tokens for each trade: an owner's formula, and each new job, on average. Failed calls have no
+  // tokens to count, though the API may still charge for them.
+  const tradeOf = new Map(tests.map((test) => [test.businessId, owners[test.owner].trade]));
+  const byTrade = trades.map((trade) => {
+    const ids = [...spent.keys()].filter((id) => tradeOf.get(id) === trade);
+    const sum = (stage: Stage) =>
+      ids.reduce(
+        (total, id) => {
+          const item = spent.get(id)![stage];
+          return {
+            input: total.input + item.input,
+            output: total.output + item.output,
+            calls: total.calls + item.calls,
+            failed: total.failed + item.failed,
+          };
+        },
+        { input: 0, output: 0, calls: 0, failed: 0 },
+      );
+    const quotes = tests.filter((test) => owners[test.owner].trade === trade).length;
+    return {
+      trade,
+      owners: ids.length,
+      quotes,
+      learning: sum('learning'),
+      quoting: sum('quoting'),
+    };
+  });
+  const thousands = (tokens: number) => `${Math.round(tokens / 1000).toLocaleString('en-US')}k`;
+  if (byTrade.some((item) => item.owners))
+    out.push(
+      'Tokens by trade, for each owner’s formula and then each new job:',
+      ...byTrade
+        .filter((item) => item.owners)
+        .map(
+          ({ trade, owners: count, quotes, learning, quoting }) =>
+            `  ${trade}: formula ${thousands(learning.input / count)} in / ${thousands(learning.output / count)} out, each job ${thousands(quoting.input / Math.max(1, quotes))} in / ${thousands(quoting.output / Math.max(1, quotes))} out${learning.failed + quoting.failed ? `, ${learning.failed + quoting.failed} failed calls` : ''}`,
+        ),
+    );
   // Failures are counted per try, so a formula that took three tries shows two here.
   const kinds = Object.entries(calls).sort(([a], [b]) => a.localeCompare(b));
   if (kinds.length)
@@ -961,6 +1042,7 @@ async function main() {
     formulaOnly,
     tokens,
     calls,
+    spent: byTrade,
     owners,
     learned,
     tests: tests.map((test) => ({
