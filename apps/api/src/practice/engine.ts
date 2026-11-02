@@ -19,7 +19,7 @@ import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
 import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
-import { focusSituation, planSituation, type PracticeMiss } from './plan.js';
+import { focusSituation, planSituation } from './plan.js';
 import {
   gapPercent,
   quoteDraftSchema,
@@ -131,29 +131,19 @@ async function nextSituation(
   const data = await loadPricingData(businessId);
   if (focus) return focusSituation(focus, data.points);
   const runs = await rows(
-    "SELECT scenario_json,outcome,quote_json,shadow_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
+    "SELECT scenario_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
     [businessId, position],
   );
-  const finished: PracticeMiss[] = runs.map((run) => {
-    const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-    const quote = json<Quote | null>(run.quote_json, null);
-    const shadow = json<Shadow | null>(run.shadow_json, null);
-    return {
-      service: scenario.serviceName,
-      situation: scenario.situation ?? '',
-      gap: quote && shadow?.cents ? gapPercent(shadow.cents, quoteTotal(quote)) : null,
-      confidence: shadow?.confidence ?? null,
-    };
-  });
   return planSituation({
     position,
     setupCount: PRACTICE_COUNT,
     services,
-    points: data.points,
     examples: Object.fromEntries(
       services.map((service) => [service.toLowerCase(), examplesFor(data.history, service)]),
     ),
-    finished,
+    asked: runs.map(
+      (run) => json<PracticeScenario>(run.scenario_json, {} as PracticeScenario).situation ?? '',
+    ),
   });
 }
 
