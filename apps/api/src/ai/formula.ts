@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { JobParts, PriceFormula } from '../pricing/formula.js';
 import { requestJson } from './index.js';
+import { amountsIn, type Currency } from '../money.js';
 
 /**
  * The AI's two parts in formula pricing. It reads the owner's own quotes into a price formula,
@@ -242,7 +243,7 @@ function kept(result: z.infer<typeof formulaSchema>): PriceFormula {
  * except the ones a note gives.
  */
 export async function learnFormula(input: {
-  business: { trade: string; services: string[] };
+  business: { trade: string; services: string[]; currency?: Currency };
   examples: FormulaExample[];
   /** What the owner wrote about their prices, or corrected after practice. */
   notes: string[];
@@ -254,9 +255,13 @@ export async function learnFormula(input: {
 }): Promise<PriceFormula> {
   const result = await requestJson(
     input.quick ? 'learn_formula_quick' : 'learn_formula',
-    `${LEARN}
+    `${LEARN}${amountsIn(input.business.currency)}
 Try your formula on a few examples. The server checks it against every one and fine-tunes the numbers, so give your best reading without reworking it at length.`,
-    { business: input.business, examples: input.examples, notes: input.notes },
+    {
+      business: { trade: input.business.trade, services: input.business.services },
+      examples: input.examples,
+      notes: input.notes,
+    },
     formulaJson,
     formulaSchema,
     [],

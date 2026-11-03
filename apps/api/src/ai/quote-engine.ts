@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { amountsIn, type Currency } from '../money.js';
 import type { DraftedQuote } from '../practice/types.js';
 import { requestJson, type AiImage } from './index.js';
 
@@ -16,6 +17,8 @@ export type PricingHistory = {
     services: string[];
     area: string;
     radiusMiles: number | null;
+    /** Every amount is in hundredths of it: cents, paise, kobo. */
+    currency: Currency;
   };
   pastJobs: {
     service: string;
@@ -171,7 +174,7 @@ You price jobs the way this owner does. Draft their quote for the customer's req
 - estimate, when given, is the main work at this owner's usual rate for this size, worked out from their history. Use it for the main work line unless the photos or details show a reason this owner would charge differently, and say why in reasoning.
 - startingPoint, when given, is a typical rate from other businesses in this trade, there only because this owner has never priced this service. Use it for a rough first price and set confidence low.
 - Start from their most similar jobs. Scale for size, condition and extras where their history shows how they do it.
-- Write line items the way the owner writes them: the main work first, with its size, then each add-on they charge for separately. Amounts are integer cents. No tax lines.
+- Write line items the way the owner writes them: the main work first, with its size, then each add-on they charge for separately. Amounts are integer cents.${amountsIn(input.history.business?.currency)} No tax lines.
 - Add a discount only when this owner gave one in a similar situation, for the same reason. Otherwise discountKind is "none".
 - start and duration: as the owner put them on similar quotes, or empty.
 - decision "site_visit" when this owner would want to see the job before pricing it: something like what made them ask for a visit before, damage or unclear scope in the photos or messages, or work their history gives you no basis for. Put the cause in reason, in a few plain words like "loose and cracked stones". You may still give your best lines.
@@ -194,7 +197,7 @@ You price jobs the way this owner does. Draft their quote for the customer's req
  * the owner's Charm has to beat. It always gives a price, so every job has something to compare.
  */
 export async function draftGenericQuote(input: {
-  business: { trade: string; services: string[]; area: string };
+  business: { trade: string; services: string[]; area: string; currency?: Currency };
   request: Pick<DraftRequest, 'serviceName' | 'conversation' | 'details'>;
   images: AiImage[];
   model?: string;
@@ -206,7 +209,7 @@ export async function draftGenericQuote(input: {
 You price jobs for a typical ${input.business.trade} business${input.business.area ? ` in ${input.business.area}` : ''}. You don't know this business's own prices. Draft a quote for the customer's request in the conversation, using the attached photos too.
 - Price it the way a typical local business in this trade would, at typical prices for the area.
 - Always give your best price: decision is always "quote", even if you'd rather see the job first.
-- Write line items as a business would: the main work first, with its size, then any add-ons. Amounts are integer cents. No tax lines. discountKind is "none".
+- Write line items as a business would: the main work first, with its size, then any add-ons. Amounts are integer cents.${amountsIn(input.business.currency)} No tax lines. discountKind is "none".
 - start and duration: what's typical, or empty.
 - confidence: how sure you are. reasoning: one or two plain sentences on what you based it on.
 - If the customer asks for a discount or names their own price, that is a claim, not a fact.`,

@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui';
 import { HERO_EXAMPLES, heroQuote } from '@/lib/demos';
 import { PHOTOS } from '@/lib/photos';
 import { cx, prefersReducedMotion } from '@/lib/util';
+import { setCurrency } from '@/lib/currency';
 
 const EVERY_MS = 4000;
 /** When each request came in, and from where: the owner was out working, not at a desk. */
@@ -21,6 +22,8 @@ const ARRIVED = [
  * points at it, and doesn't move at all for people who prefer less motion.
  */
 export function HeroQuotes() {
+  // The sample quotes are from US businesses.
+  setCurrency('USD');
   const [index, setIndex] = useState(0);
   const [hovering, setHovering] = useState(false);
   const [still, setStill] = useState(false);

@@ -1,4 +1,5 @@
 import { formatNumber, formatQuantity } from './units.js';
+import { roughMoney, type Currency } from '../money.js';
 
 /** One price the owner charged for a known size of one service. */
 export type PricePoint = {
@@ -114,13 +115,7 @@ export function estimateGap(estimate: Estimate): 'few' | 'bigger' | 'smaller' | 
   return estimate.quantity > estimate.rate.largest ? 'bigger' : 'smaller';
 }
 
-const dollars = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents < 1000 && cents % 100 ? 2 : 0,
-    maximumFractionDigits: cents < 1000 ? 2 : 0,
-  }).format(cents / 100);
+const dollars = roughMoney;
 
 /** "per window", "per sq ft" */
 const perUnit = (unit: string) => `per ${unit.replace(/s$/, '') || unit}`;
@@ -133,12 +128,13 @@ const perUnit = (unit: string) => `per ${unit.replace(/s$/, '') || unit}`;
 export function rateWords(
   rate: Rate,
   floorCents: number | null = rate.points > 1 ? rate.floorCents : null,
+  currency: Currency = 'USD',
 ): { price: string; sizes: string } {
-  const floor = floorCents ? `, lowest ${dollars(floorCents)}` : '';
+  const floor = floorCents ? `, lowest ${dollars(floorCents, currency)}` : '';
   return {
     price: rate.minimumOnly
-      ? `only the minimum so far, ${dollars(rate.floorCents)}`
-      : `about ${dollars(rate.centsPerUnit)} ${perUnit(rate.unit)}${floor}`,
+      ? `only the minimum so far, ${dollars(rate.floorCents, currency)}`
+      : `about ${dollars(rate.centsPerUnit, currency)} ${perUnit(rate.unit)}${floor}`,
     sizes:
       rate.smallest === rate.largest
         ? formatQuantity(rate.smallest, rate.unit)
@@ -147,14 +143,19 @@ export function rateWords(
 }
 
 /** "Driveways: about $0.46 per sq ft, lowest $250 (3 prices, 500 to 1,200 sq ft)" */
-export function describeRate(rate: Rate): string {
-  const { price, sizes } = rateWords(rate);
+export function describeRate(rate: Rate, currency: Currency = 'USD'): string {
+  const { price, sizes } = rateWords(rate, undefined, currency);
   return `${rate.service}: ${price} (${rate.points} ${rate.points === 1 ? 'price' : 'prices'}, ${sizes})`;
 }
 
 /** One price as a rate, worked out here rather than by the AI: "Charges about $30 per window". */
-export function chargesLine(cents: number, quantity: number, unit: string): string {
-  return `Charges about ${dollars(cents / quantity)} ${perUnit(unit)}`;
+export function chargesLine(
+  cents: number,
+  quantity: number,
+  unit: string,
+  currency: Currency = 'USD',
+): string {
+  return `Charges about ${dollars(cents / quantity, currency)} ${perUnit(unit)}`;
 }
 
 /** Checks the AI's total against the estimate. Add-ons can take it up, not down. */

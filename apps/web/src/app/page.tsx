@@ -3,11 +3,11 @@ import { DemoExplorer } from '@/components/demo/DemoExplorer';
 import { HeroQuotes } from '@/components/site/HeroQuotes';
 import { SiteFooter, SiteHeader } from '@/components/site/SiteHeader';
 import { TradeMarquee } from '@/components/site/TradeMarquee';
+import { UpFrontText, UpFrontTitle } from '@/components/site/UpFront';
 import { buttonClass } from '@/components/button-class';
 import { Avatar, ButtonLink, Tag } from '@/components/ui';
 import { PHOTOS } from '@/lib/photos';
 import { publicPricing } from '@/lib/server-api';
-import { money } from '@/lib/util';
 
 export default async function LandingPage() {
   const pricing = await publicPricing();
@@ -163,11 +163,12 @@ export default async function LandingPage() {
               },
               {
                 icon: Receipt,
-                title: '$0 up front',
-                text: `Pay ${money(pricing.perQuoteCents)} a quote, or ${pricing.accepted.basisPoints / 100}% of the quotes customers accept. Or ${money(pricing.subscription.monthlyCents)} a month with the first week free. Setting up and practice are free.`,
+                key: 'up-front',
+                title: <UpFrontTitle pricing={pricing} />,
+                text: <UpFrontText pricing={pricing} />,
               },
-            ].map(({ icon: Icon, title, text }) => (
-              <div key={title}>
+            ].map(({ icon: Icon, key, title, text }) => (
+              <div key={key ?? String(title)}>
                 <Icon className="size-6 text-accent" aria-hidden />
                 <h3 className="t-h3 mt-4">{title}</h3>
                 <p className="mt-2 text-ink-2">{text}</p>

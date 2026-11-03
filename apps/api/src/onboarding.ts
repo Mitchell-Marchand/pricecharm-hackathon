@@ -6,7 +6,9 @@ import { hashToken, newToken } from './auth.js';
 import { devTokensAllowed, isDeployed } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { isDisposableEmail } from './email-domains.js';
+import { changeCurrency } from './billing.js';
 import { ApiError, ok, rateLimit } from './http.js';
+import { CURRENCIES, currencyOf } from './money.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
 import { draftIpBudgetKey } from './usage.js';
@@ -76,6 +78,7 @@ export async function onboardingState(businessId: string, draft: boolean, connec
       customServices: offerings.filter((item) => item.custom).map((item) => String(item.name)),
       name: business.name ?? '',
       area: business.service_area ?? '',
+      currency: currencyOf(business.currency),
       radius: business.travel_radius_miles ? String(business.travel_radius_miles) : '25',
     },
     slug: draft ? null : String(business.slug),
@@ -111,7 +114,13 @@ onboardingRouter.post(
           );
         throw error;
       }
-      return createDraft(res, connection, requestSession(req));
+      // The browser's guess at the owner's currency, from their time zone. They can change it.
+      return createDraft(
+        res,
+        connection,
+        requestSession(req),
+        currencyOf(String(req.body?.currency ?? '')),
+      );
     });
     res.status(201).json(ok(await onboardingState(businessId, true)));
   },
@@ -140,6 +149,7 @@ const businessPatch = z
       ),
     name: z.string().trim().max(120),
     area: z.string().trim().max(120),
+    currency: z.enum(CURRENCIES),
     radius: z.enum(RADII),
   })
   .partial()
@@ -169,6 +179,7 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
     if (input.name !== undefined) set('name', input.name);
     if (input.area !== undefined) set('service_area', input.area);
     if (input.radius !== undefined) set('travel_radius_miles', Number(input.radius));
+    if (input.currency) await changeCurrency(current.businessId, input.currency, connection);
     if (fields.length)
       await mutate(
         `UPDATE businesses SET ${fields.join(',')} WHERE id=?`,

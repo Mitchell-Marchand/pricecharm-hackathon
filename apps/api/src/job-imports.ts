@@ -16,6 +16,7 @@ import { uploadSlot } from './uploads.js';
 import { withAiUsage } from './usage.js';
 import { requireWorkspace, workspace } from './workspace.js';
 import { jobFacts, recordEvent, recordRequestEvent } from './metrics.js';
+import { currencyOf } from './money.js';
 
 /**
  * Old quotes and invoices, several at a time. Each file is stored as it arrives and read in the
@@ -74,9 +75,10 @@ export async function readJobImport(id: string): Promise<void> {
   const businessId = String(item.business_id);
   try {
     const bytes = await getPhoto(String(item.storage_key));
-    const [business] = await rows('SELECT trade_id,custom_trade FROM businesses WHERE id=?', [
-      businessId,
-    ]);
+    const [business] = await rows(
+      'SELECT trade_id,custom_trade,currency FROM businesses WHERE id=?',
+      [businessId],
+    );
     const services = (
       await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
     ).map((row) => String(row.name));
@@ -84,6 +86,7 @@ export async function readJobImport(id: string): Promise<void> {
       readPastJob({
         trade: tradeName(business?.trade_id, business?.custom_trade),
         services,
+        currency: currencyOf(business?.currency),
         file:
           item.kind === 'pdf'
             ? {

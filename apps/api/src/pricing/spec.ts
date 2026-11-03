@@ -76,6 +76,24 @@ export function describeJob(spec: JobSpec | null, media: string[] = []): string 
 }
 
 /** "600 sq ft; heavy moss; steep driveway; adds: gutter brightening; wants it next week" */
+/**
+ * What a quote's price is for, as the customer would say it: the size, the condition, getting to
+ * it, what they added and when. Shown on the quote, so both sides know what it holds for.
+ */
+export function jobFacts(spec: JobSpec | null): string[] {
+  if (!spec) return [];
+  const upper = (text: string) => text.trim().replace(/^./, (first) => first.toUpperCase());
+  return [
+    spec.quantity && spec.unit ? formatQuantity(spec.quantity, spec.unit) : '',
+    spec.condition,
+    spec.access,
+    ...spec.extras,
+    spec.timing,
+  ]
+    .filter((fact) => fact.trim())
+    .map(upper);
+}
+
 export function describeSpec(spec: JobSpec | null): string {
   if (!spec) return '';
   return [

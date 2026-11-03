@@ -10,6 +10,7 @@ import { tokenFromLink } from '@/lib/account';
 import { errorMessage } from '@/lib/api';
 import { approveFromLink, viewApproval, type ApprovalView } from '@/lib/owner';
 import { money } from '@/lib/util';
+import { setCurrency } from '@/lib/currency';
 
 /** Kept for the tab, so a reload after switching apps still works. The address loses it. */
 function linkToken(quoteId: string): string | null {
@@ -83,6 +84,7 @@ export function ApproveQuote({ quoteId }: { quoteId: string }) {
       </Shell>
     );
 
+  setCurrency(view.currency);
   if (view.status !== 'waiting')
     return (
       <Shell>

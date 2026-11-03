@@ -4,6 +4,7 @@ import { cookies, hashToken, newToken, ownerFromRequest } from './auth.js';
 import { mutate, rows, type Sql } from './db.js';
 import { ApiError } from './http.js';
 import { recordMilestone } from './metrics.js';
+import type { Currency } from './money.js';
 
 /**
  * Setup happens before there's an account. Until signup, the business is a draft: a normal
@@ -85,12 +86,13 @@ export async function createDraft(
   res: Response,
   connection: Sql,
   session: string | null = null,
+  currency: Currency = 'USD',
 ): Promise<string> {
   const id = randomUUID(),
     token = newToken();
   await mutate(
-    "INSERT INTO businesses (id,name,slug,description,status,draft_token_hash,draft_expires_at,metrics_subject) VALUES (?,?,?,?,'draft',?,?,UUID())",
-    [id, '', `draft-${id}`, '', hashToken(token), new Date(Date.now() + DRAFT_MS)],
+    "INSERT INTO businesses (id,name,slug,description,status,currency,draft_token_hash,draft_expires_at,metrics_subject) VALUES (?,?,?,?,'draft',?,?,?,UUID())",
+    [id, '', `draft-${id}`, '', currency, hashToken(token), new Date(Date.now() + DRAFT_MS)],
     connection,
   );
   await recordMilestone(connection, id, 'setup_started', '', { session });

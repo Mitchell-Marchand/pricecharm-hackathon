@@ -20,6 +20,7 @@ import {
   type SizeSlot,
 } from '@/lib/jobs';
 import { article, cx, money, moneyInput, parseMoney } from '@/lib/util';
+import { currencySymbol } from '@/lib/currency';
 
 const MAX_PHOTOS = 8;
 /** Jobs with a size a service needs before its guesses can be checked against your prices. */
@@ -809,7 +810,7 @@ export function JobSheet({
                       fix('discount');
                     }}
                     options={[
-                      { value: 'amount', label: '$ off' },
+                      { value: 'amount', label: `${currencySymbol()} off` },
                       { value: 'percent', label: '% off' },
                     ]}
                   />

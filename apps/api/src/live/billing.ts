@@ -246,7 +246,7 @@ async function insertUsage(
       false,
       input.trial,
       input.totalCents,
-      'USD',
+      account.currency,
       input.feeCents,
       input.waivedCents,
       Number(account.fee_basis_points),
@@ -292,7 +292,7 @@ export async function recordAcceptance(
   const access = await liveBillingAccess(input.businessId, connection, input.totalCents);
   const account = await ensureBillingAccount(input.businessId, connection);
   // The terms it was delivered under, even if the owner has since moved plans.
-  const terms = planTariff('per_accepted');
+  const terms = planTariff('per_accepted', account.currency);
   const fee = access.canSend
     ? feeForQuote(input.totalCents, {
         fee_basis_points: terms.basisPoints,

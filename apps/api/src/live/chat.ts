@@ -16,7 +16,7 @@ import { ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs } from '../past-jobs.js';
 import { quoteTotal, type DraftedQuote, type Quote } from '../practice/types.js';
-import { draftForBusiness } from '../pricing/draft.js';
+import { draftForBusiness, type DraftResult } from '../pricing/draft.js';
 import { currentFormula, priceDrivers } from '../pricing/formula-draft.js';
 import { loadPricingData } from '../pricing/history.js';
 import { businessReadiness, type ServiceReadiness } from '../pricing/readiness.js';
@@ -34,7 +34,7 @@ import {
   type Estimate,
   type Rate,
 } from '../pricing/rates.js';
-import type { JobSpec } from '../pricing/spec.js';
+import { jobFacts, type JobSpec } from '../pricing/spec.js';
 import { formatQuantity } from '../pricing/units.js';
 import { questionChecklist } from '../charm-notes.js';
 import { getPhoto } from '../storage.js';
@@ -59,6 +59,7 @@ import {
   readingPhotos,
   readPhotos,
 } from './photo-readings.js';
+import { currencyOf, money as formatMoney } from '../money.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -103,12 +104,6 @@ async function approveLink(connection: Sql | undefined, quoteId: string) {
 export function appOrigin() {
   return (process.env.APP_ORIGIN || 'http://localhost:3100').split(',')[0].trim();
 }
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
 
 export async function businessBySlug(slug: unknown, connection?: Sql) {
   const parsed = z
@@ -147,6 +142,8 @@ export async function publicProfile(business: Row) {
       .map((word) => word[0].toUpperCase())
       .join(''),
     trade: tradeName(business.trade_id, business.custom_trade),
+    /** What its prices are in. */
+    currency: currencyOf(business.currency),
     services: await services(String(business.id)),
     /** Who the chat says will follow up: the owner's first name unless they chose another. */
     ownerFirstName: await contactName(business),
@@ -215,7 +212,7 @@ export type ChannelCustomer = {
  */
 export async function startChat(
   business: Row,
-  source: 'link' | 'widget' | 'test' | 'whatsapp',
+  source: 'link' | 'widget' | 'test' | 'whatsapp' | 'agent',
   customer?: ChannelCustomer,
 ) {
   const token = newToken(),
@@ -316,8 +313,15 @@ export async function chatView(business: Row, chat: Row) {
           .map((check) => ({ id: check.id, detail: check.detail }))
       : [];
   // Only the customer's own chat reaches here, so this is when they first saw the open quote,
-  // which is when its accept button's wording starts to count. Owners' tests never do.
-  if (visible && !test && ['sent', 'expired'].includes(String(quote.status)) && !quote.seen_at) {
+  // which is when its accept button's wording starts to count. Owners' tests never do, and nor do
+  // an agent's requests, where the agent reads the quote before any person does.
+  if (
+    visible &&
+    !test &&
+    chat.source !== 'agent' &&
+    ['sent', 'expired'].includes(String(quote.status)) &&
+    !quote.seen_at
+  ) {
     const seen = await mutate(
       'UPDATE live_quotes SET seen_at=UTC_TIMESTAMP(3) WHERE id=? AND seen_at IS NULL',
       [quote.id],
@@ -806,6 +810,7 @@ async function checkDraft(
 ) {
   const checks: Check[] = [];
   const add = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
+  const money = (cents: number) => formatMoney(cents, currencyOf(business.currency));
   const { limitCents, autoSend } = settingsFromRow(business);
   const offered = await services(String(business.id));
   const service = String(chat.service_name || '');
@@ -921,21 +926,27 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
   let estimate: Estimate | null = null;
   let rates: Rate[] | undefined;
   let engine: unknown = null;
+  let unsettled: DraftResult['unsettled'];
   try {
-    ({ drafted, estimate, rates, engine } = await withChatUsage(req, business, chat, async () =>
-      draftForBusiness({
-        businessId,
-        serviceName: String(chat.service_name),
-        conversation: messages
-          .filter((message) => message.text)
-          .map((message) => ({
-            from: message.sender === 'customer' ? ('customer' as const) : ('owner' as const),
-            text: String(message.text),
-          })),
-        spec,
-        media,
-        images: await chatImages(businessId, chatId),
-      }),
+    ({ drafted, estimate, rates, engine, unsettled } = await withChatUsage(
+      req,
+      business,
+      chat,
+      async () =>
+        draftForBusiness({
+          businessId,
+          serviceName: String(chat.service_name),
+          conversation: messages
+            .filter((message) => message.text)
+            .map((message) => ({
+              from: message.sender === 'customer' ? ('customer' as const) : ('owner' as const),
+              text: String(message.text),
+            })),
+          spec,
+          media,
+          images: await chatImages(businessId, chatId),
+          drivers: true,
+        }),
     ));
   } catch (error) {
     reportError(error, { event: 'live_draft' });
@@ -949,6 +960,34 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       confidence: 'low',
       reasoning: '',
     };
+  }
+  // Something the price depends on that the customer hasn't settled, like how heavy the stains
+  // are, is asked about once before the quote. If it's still open after that, the quote says what
+  // it would change the price by.
+  if (unsettled?.ifs.length && unsettled.question && !chat.drivers_asked_at) {
+    const asked = await transaction(async (connection) => {
+      const [locked] = await rows(
+        'SELECT drivers_asked_at FROM lead_chats WHERE id=? FOR UPDATE',
+        [chatId],
+        connection,
+      );
+      if (locked.drivers_asked_at || (await liveQuoteFor(chatId, connection))) return false;
+      await addMessage(connection, {
+        businessId,
+        chatId,
+        sender: 'assistant',
+        text: unsettled.question,
+        chips: unsettled.chips,
+        reply: true,
+      });
+      await mutate(
+        "UPDATE lead_chats SET status='chatting',ready=FALSE,drivers_asked_at=UTC_TIMESTAMP(3) WHERE id=?",
+        [chatId],
+        connection,
+      );
+      return true;
+    });
+    if (asked) return;
   }
   const totalCents = quoteTotal(drafted);
   const service = String(chat.service_name || '').toLowerCase();
@@ -1009,6 +1048,9 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       validDays: terms.validDays,
       note: '',
       issuedAt: new Date().toISOString(),
+      // What the price is for, and what an unsettled condition or extra would change it by.
+      assumes: jobFacts(spec),
+      ...(unsettled?.ifs.length ? { ifs: unsettled.ifs } : {}),
     };
     let status: 'sent' | 'review' = held.length ? 'review' : 'sent';
     let reason = failed.map((check) => check.detail).join(' ');
@@ -1100,13 +1142,14 @@ export async function markSent(
     connection,
   );
   const [chat] = await rows(
-    'SELECT customer_name,customer_email,customer_phone,channel_account_id,channel_user_id FROM lead_chats WHERE id=?',
+    'SELECT source,customer_name,customer_email,customer_phone,channel_account_id,channel_user_id FROM lead_chats WHERE id=?',
     [quote.chat_id],
     connection,
   );
   // On WhatsApp the customer sees it once WhatsApp says it reached them, so it's billed then
-  // (recordDeliveries in src/channels/conversation.ts). It still has to be allowed to go now.
-  if (!input.test && chat.channel_account_id) {
+  // (recordDeliveries in src/channels/conversation.ts). An agent's quote is billed when the person
+  // it's for says yes (`decide`). Either way it still has to be allowed to go now.
+  if (!input.test && (chat.channel_account_id || chat.source === 'agent')) {
     const access = await liveBillingAccess(input.businessId, connection, Number(quote.total_cents));
     if (!access.canSend) throw new ApiError(409, 'BILLING_LIMIT', access.reason);
   } else if (!input.test)
@@ -1164,7 +1207,11 @@ async function notifyCustomerQuote(
   businessName: string,
 ) {
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId], connection);
-  const [business] = await rows('SELECT slug FROM businesses WHERE id=?', [businessId], connection);
+  const [business] = await rows(
+    'SELECT slug,currency FROM businesses WHERE id=?',
+    [businessId],
+    connection,
+  );
   const [quote] = await rows(
     'SELECT total_cents,quote_json FROM live_quotes WHERE chat_id=?',
     [chatId],
@@ -1181,7 +1228,7 @@ async function notifyCustomerQuote(
       replyTo: await ownerReplyTo(businessId, connection),
       fromName: businessName,
       subject: `Your quote from ${businessName}`,
-      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
+      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents), currencyOf(business.currency))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
     },
     connection,
   );
@@ -1210,7 +1257,7 @@ export async function notifyOwner(
     connection,
   );
   const [quote] = await rows(
-    'SELECT id,total_cents,quote_json,review_reason,outcome_reason,outcome_note FROM live_quotes WHERE chat_id=?',
+    'SELECT q.id,q.total_cents,q.quote_json,q.review_reason,q.outcome_reason,q.outcome_note,b.currency FROM live_quotes q JOIN businesses b ON b.id=q.business_id WHERE q.chat_id=?',
     [chatId],
     connection,
   );
@@ -1219,7 +1266,11 @@ export async function notifyOwner(
   const first = String(chat.customer_name).trim().split(/\s+/)[0] || 'A customer';
   const service = String(chat.service_name || '').toLowerCase();
   const total = quote
-    ? priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))
+    ? priceText(
+        json<Quote | null>(quote.quote_json, null),
+        Number(quote.total_cents),
+        currencyOf(quote.currency),
+      )
     : '';
   const link = quote ? `${appOrigin()}/app/quotes/${quote.id}` : `${appOrigin()}/app`;
   const reach = [
@@ -1348,6 +1399,19 @@ export async function decide(
       detail: { accept: 'accepted', visit: 'visit', decline: 'lost' }[decision],
       value: Number(quote.total_cents),
     });
+    // An agent's quote counts as shown once the person it's for says yes. Like any yes, it's
+    // never turned away over the owner's billing; it just isn't charged then.
+    if (
+      decision === 'accept' &&
+      chat.source === 'agent' &&
+      (await liveBillingAccess(String(business.id), connection, Number(quote.total_cents))).canSend
+    )
+      await recordLiveDelivery(connection, {
+        businessId: String(business.id),
+        quoteId: String(quote.id),
+        totalCents: Number(quote.total_cents),
+        sentBy: quote.sent_by === 'owner' ? 'owner' : 'auto',
+      });
     // On the accepted-quote plan, this is when the quote is charged.
     if (decision === 'accept')
       await recordAcceptance(connection, {

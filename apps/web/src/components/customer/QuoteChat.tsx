@@ -46,6 +46,7 @@ import { useVisualViewport } from '@/lib/use-visual-viewport';
 import { ReadingSteps } from './ReadingSteps';
 import { cx, readPhoto } from '@/lib/util';
 import { MAX_VIDEO_BYTES, MAX_VIDEO_SECONDS, readVideo } from '@/lib/video';
+import { setCurrency } from '@/lib/currency';
 
 const MAX_PHOTOS_AT_ONCE = 6;
 
@@ -80,6 +81,8 @@ export function QuoteChat({
   /** Opened by the signed-in owner to try it, so it says it's a test before the chat starts. */
   owner?: boolean;
 }) {
+  // The quote is in the business's currency.
+  setCurrency(profile.currency);
   const [access, setAccess] = useState<ChatAccess | null>(null);
   const [chat, setChat] = useState<ChatView | null>(null);
   const [restoring, setRestoring] = useState(true);

@@ -21,6 +21,7 @@ import {
 import { loadPricingData, type HistoryOptions, type PricingData } from './history.js';
 import { describeJob, type JobSpec } from './spec.js';
 import { canonicalUnit } from './units.js';
+import { wholeMoney, type Currency } from '../money.js';
 
 /**
  * Formula pricing: the owner's formula, worked out from their quotes and checked against all of
@@ -147,7 +148,8 @@ async function learnFrom(
   model?: string,
 ): Promise<Learned> {
   const { notes } = data.history;
-  const business = { trade: data.history.business.trade, services: data.history.business.services };
+  const { trade, services, currency } = data.history.business;
+  const business = { trade, services, currency };
   const ask = (reading: number, quick: boolean) =>
     learnFormula({ quick, business, examples, notes, model, reading });
   // Working out a formula reasons at length, and the API sometimes gives up on long calls, so it
@@ -338,6 +340,8 @@ export type FormulaUse =
       doubts: string[];
       /** What each reading of the owner's quotes came to, lowest first. */
       readings: number[];
+      /** The job as the reading it was priced from saw it. */
+      parts: JobParts;
     }
   | { used: false; reason: string };
 
@@ -429,10 +433,8 @@ async function readingPrice(
     ...(unpriced ? [`They asked for ${unpriced}, which you haven’t priced yet.`] : []),
     ...doubtsAbout(formula, checks, parts, priced),
   ];
-  return { formula, priced, doubts };
+  return { formula, priced, doubts, parts };
 }
-
-const dollars = (cents: number) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
 
 /**
  * The quote from the owner's formula, when it fits their own quotes and covers everything the
@@ -448,6 +450,7 @@ export async function priceFromFormula(
     /** What was measured and seen in the customer's video and photos, in words. */
     media?: string[];
     model?: string;
+    currency?: Currency;
   },
 ): Promise<{ drafted: DraftedQuote | null; use: FormulaUse }> {
   const skip = (reason: string) => ({ drafted: null, use: { used: false as const, reason } });
@@ -472,7 +475,7 @@ export async function priceFromFormula(
     ...middle.doubts,
     ...(high > low * 1.1
       ? [
-          `Your quotes can be read more than one way for this job: anywhere from ${dollars(low)} to ${dollars(high)}.`,
+          `Your quotes can be read more than one way for this job: anywhere from ${wholeMoney(low, input.currency)} to ${wholeMoney(high, input.currency)}.`,
         ]
       : []),
   ];
@@ -493,6 +496,50 @@ export async function priceFromFormula(
       formula: middle.formula,
       doubts,
       readings: priced.map((item) => item.priced.totalCents),
+      parts: middle.parts,
     },
   };
+}
+
+/** What a condition or extra the customer hasn't settled would change the price by. */
+export type IfPrice = {
+  /** The condition or extra, in the owner's terms. */
+  when: string;
+  /** What it adds, or takes off when below zero. */
+  cents: number;
+  /** For an extra counted by the item, like each downspout: per item. */
+  each?: boolean;
+};
+
+/**
+ * How much of the price an open condition has to move before it's asked about or shown. A smaller
+ * one is within how close a quote is held to the owner's own prices anyway.
+ */
+export const MOVES_PRICE = 0.1;
+
+/**
+ * For each condition and extra still open (src/ai/drivers.ts) that moves the price a lot, what it
+ * would change the price by, so the quote says so instead of quietly assuming it doesn't apply.
+ * One the job was already priced with, or that this formula can't price, is left out.
+ */
+export function ifPrices(formula: PriceFormula, parts: JobParts, open: string[]): IfPrice[] {
+  const base = priceJob(formula, parts)?.totalCents;
+  if (!base) return [];
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  return open.flatMap((when) => {
+    const surcharge = formula.surcharges.find((item) => same(item.when || item.name, when));
+    const addOn = surcharge ? undefined : formula.addOns.find((item) => same(item.name, when));
+    if (surcharge && parts.surcharges.some((name) => same(name, surcharge.name))) return [];
+    if (addOn && (addOn.always || parts.addOns.some((item) => same(item.name, addOn.name))))
+      return [];
+    const priced = surcharge
+      ? priceJob(formula, { ...parts, surcharges: [...parts.surcharges, surcharge.name] })
+      : addOn
+        ? priceJob(formula, { ...parts, addOns: [...parts.addOns, { name: addOn.name, count: 1 }] })
+        : null;
+    const cents = priced ? priced.totalCents - base : 0;
+    return Math.abs(cents) >= base * MOVES_PRICE
+      ? [{ when, cents, ...(addOn?.per === 'item' ? { each: true } : {}) }]
+      : [];
+  });
 }

@@ -10,6 +10,7 @@ import { money } from './util';
 import { DEFAULT_PRICING, type Plan, type PlanChoice, type Pricing } from './plans';
 import type { Logo } from './chat';
 import type { Quote } from './quote';
+import type { Currency } from './currency';
 
 export type QuoteStatus =
   'review' | 'sent' | 'accepted' | 'visit_requested' | 'lost' | 'expired' | 'declined' | 'void';
@@ -214,6 +215,8 @@ export interface Billing {
   usage: { billableQuotes: number; feesCents: number; month: string };
   tariff: { basisPoints: number; minimumFeeCents: number; maximumFeeCents: number };
   spendingCapCents: number;
+  /** The currency can change until a card is on file. */
+  currencyLocked?: boolean;
   subscription: { status: string; cancelAtPeriodEnd: boolean; periodEnd: string | null } | null;
   checkoutAvailable: boolean;
   portalAvailable: boolean;
@@ -248,6 +251,9 @@ function complete(billing: Billing): Billing {
 export const loadBilling = () => api<Billing>('/app/billing').then(complete);
 export const saveSpendingCap = (spendingCapCents: number) =>
   api('/billing', { method: 'PATCH', ...json({ spendingCapCents }) });
+/** What the business's quotes and plan are in, before a card is on file. */
+export const saveCurrency = (currency: Currency) =>
+  api('/billing', { method: 'PATCH', ...json({ currency }) });
 /** Where to add a card. From setup, it comes back to setup's last screen. */
 export const startCheckout = (from?: 'setup') =>
   api<{ url: string }>('/billing/checkout', {
@@ -281,6 +287,8 @@ export const loadOwnerProfile = () => api<Profile>('/app/profile');
 export interface ApprovalView {
   quoteId: string;
   business: string;
+  /** What the quote is in. An older API leaves it out, for dollars. */
+  currency?: Currency;
   customer: string;
   serviceName: string;
   status: 'waiting' | 'declined' | 'sent';

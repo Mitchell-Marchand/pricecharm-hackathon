@@ -7,6 +7,7 @@ import { Button, Field, MoneyInput, Segmented, TextArea, TextInput } from '@/com
 import type { QuoteDraft } from '@/lib/practice';
 import type { Discount } from '@/lib/quote';
 import { money, moneyInput, parseMoney, uid } from '@/lib/util';
+import { currencySymbol } from '@/lib/currency';
 
 /** The practice customer the quote is for. */
 type Customer = { id: string; name: string; firstName: string; suggestions: string[] };
@@ -275,7 +276,7 @@ function BuilderForm({
                   }}
                   options={[
                     { value: 'percent', label: '% off' },
-                    { value: 'amount', label: '$ off' },
+                    { value: 'amount', label: `${currencySymbol()} off` },
                   ]}
                 />
                 {discountKind === 'amount' ? (

@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError, ok, rateLimit } from '../http.js';
 import { ownerReplyTo, queueEmail } from '../integrations/email.js';
-import { json, type Row } from '../models.js';
+import { businessById, json, type Row } from '../models.js';
+import { money } from '../money.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
 import { agentReadiness, businessReadiness, serviceWorkload } from '../pricing/readiness.js';
@@ -36,13 +37,6 @@ import {
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
-
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
 
 const cardEdits = z.object(quoteDraftSchema.shape);
 
@@ -259,8 +253,10 @@ export async function sendWaitingQuote(
     throw new ApiError(409, 'NO_CONTACT', 'This customer hasn’t said where to send it yet.');
   const drafted = Number(quote.total_cents);
   if (edits || style) {
-    // A range follows the owner's new price; they can also send it firm, or as an estimate.
-    const card = restyle({ ...json<Quote>(quote.quote_json, {} as Quote), ...edits }, style);
+    // A range follows the owner's new price; they can also send it firm, or as an estimate. What
+    // an open condition would add was worked out on the Charm's price, so a new price drops it.
+    const { ifs, ...charms } = json<Quote>(quote.quote_json, {} as Quote);
+    const card = restyle({ ...charms, ...(edits?.lines ? {} : { ifs }), ...edits }, style);
     const total = quoteTotal(card);
     if (total <= 0) throw new ApiError(422, 'QUOTE_EMPTY', 'Add at least one priced line.');
     await mutate(
@@ -539,7 +535,10 @@ ownerQuotesRouter.patch('/app/settings', async (req, res) => {
       ...settings,
       // The names older pages read.
       autoSendLimitCents: settings.limitCents,
-      limitText: settings.limitCents === null ? '' : money(settings.limitCents),
+      limitText:
+        settings.limitCents === null
+          ? ''
+          : money(settings.limitCents, (await businessById(owner(req).businessId)).currency),
     }),
   );
 });

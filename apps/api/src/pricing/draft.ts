@@ -1,3 +1,4 @@
+import { unsettledDrivers } from '../ai/drivers.js';
 import { aiMode, aiProvider, modelFor, type AiImage } from '../ai/index.js';
 import { DRAFT_PROMPT_VERSION, draftQuote, type DraftRequest } from '../ai/quote-engine.js';
 import { rows } from '../db.js';
@@ -5,12 +6,19 @@ import { reportError } from '../error-reporting.js';
 import type { PastJob } from '../past-jobs.js';
 import { subtotal, type DraftEngine, type DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
-import { currentFormula, priceFromFormula } from './formula-draft.js';
+import {
+  currentFormula,
+  ifPrices,
+  priceDrivers,
+  priceFromFormula,
+  type IfPrice,
+} from './formula-draft.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
 import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
 import { describeJob, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
+import { roughMoney, type Currency } from '../money.js';
 
 /** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
 const FORMULA_VERSION = 'formula-2026-11-01';
@@ -19,20 +27,17 @@ const FORMULA_VERSION = 'formula-2026-11-01';
 const REFERENCE_PHOTOS = 2;
 const MAX_PHOTOS = 5;
 
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: cents < 1000 ? 2 : 0,
-  }).format(cents / 100);
-
 export type DraftResult = {
   drafted: DraftedQuote;
   engine: DraftEngine;
   estimate: Estimate | null;
   /** Every rate it worked out, which the live checks hold the draft to. */
   rates: Rate[];
+  /**
+   * With `drivers`, what the owner's price depends on that the customer hasn't settled, the
+   * question that would settle it, and what each would change the price by.
+   */
+  unsettled?: { open: string[]; question: string; chips: string[]; ifs: IfPrice[] };
 };
 
 /** Demo mode: the owner's usual rate for this size, or else the middle of their similar jobs. */
@@ -65,6 +70,7 @@ async function referencePhotos(
   serviceName: string,
   spec: JobSpec | null,
   count: number,
+  currency: Currency,
 ) {
   if (count <= 0) return [];
   const score = (job: PastJob) => {
@@ -91,7 +97,7 @@ async function referencePhotos(
           mimeType: 'image/jpeg',
           dataBase64: (await getPhoto(String(photo.storage_key))).toString('base64'),
         },
-        label: `${job.description.slice(0, 120)} (${money(job.priceCents)})`,
+        label: `${job.description.slice(0, 120)} (${roughMoney(job.priceCents, currency)})`,
       });
     } catch {
       // A missing photo only means one less example to look at.
@@ -119,9 +125,12 @@ export async function draftForBusiness(input: {
   demo?: () => DraftedQuote;
   /** False to leave the owner's formula out, so the benchmark can compare the two. */
   formula?: boolean;
+  /** Also find what the price depends on that the customer hasn't settled. Live quotes only. */
+  drivers?: boolean;
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
+  const { currency } = data.history.business;
   const rates = fitRates(data.points);
   const estimate = estimateFor(rates, serviceName, spec?.quantity ?? null, spec?.unit ?? '');
   const examples = {
@@ -133,15 +142,42 @@ export async function draftForBusiness(input: {
   // The owner's formula prices it when it fits their quotes and covers the job. A replay of an old
   // quote, or another model, goes the usual way, since the formula is today's.
   if (aiMode !== 'demo' && input.formula !== false && !input.model && !input.history?.before) {
-    const priced = await currentFormula(businessId, data)
-      .then((learned) => (learned ? priceFromFormula(learned, input) : null))
-      .catch((error: unknown) => {
-        reportError(error, { event: 'formula_draft' });
-        return null;
-      });
+    const learned = await currentFormula(businessId, data).catch((error: unknown) => {
+      reportError(error, { event: 'formula_draft' });
+      return null;
+    });
+    // Asked alongside the price, so it adds no wait.
+    const drivers = input.drivers && learned ? priceDrivers(learned) : null;
+    const [priced, open] = await Promise.all([
+      learned
+        ? priceFromFormula(learned, { ...input, currency }).catch((error: unknown) => {
+            reportError(error, { event: 'formula_draft' });
+            return null;
+          })
+        : null,
+      drivers
+        ? unsettledDrivers({
+            conversation: input.conversation,
+            details: describeJob(spec, input.media) || undefined,
+            conditions: drivers.conditions,
+            extras: drivers.extras.map((extra) => extra.name),
+          }).catch((error: unknown) => {
+            reportError(error, { event: 'unsettled_drivers' });
+            return null;
+          })
+        : null,
+    ]);
     if (priced?.drafted)
       return {
         drafted: priced.drafted,
+        ...(open && priced.use.used
+          ? {
+              unsettled: {
+                ...open,
+                ifs: ifPrices(priced.use.formula, priced.use.parts, open.open),
+              },
+            }
+          : {}),
         estimate,
         rates,
         engine: {
@@ -169,7 +205,7 @@ export async function draftForBusiness(input: {
     });
     if (market)
       startingPoint = {
-        basis: `About ${money(market.upperCentsPerUnit)} per ${market.unit.replace(/s$/, '')}, a little above the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
+        basis: `About ${roughMoney(market.upperCentsPerUnit, currency)} per ${market.unit.replace(/s$/, '')}, a little above the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
         mainWorkCents:
           spec?.quantity && spec.unit === market.unit
             ? Math.round((market.upperCentsPerUnit * spec.quantity) / 100) * 100
@@ -187,6 +223,7 @@ export async function draftForBusiness(input: {
           serviceName,
           spec,
           Math.min(REFERENCE_PHOTOS, MAX_PHOTOS - customerImages.length),
+          currency,
         );
   const photoGuide = [
     ...customerImages.map((_, index) => `Photo ${index + 1}: from the customer`),
@@ -198,7 +235,7 @@ export async function draftForBusiness(input: {
 
   const history = similarHistory(data.history, serviceName, spec);
   const estimateBasis = estimate
-    ? `${formatQuantity(estimate.quantity, estimate.unit)} at the usual rate comes to ${money(estimate.cents)}. ${describeRate(estimate.rate)}`
+    ? `${formatQuantity(estimate.quantity, estimate.unit)} at the usual rate comes to ${roughMoney(estimate.cents, currency)}. ${describeRate(estimate.rate, currency)}`
     : '';
   let drafted =
     aiMode === 'demo'

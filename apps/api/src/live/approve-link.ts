@@ -8,6 +8,7 @@ import type { Quote } from '../practice/types.js';
 import { describeSpec, type JobSpec } from '../pricing/spec.js';
 import { sendWaitingQuote } from './owner.js';
 import { recordRequestEvent, requestSession } from '../metrics.js';
+import { currencyOf } from '../money.js';
 
 /**
  * The one-tap link in a "needs your OK" email. Whoever has it can see that one quote and send it
@@ -21,7 +22,7 @@ const linkInput = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).s
 /** The quote this link was made for. A wrong or old token says so, and nothing more. */
 async function linkedQuote(quoteId: string, token: string, connection?: Sql) {
   const [quote] = await rows(
-    `SELECT q.*,c.customer_name,c.service_name,c.source,c.spec_json,b.name AS business_name
+    `SELECT q.*,c.customer_name,c.service_name,c.source,c.spec_json,b.name AS business_name,b.currency
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id JOIN businesses b ON b.id=q.business_id
      WHERE q.id=? AND q.approve_token_hash=?${connection ? ' FOR UPDATE' : ''}`,
     [quoteId, hashToken(token)],
@@ -50,6 +51,7 @@ function linkView(quote: Row) {
   return {
     quoteId: String(quote.id),
     business: String(quote.business_name),
+    currency: currencyOf(quote.currency),
     customer:
       String(quote.customer_name || '')
         .trim()

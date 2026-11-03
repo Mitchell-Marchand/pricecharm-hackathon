@@ -196,7 +196,12 @@ export async function replayGeneric(job: ReplayCase, model?: string): Promise<Re
   if (job.ownerCents === null) return null;
   const business = await businessContext(job.businessId);
   const drafted = await draftGenericQuote({
-    business: { trade: business.trade, services: business.services, area: business.area },
+    business: {
+      trade: business.trade,
+      services: business.services,
+      area: business.area,
+      currency: business.currency,
+    },
     request: {
       serviceName: job.serviceName,
       conversation: job.conversation,

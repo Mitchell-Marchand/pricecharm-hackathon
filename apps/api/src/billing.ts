@@ -9,10 +9,13 @@ import { iso } from './models.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { consumeAuthRateLimit } from './verification.js';
 import { recordMilestone, recordRequestEvent } from './metrics.js';
+import { CURRENCIES, currencyOf, exactMoney, money, type Currency } from './money.js';
 type BillingAccount = RowDataPacket & {
   fee_basis_points: number;
   minimum_fee_cents: number;
   maximum_fee_cents: number;
+  /** The business's currency, which its fees are in. */
+  currency: Currency;
 };
 
 function setting(name: string, fallback: number, maximum: number, minimum = 0): number {
@@ -35,27 +38,95 @@ export const isSubscription = (plan: unknown): plan is 'monthly' | 'yearly' =>
 /** A card is on file and in good standing, including the subscription's free week. */
 export const isPaying = (status: unknown) => status === 'active' || status === 'trialing';
 
-export function publicPricing() {
+type PriceList = {
+  perQuoteCents: number;
+  accepted: { minimumFeeCents: number; maximumFeeCents: number };
+  monthlyCents: number;
+  yearlyCents: number;
+  overageCents: number;
+  firstMonthMaxCents: number;
+  /** A new account's monthly spending limit. */
+  spendingCapCents: number;
+};
+/**
+ * What PriceCharm costs in each currency, in its hundredths. Outside the US, UK, Europe and
+ * Oceania it's set lower, to what a quote is worth there, not converted from dollars. The 1%
+ * plan is 1% everywhere. USD can be changed in the env; the rest are here, and stripe:setup puts
+ * each one on the Stripe prices.
+ */
+const PRICE_LISTS: Record<Exclude<Currency, 'USD'>, PriceList> = {
+  CAD: list(300, [150, 3500], 6900, 69900, 150, 14000),
+  AUD: list(300, [150, 4000], 7500, 74900, 150, 15000),
+  NZD: list(350, [150, 4000], 7900, 79900, 150, 16000),
+  GBP: list(150, [100, 2000], 3900, 39900, 100, 8000),
+  EUR: list(200, [100, 2500], 4500, 44900, 100, 9000),
+  INR: list(4900, [2500, 100000], 149900, 1499900, 2500, 300000),
+  NGN: list(100000, [50000, 2000000], 2500000, 25000000, 50000, 5000000),
+  KES: list(10000, [5000, 250000], 250000, 2500000, 5000, 500000),
+  ZAR: list(2000, [1000, 25000], 49900, 499900, 1000, 100000),
+  BRL: list(500, [250, 6000], 12900, 129900, 250, 26000),
+  MXN: list(2000, [1000, 30000], 49900, 499900, 1000, 100000),
+  PHP: list(6000, [3000, 80000], 149900, 1499900, 3000, 300000),
+};
+/** A price list: per quote, the 1% plan's least and most, monthly, yearly, past the allowance, cap. */
+function list(
+  perQuoteCents: number,
+  [minimumFeeCents, maximumFeeCents]: [number, number],
+  monthlyCents: number,
+  yearlyCents: number,
+  overageCents: number,
+  spendingCapCents: number,
+): PriceList {
   return {
-    currency: 'USD' as const,
+    perQuoteCents,
+    accepted: { minimumFeeCents, maximumFeeCents },
+    monthlyCents,
+    yearlyCents,
+    overageCents,
+    // The first month's fees stop at what a month of the subscription costs.
+    firstMonthMaxCents: monthlyCents,
+    spendingCapCents,
+  };
+}
+function priceList(currency: Currency): PriceList {
+  if (currency !== 'USD') return PRICE_LISTS[currency];
+  return {
     perQuoteCents: setting('BILLING_PER_QUOTE_CENTS', 200, 100000, 1),
     accepted: {
-      basisPoints: setting('BILLING_ACCEPTED_BASIS_POINTS', 100, 10000, 1),
       minimumFeeCents: setting('BILLING_ACCEPTED_MINIMUM_CENTS', 100, 100000),
       maximumFeeCents: setting('BILLING_ACCEPTED_MAXIMUM_CENTS', 2500, 100000),
     },
+    monthlyCents: setting('BILLING_MONTHLY_CENTS', 4900, 1000000, 1),
+    yearlyCents: setting('BILLING_YEARLY_CENTS', 49900, 10000000, 1),
+    overageCents: setting('BILLING_OVERAGE_CENTS', 100, 100000),
+    firstMonthMaxCents: setting('BILLING_FIRST_MONTH_MAX_CENTS', 4900, 1000000),
+    spendingCapCents: 10000,
+  };
+}
+
+/** The prices in a currency. Every amount is in that currency's hundredths. */
+export function publicPricing(currency: Currency = 'USD') {
+  const prices = priceList(currency);
+  return {
+    currency,
+    perQuoteCents: prices.perQuoteCents,
+    accepted: {
+      basisPoints: setting('BILLING_ACCEPTED_BASIS_POINTS', 100, 10000, 1),
+      ...prices.accepted,
+    },
     subscription: {
-      monthlyCents: setting('BILLING_MONTHLY_CENTS', 4900, 1000000, 1),
-      yearlyCents: setting('BILLING_YEARLY_CENTS', 49900, 10000000, 1),
+      monthlyCents: prices.monthlyCents,
+      yearlyCents: prices.yearlyCents,
       trialDays: setting('BILLING_TRIAL_DAYS', 7, 60),
       /** Quotes a month the subscription covers. Past that, each one is the overage fee. */
       includedQuotes: setting('BILLING_INCLUDED_QUOTES', 100, 100000),
-      overageCents: setting('BILLING_OVERAGE_CENTS', 100, 100000),
+      overageCents: prices.overageCents,
     },
     // Free quotes before fees start, on any plan. None by default.
     trialQuotes: setting('BILLING_TRIAL_QUOTES', 0, 100),
     // Quote fees in the 30 days after a business first adds a card stop here, on every plan.
-    firstMonthMaxCents: setting('BILLING_FIRST_MONTH_MAX_CENTS', 4900, 1000000),
+    firstMonthMaxCents: prices.firstMonthMaxCents,
+    spendingCapCents: prices.spendingCapCents,
   };
 }
 
@@ -79,7 +150,10 @@ export async function firstMonth(account: RowDataPacket, connection: Sql) {
     endsAt: end,
     feesCents,
     waivedCents: Number(usage.waived),
-    roomCents: Math.max(0, publicPricing().firstMonthMaxCents - feesCents),
+    roomCents: Math.max(
+      0,
+      publicPricing(currencyOf(account.currency)).firstMonthMaxCents - feesCents,
+    ),
   };
 }
 
@@ -191,8 +265,8 @@ export async function redeemCode(businessId: string, input: string): Promise<voi
  * is chosen and on every fee, so a later price change never rewrites an old charge. On the
  * subscription, they're the fee for a quote past the month's allowance.
  */
-export function planTariff(plan: Plan) {
-  const pricing = publicPricing();
+export function planTariff(plan: Plan, currency: Currency) {
+  const pricing = publicPricing(currency);
   if (plan === 'per_quote')
     return {
       basisPoints: 0,
@@ -241,9 +315,13 @@ export function stripeConfigured(): boolean {
 }
 export function validateBillingConfiguration(): void {
   billingProvider();
-  const accepted = publicPricing().accepted;
-  if (accepted.maximumFeeCents < accepted.minimumFeeCents)
-    throw new Error('The maximum accepted-quote fee must be at least its minimum.');
+  for (const currency of CURRENCIES) {
+    const accepted = publicPricing(currency).accepted;
+    if (accepted.maximumFeeCents < accepted.minimumFeeCents)
+      throw new Error(
+        `The maximum accepted-quote fee in ${currency} must be at least its minimum.`,
+      );
+  }
   if (process.env.NODE_ENV === 'production' && !stripeConfigured())
     throw new Error(
       `Production requires the Stripe secret, webhook signing secret, meter event name and ${STRIPE_PRICES.join(', ')}.`,
@@ -267,26 +345,28 @@ export function stripeClient(): Stripe {
 }
 export async function ensureBillingAccount(businessId: string, connection: Sql) {
   const [business] = await rows(
-    'SELECT id,created_at,deletion_requested_at FROM businesses WHERE id=? FOR UPDATE',
+    'SELECT id,currency,created_at,deletion_requested_at FROM businesses WHERE id=? FOR UPDATE',
     [businessId],
     connection,
   );
   if (!business || business.deletion_requested_at)
     throw new ApiError(409, 'ACCOUNT_UNAVAILABLE', 'This business account is unavailable.');
+  const currency = currencyOf(business.currency);
   // Fee terms stay unset in effect until a plan is chosen; quotes can't go out before then.
-  const tariff = planTariff('per_quote');
+  const tariff = planTariff('per_quote', currency);
   await mutate(
-    `INSERT IGNORE INTO billing_accounts(business_id,trial_ends_at,trial_quote_limit,fee_basis_points,minimum_fee_cents,maximum_fee_cents,tariff_version)
-    VALUES (?,?,?,?,?,?,?)`,
+    `INSERT IGNORE INTO billing_accounts(business_id,trial_ends_at,trial_quote_limit,fee_basis_points,minimum_fee_cents,maximum_fee_cents,tariff_version,spending_cap_cents)
+    VALUES (?,?,?,?,?,?,?,?)`,
     [
       businessId,
       // Free quotes don't expire; the old flow's trial end date stays far off.
       new Date('2100-01-01T00:00:00Z'),
-      publicPricing().trialQuotes,
+      publicPricing(currency).trialQuotes,
       tariff.basisPoints,
       tariff.minimumFeeCents,
       tariff.maximumFeeCents,
       tariff.version,
+      publicPricing(currency).spendingCapCents,
     ],
     connection,
   );
@@ -295,7 +375,50 @@ export async function ensureBillingAccount(businessId: string, connection: Sql) 
     [businessId],
     connection,
   );
-  return account;
+  return { ...account, currency } as BillingAccount;
+}
+
+/**
+ * Changes the business's currency, until a card is on file, since Stripe bills a subscription in
+ * one currency for good. Its fee terms move to the new currency, and its spending limit too while
+ * it's the usual one.
+ */
+export async function changeCurrency(businessId: string, currency: Currency, connection: Sql) {
+  const [business] = await rows(
+    'SELECT currency FROM businesses WHERE id=? FOR UPDATE',
+    [businessId],
+    connection,
+  );
+  const from = currencyOf(business?.currency);
+  if (!business || from === currency) return;
+  const [account] = await rows(
+    'SELECT * FROM billing_accounts WHERE business_id=? FOR UPDATE',
+    [businessId],
+    connection,
+  );
+  if (account?.card_added_at || account?.stripe_subscription_id)
+    throw new ApiError(
+      409,
+      'CURRENCY_LOCKED',
+      'Your currency can’t change once a card is on file. Email us and we’ll help.',
+    );
+  await mutate('UPDATE businesses SET currency=? WHERE id=?', [currency, businessId], connection);
+  if (!account) return;
+  const tariff = planTariff(PLANS.includes(account.plan) ? account.plan : 'per_quote', currency);
+  const before = publicPricing(from).spendingCapCents;
+  await mutate(
+    'UPDATE billing_accounts SET fee_basis_points=?,minimum_fee_cents=?,maximum_fee_cents=?,tariff_version=?,spending_cap_cents=IF(spending_cap_cents=?,?,spending_cap_cents) WHERE business_id=?',
+    [
+      tariff.basisPoints,
+      tariff.minimumFeeCents,
+      tariff.maximumFeeCents,
+      tariff.version,
+      before,
+      publicPricing(currency).spendingCapCents,
+      businessId,
+    ],
+    connection,
+  );
 }
 export function feeForQuote(
   totalCents: number,
@@ -379,7 +502,9 @@ export async function getBilling(businessId: string) {
       configured,
       plan: (account.plan as Plan | null) ?? null,
       planOrder: await planOrder(businessId, account.plan_order, connection),
-      pricing: publicPricing(),
+      pricing: publicPricing(account.currency),
+      /** Until a card is on file, the owner can change it. */
+      currencyLocked: Boolean(account.card_added_at || account.stripe_subscription_id),
       /** The subscription's free week, if they haven't had it. */
       freeWeek: !account.trial_used_at,
       /**
@@ -409,7 +534,7 @@ export async function getBilling(businessId: string) {
         basisPoints: Number(account.fee_basis_points),
         minimumFeeCents: Number(account.minimum_fee_cents),
         maximumFeeCents: Number(account.maximum_fee_cents),
-        currency: 'USD',
+        currency: account.currency,
         version: String(account.tariff_version),
       },
       spendingCapCents: Number(account.spending_cap_cents),
@@ -436,20 +561,27 @@ function appOrigin(): string {
     throw new Error('Invalid application origin.');
   return value;
 }
-export const pricingHandler: RequestHandler = (_req, res) => {
-  res.json(ok(publicPricing()));
+/** The prices in a currency the visitor asks for, or in dollars. */
+export const pricingHandler: RequestHandler = (req, res) => {
+  res.json(ok(publicPricing(currencyOf(String(req.query.currency ?? '').toUpperCase()))));
 };
 export const billingRouter = Router();
 billingRouter.get('/billing', async (req, res) => {
   res.json(ok(await getBilling(owner(req).businessId)));
 });
 billingRouter.patch('/billing', async (req, res) => {
-  const { spendingCapCents } = z
-    .object({ spendingCapCents: z.number().int().min(0).max(1_000_000) })
+  const { spendingCapCents, currency } = z
+    .object({ spendingCapCents: z.number().int().min(0), currency: z.enum(CURRENCIES) })
+    .partial()
     .strict()
     .parse(req.body);
   await transaction(async (connection) => {
-    await ensureBillingAccount(owner(req).businessId, connection);
+    if (currency) await changeCurrency(owner(req).businessId, currency, connection);
+    const account = await ensureBillingAccount(owner(req).businessId, connection);
+    if (spendingCapCents === undefined) return;
+    // Up to 100 times the usual limit, in whatever currency.
+    if (spendingCapCents > publicPricing(account.currency).spendingCapCents * 100)
+      throw new ApiError(400, 'SPENDING_CAP_TOO_HIGH', 'That limit is higher than we allow.');
     await mutate(
       'UPDATE billing_accounts SET spending_cap_cents=? WHERE business_id=?',
       [spendingCapCents, owner(req).businessId],
@@ -501,26 +633,43 @@ function paidPeriodEnd(subscription: Stripe.Subscription): number | undefined {
 }
 
 /**
+ * A price's amount in a currency: dollars are the price itself, and each other currency is one of
+ * its currency options. Undefined when it has none in that currency.
+ */
+export function priceIn(price: Stripe.Price, currency: Currency) {
+  const code = currency.toLowerCase();
+  return price.currency === code ? price : price.currency_options?.[code];
+}
+/** Read with every currency's amounts, tiers included. Stripe takes no wildcard for those. */
+export const PRICE_EXPAND = [
+  'tiers',
+  'currency_options',
+  ...CURRENCIES.map((currency) => `currency_options.${currency.toLowerCase()}.tiers`),
+];
+
+/**
  * What a price on the quote meter charges for each quote, or null when it isn't one amount. The
  * accepted-quote plan's price is two $0 tiers: Checkout shows a flat $0 price as "$0.00 per unit",
  * but tiers as "Price varies", under the plan's 1% terms, with the tiers folded away.
  */
-export function centsPerQuote(price: Stripe.Price): number | null {
-  if (price.billing_scheme !== 'tiered') return price.unit_amount;
-  const amounts = new Set(price.tiers?.map((tier) => (tier.flat_amount ? -1 : tier.unit_amount)));
-  const [amount] = amounts;
-  return amounts.size === 1 && amount !== undefined && amount !== -1 ? amount : null;
+export function centsPerQuote(price: Stripe.Price, currency: Currency = 'USD'): number | null {
+  const amount = priceIn(price, currency);
+  if (!amount) return null;
+  if (price.billing_scheme !== 'tiered') return amount.unit_amount;
+  const amounts = new Set(amount.tiers?.map((tier) => (tier.flat_amount ? -1 : tier.unit_amount)));
+  const [each] = amounts;
+  return amounts.size === 1 && each !== undefined && each !== -1 ? each : null;
 }
 
 /**
  * A plan's Stripe prices must match what the pricing page says, so a mistyped price fails closed
  * instead of charging something else.
  */
-async function validatePlanPrices(plan: Plan): Promise<void> {
+async function validatePlanPrices(plan: Plan, currency: Currency): Promise<void> {
   if (!stripeConfigured())
     throw new ApiError(503, 'BILLING_NOT_CONFIGURED', 'Payment setup is unavailable.');
   const stripe = stripeClient(),
-    pricing = publicPricing(),
+    pricing = publicPricing(currency),
     prices = planPrices(plan);
   const perQuote =
     plan === 'per_quote'
@@ -528,11 +677,11 @@ async function validatePlanPrices(plan: Plan): Promise<void> {
       : plan === 'per_accepted'
         ? 0
         : pricing.subscription.overageCents;
-  const metered = await stripe.prices.retrieve(prices.metered, { expand: ['tiers'] });
+  const metered = await stripe.prices.retrieve(prices.metered, { expand: PRICE_EXPAND });
   if (
     !metered.active ||
     metered.currency !== 'usd' ||
-    centsPerQuote(metered) !== perQuote ||
+    centsPerQuote(metered, currency) !== perQuote ||
     metered.recurring?.usage_type !== 'metered' ||
     metered.recurring.interval !== 'month' ||
     !metered.recurring.meter
@@ -540,7 +689,7 @@ async function validatePlanPrices(plan: Plan): Promise<void> {
     throw new ApiError(
       503,
       'BILLING_PRICE_INVALID',
-      `The ${plan} quote price must be an active USD monthly metered price of ${perQuote} cents a quote.`,
+      `The ${plan} quote price must be an active USD monthly metered price of ${perQuote} ${currency} cents a quote. Run stripe:setup.`,
     );
   const meter = await stripe.billing.meters.retrieve(metered.recurring.meter);
   if (
@@ -553,26 +702,22 @@ async function validatePlanPrices(plan: Plan): Promise<void> {
       'The quote prices must use the sum meter for the configured event name.',
     );
   if (!prices.fixed) return;
-  const fixed = await stripe.prices.retrieve(prices.fixed);
+  const fixed = await stripe.prices.retrieve(prices.fixed, { expand: PRICE_EXPAND });
   const expected = pricing.subscription[plan === 'monthly' ? 'monthlyCents' : 'yearlyCents'];
   if (
     !fixed.active ||
     fixed.currency !== 'usd' ||
-    fixed.unit_amount !== expected ||
+    priceIn(fixed, currency)?.unit_amount !== expected ||
     fixed.recurring?.usage_type !== 'licensed' ||
     fixed.recurring.interval !== (plan === 'monthly' ? 'month' : 'year')
   )
     throw new ApiError(
       503,
       'BILLING_PRICE_INVALID',
-      `The configured ${plan} price must be an active USD ${plan === 'monthly' ? 'monthly' : 'yearly'} price of ${expected} cents.`,
+      `The configured ${plan} price must be an active USD ${plan === 'monthly' ? 'monthly' : 'yearly'} price of ${expected} ${currency} cents. Run stripe:setup.`,
     );
 }
 
-const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-export function dollars(cents: number): string {
-  return cents % 100 ? `$${(cents / 100).toFixed(2)}` : `$${cents / 100}`;
-}
 /**
  * What the plan costs, in a line above Checkout's button. Checkout only saves the card, so Stripe
  * shows no price of its own. A first card also gets the first-month max, and a code's free days
@@ -580,12 +725,14 @@ export function dollars(cents: number): string {
  */
 function checkoutTerms(
   plan: Plan,
+  currency: Currency,
   firstCard: boolean,
   freeWeek: boolean,
   code: { code: string; days: number } | null,
 ): string {
-  const pricing = publicPricing(),
+  const pricing = publicPricing(currency),
     { accepted, subscription } = pricing;
+  const dollars = (cents: number) => money(cents, currency);
   // A code's free days cover the first month, or the max picks up after them.
   const first =
     firstCard && !(code && code.days >= FIRST_MONTH_DAYS)
@@ -655,7 +802,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     const account = await ensureBillingAccount(context.businessId, connection),
       stripe = stripeClient();
     const plan = chosenPlan(account);
-    await validatePlanPrices(plan);
+    await validatePlanPrices(plan, account.currency);
     let customerId: string = account.stripe_customer_id;
     if (!customerId) {
       const customer = await stripe.customers.create(
@@ -670,7 +817,8 @@ billingRouter.post('/billing/checkout', async (req, res) => {
       );
     }
     const code = freeDays(account);
-    // An open checkout is reused only if it's for the plan they've chosen now, and their code.
+    // An open checkout is reused only if it's for the plan they've chosen now, their code and
+    // currency.
     if (account.checkout_session_id) {
       const existing = await stripe.checkout.sessions.retrieve(String(account.checkout_session_id));
       if (
@@ -678,6 +826,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
         existing.url &&
         existing.mode === 'setup' &&
         existing.metadata?.plan === plan &&
+        (existing.metadata?.currency ?? 'USD') === account.currency &&
         (existing.metadata?.code ?? '') === (code?.code ?? '')
       )
         return existing.url;
@@ -687,15 +836,27 @@ billingRouter.post('/billing/checkout', async (req, res) => {
     const checkout = await stripe.checkout.sessions.create(
       {
         mode: 'setup',
-        currency: 'usd',
+        currency: account.currency.toLowerCase(),
         customer: customerId,
         client_reference_id: context.businessId,
-        metadata: { plan, ...(code ? { code: code.code } : {}) },
-        // A monthly bill for a business: no buy-now-pay-later or app wallets.
-        allowed_payment_method_types: ['card', 'link', 'us_bank_account'],
+        metadata: {
+          plan,
+          ...(account.currency === 'USD' ? {} : { currency: account.currency }),
+          ...(code ? { code: code.code } : {}),
+        },
+        // A monthly bill for a business: no buy-now-pay-later or app wallets. A US bank account
+        // only pays in dollars.
+        allowed_payment_method_types:
+          account.currency === 'USD' ? ['card', 'link', 'us_bank_account'] : ['card', 'link'],
         custom_text: {
           submit: {
-            message: checkoutTerms(plan, !account.card_added_at, freeWeekLeft(plan, account), code),
+            message: checkoutTerms(
+              plan,
+              account.currency,
+              !account.card_added_at,
+              freeWeekLeft(plan, account),
+              code,
+            ),
           },
         },
         setup_intent_data: { metadata: { businessId: context.businessId } },
@@ -704,7 +865,7 @@ billingRouter.post('/billing/checkout', async (req, res) => {
       },
       {
         // A code added since the last checkout changes what this one says, so it's a new one.
-        idempotencyKey: `quotient-card:${context.businessId}:${plan}:${code?.code ?? ''}:${Math.floor(Date.now() / 3600000)}`,
+        idempotencyKey: `quotient-card:${context.businessId}:${plan}:${account.currency}:${code?.code ?? ''}:${Math.floor(Date.now() / 3600000)}`,
       },
     );
     if (!checkout.url)
@@ -785,7 +946,7 @@ async function moveSubscription(
 
 /** Saves the plan and its fee terms, from now on. */
 async function applyPlan(connection: Sql, account: RowDataPacket, plan: Plan) {
-  const tariff = planTariff(plan);
+  const tariff = planTariff(plan, currencyOf(account.currency));
   await mutate(
     'UPDATE billing_accounts SET plan=?,next_plan=NULL,plan_schedule_id=NULL,plan_chosen_at=UTC_TIMESTAMP(3),fee_basis_points=?,minimum_fee_cents=?,maximum_fee_cents=?,tariff_version=? WHERE business_id=?',
     [
@@ -817,7 +978,7 @@ export async function changePlan(businessId: string, plan: Plan): Promise<void> 
     if (account.plan === plan && isPaying(account.subscription_status)) return null;
     const onStripe = billingProvider() === 'stripe' && Boolean(account.stripe_customer_id);
     // A mistyped price fails before anything changes.
-    if (onStripe) await validatePlanPrices(plan);
+    if (onStripe) await validatePlanPrices(plan, account.currency);
     await applyPlan(connection, account, plan);
     return onStripe ? String(account.stripe_customer_id) : null;
   });
@@ -962,7 +1123,7 @@ async function matchPlan(
   );
   if (live) {
     if (onPlan(live, plan)) return null;
-    await validatePlanPrices(plan);
+    await validatePlanPrices(plan, currencyOf(account.currency));
     return moveSubscription(live, plan, freeWeek ? trialEnd(trial) : null);
   }
   const card = await savedCard(stripe, customerId);
@@ -972,10 +1133,13 @@ async function matchPlan(
     ? Math.floor(new Date(account.plan_chosen_at).getTime() / 1000)
     : 0;
   if (endedAt && endedAt >= Math.max(pickedAt, card.created)) return null;
-  await validatePlanPrices(plan);
+  const currency = currencyOf(account.currency);
+  await validatePlanPrices(plan, currency);
   return stripe.subscriptions.create(
     {
       customer: customerId,
+      // In the business's currency, from the prices' amounts in it. Dollars are the default.
+      ...(currency === 'USD' ? {} : { currency: currency.toLowerCase() }),
       items: planItems(plan),
       billing_mode: { type: 'flexible' },
       metadata: { businessId: String(account.business_id), plan },
@@ -999,9 +1163,10 @@ export async function reconcileStripeCustomer(customerId: string): Promise<void>
   );
   if (!found) return;
   await oneAtATime(`quotient-billing:${found.business_id}`, async () => {
-    const [account] = await rows('SELECT * FROM billing_accounts WHERE business_id=?', [
-      found.business_id,
-    ]);
+    const [account] = await rows(
+      'SELECT a.*,b.currency FROM billing_accounts a JOIN businesses b ON b.id=a.business_id WHERE a.business_id=?',
+      [found.business_id],
+    );
     const stripe = stripeClient();
     await useCheckoutCard(stripe, account, customerId);
     // Read current provider state instead of applying event snapshots; event delivery order is not authoritative.
@@ -1078,9 +1243,10 @@ export async function dispatchFee(usageId: string): Promise<void> {
         {
           customer: item.stripe_customer_id,
           amount: Number(item.fee_cents),
-          currency: 'usd',
+          // The fee is in the quote's currency, which is the subscription's.
+          currency: String(item.currency).toLowerCase(),
           // A fee the first-month max cut short says so, or it reads as less than 1%.
-          description: `Accepted quote for ${usd.format(Number(item.quote_value_cents) / 100)}${Number(item.waived_cents) > 0 ? ', up to your first-month max' : ''}`,
+          description: `Accepted quote for ${exactMoney(Number(item.quote_value_cents), currencyOf(item.currency))}${Number(item.waived_cents) > 0 ? ', up to your first-month max' : ''}`,
           metadata: { usageId, quoteId: String(item.quote_id) },
         },
         { idempotencyKey: `quotient-fee:${usageId}` },

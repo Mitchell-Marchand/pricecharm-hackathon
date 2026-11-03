@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { guessCurrency, setCurrency, type Currency } from '@/lib/currency';
 import { DEFAULT_PRICING, planDetail, type Pricing } from '@/lib/plans';
 import { money } from '@/lib/util';
 
@@ -18,9 +19,16 @@ type Card = {
 /** The numbers come from the API, so this page can't drift from what billing charges. */
 export function PricingDetails() {
   const [pricing, setPricing] = useState<Pricing>();
+  // In the visitor's own currency, from where their browser is.
+  const [currency, setVisitorCurrency] = useState<Currency>('USD');
   useEffect(() => {
-    api<Pricing>('/pricing')
-      .then(setPricing)
+    const guess = guessCurrency();
+    setVisitorCurrency(guess);
+    api<Pricing>(`/pricing?currency=${guess}`)
+      .then((loaded) => {
+        setCurrency(loaded.currency);
+        setPricing(loaded);
+      })
       .catch(() => setPricing(DEFAULT_PRICING));
   }, []);
   const loading = '…';
@@ -28,7 +36,7 @@ export function PricingDetails() {
     {
       label: 'Per quote',
       upFront: true,
-      price: '$0',
+      price: money(0, currency),
       unit: 'up front',
       rate: pricing ? `${money(pricing.perQuoteCents)} per quote` : loading,
       detail: 'Each time a customer gets a quote from you. No monthly fee.',
@@ -36,7 +44,7 @@ export function PricingDetails() {
     {
       label: 'When they say yes',
       upFront: true,
-      price: '$0',
+      price: money(0, currency),
       unit: 'up front',
       rate: pricing ? `${pricing.accepted.basisPoints / 100}% of accepted quotes` : loading,
       detail: pricing

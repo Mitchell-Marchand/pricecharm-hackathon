@@ -21,6 +21,7 @@ import {
   loadBilling,
   loadHome,
   openBillingPortal,
+  saveCurrency,
   saveSettings,
   saveSpendingCap,
   setLinkOn,
@@ -30,16 +31,19 @@ import {
 } from '@/lib/owner';
 import { planDetail, planName, type Plan } from '@/lib/plans';
 import { loadWhatsApp, type WhatsApp } from '@/lib/whatsapp';
+import { CURRENCIES, currencySymbol, type Currency } from '@/lib/currency';
 import { money, moneyInput, parseMoney, shortDate } from '@/lib/util';
 
 const TRAINED_MARKS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 const CLOSE_MARKS = [5, 10, 15, 20, 25, 30];
 
-const LEARNING_HINT: Record<LearningStyle, string> = {
-  range: 'Like “$380 to $460”. You confirm the final price before starting.',
-  estimate: 'One price, marked as an estimate. You confirm the final price before starting.',
-  firm: 'The price it works out, as a firm quote, even while it’s learning. One it isn’t sure about still goes out as a range.',
-};
+// Worked out when shown, so the range is in the owner's currency.
+const learningHint = (style: LearningStyle) =>
+  ({
+    range: `Like “${money(38000)} to ${money(46000)}”. You confirm the final price before starting.`,
+    estimate: 'One price, marked as an estimate. You confirm the final price before starting.',
+    firm: 'The price it works out, as a firm quote, even while it’s learning. One it isn’t sure about still goes out as a range.',
+  })[style];
 
 /** What holds a quote for the owner whatever the settings say, as the API's checks have it. */
 const CHECKS_WITH_YOU = [
@@ -216,7 +220,7 @@ export default function SettingsPage() {
               <Field
                 label="Before then, customers get"
                 htmlFor="settings-learning"
-                hint={LEARNING_HINT[charm.learningStyle]}
+                hint={learningHint(charm.learningStyle)}
               >
                 <div id="settings-learning">
                   <Segmented<LearningStyle>
@@ -402,6 +406,7 @@ function BillingDetails({
   go: (request: () => Promise<{ url: string }>) => void;
 }) {
   const notify = useToast();
+  const { me, reload } = useOwner();
   const [picking, setPicking] = useState(!billing.plan);
   const [busy, setBusy] = useState<Plan | null>(null);
   const paying = billing.status === 'active' || billing.status === 'trialing';
@@ -528,6 +533,42 @@ function BillingDetails({
           />
         </Field>
       )}
+
+      <Field
+        label="Currency"
+        htmlFor="settings-currency"
+        hint={
+          billing.currencyLocked
+            ? 'It can’t change once a card is on file. Email us if it needs to.'
+            : 'Your quotes and your plan are in it.'
+        }
+      >
+        <SelectInput
+          id="settings-currency"
+          className="max-w-xs"
+          value={me.business.currency ?? 'USD'}
+          disabled={billing.currencyLocked}
+          onChange={(event) => {
+            const currency = event.target.value as Currency;
+            saveCurrency(currency)
+              .then(() => loadBilling())
+              .then((loaded) => {
+                onChange(loaded);
+                setCap(moneyInput(loaded.spendingCapCents));
+                // The owner app reads the currency from the business, so every amount follows.
+                reload();
+                notify(`Saved. Your quotes and plan are in ${currency} now.`);
+              })
+              .catch((saveError) => notify(errorMessage(saveError)));
+          }}
+        >
+          {CURRENCIES.map((item) => (
+            <option key={item.code} value={item.code}>
+              {item.name} ({currencySymbol(item.code)})
+            </option>
+          ))}
+        </SelectInput>
+      </Field>
 
       <Field
         label="Monthly spending limit"

@@ -11,6 +11,7 @@ import {
 } from 'react';
 import Link from 'next/link';
 import { Check } from 'lucide-react';
+import { currencySymbol } from '@/lib/currency';
 import { cx } from '@/lib/util';
 import { buttonClass, type Size, type Variant } from './button-class';
 
@@ -113,15 +114,18 @@ export function MoneyInput({
   value: string;
   onChange: (value: string) => void;
 }) {
+  // "R$" and "Ksh" take more room than "$". The input is monospace, so each letter is 1ch.
+  const symbol = currencySymbol();
   return (
     <div className={cx('relative min-w-0', className)}>
       <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 font-mono text-muted">
-        $
+        {symbol}
       </span>
       <input
         inputMode="decimal"
         autoComplete="off"
-        className={cx(control, 'tabular h-12 pr-3.5 pl-7 font-mono text-base')}
+        className={cx(control, 'tabular h-12 pr-3.5 font-mono text-base')}
+        style={{ paddingLeft: `calc(1.75rem + ${symbol.length - 1}ch)` }}
         value={value}
         onChange={(event) => onChange(event.target.value.replace(/[^\d.,]/g, ''))}
         {...props}

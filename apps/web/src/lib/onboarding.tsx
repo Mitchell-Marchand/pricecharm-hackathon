@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError, errorMessage, json } from './api';
+import { guessCurrency, setCurrency, type Currency } from './currency';
 import { useHumanCheck } from './human-check';
 
 export type Step = 'business' | 'jobs' | 'practice' | 'ready' | 'account' | 'try' | 'live';
@@ -24,6 +25,8 @@ export interface BusinessDraft {
   customServices: string[];
   name: string;
   area: string;
+  /** What their quotes and their plan are in. An older API leaves it out, for dollars. */
+  currency?: Currency;
   radius: string;
 }
 
@@ -74,7 +77,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       try {
         starting ??= humanHeaders()
           .then((headers) =>
-            api<Onboarding>('/onboarding/start', { method: 'POST', headers, ...json({}) }),
+            // A first guess at their currency, from where the browser is. They can change it.
+            api<Onboarding>('/onboarding/start', {
+              method: 'POST',
+              headers,
+              ...json({ currency: guessCurrency() }),
+            }),
           )
           .finally(() => {
             starting = null;
@@ -153,6 +161,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
 
+  // Every amount in setup is in the business's currency.
+  if (state) setCurrency(state.business.currency);
   const value = useMemo(
     () => ({ state, loadError, save, reload: load, updateBusiness, goTo, flush }),
     [state, loadError, save, load, updateBusiness, goTo, flush],
