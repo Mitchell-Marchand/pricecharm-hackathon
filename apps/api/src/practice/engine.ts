@@ -63,8 +63,12 @@ export async function ensurePracticeRuns(businessId: string, count = PRACTICE_CO
     ]);
 }
 
-/** Practice customers one business can have in all, setup's included. */
-export const MAX_PRACTICE_RUNS = { draft: 8, active: 50 };
+/**
+ * Practice customers one business can have in all, setup's included. Setup trains on practice
+ * alone now, and about 12 customers is where the benchmark's prices settle, so a setup can go a
+ * little past that before signing up.
+ */
+export const MAX_PRACTICE_RUNS = { draft: 15, active: 50 };
 
 /**
  * Another practice customer once setup's are done, for training whenever the owner likes,
@@ -128,9 +132,13 @@ async function nextSituation(
     "SELECT scenario_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
     [businessId, position],
   );
+  const [past] = await rows('SELECT COUNT(*) AS count FROM past_jobs WHERE business_id=?', [
+    businessId,
+  ]);
   return planSituation({
     position,
     setupCount: PRACTICE_COUNT,
+    pastJobs: Number(past.count),
     services,
     examples: Object.fromEntries(
       services.map((service) => [service.toLowerCase(), examplesFor(data.history, service)]),

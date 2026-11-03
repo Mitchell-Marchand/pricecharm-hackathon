@@ -212,6 +212,22 @@ test('after setup, practice goes to a service never priced, then everyday custom
   };
   assert.equal(planSituation({ ...base, position: 1 }), SITUATIONS[1], 'Setup keeps its mix');
   assert.match(planSituation(base), /"House wash" service.*haven't priced/);
+
+  // With no past jobs, setup walks through how they price: a usual job, the small end, a big one
+  // with an extra, each other service, the two together, rough shape, then timing.
+  const fresh = { ...base, pastJobs: 0, examples: {} };
+  const plan = [0, 1, 2, 3, 4, 5, 6].map((position) => planSituation({ ...fresh, position }));
+  assert.match(plan[0], /usual job for their "Driveways".*Clear/);
+  assert.match(plan[1], /small "Driveways" job/);
+  assert.match(plan[2], /big "Driveways" job.*extra/);
+  assert.match(plan[3], /usual job for their "House wash"/);
+  assert.match(plan[4], /"Driveways" and "House wash".*together/);
+  assert.match(plan[5], /rough shape.*harder to reach/);
+  assert.match(plan[6], /timing matters/);
+  assert.match(
+    planSituation({ ...fresh, position: 7, examples: { driveways: 2 } }),
+    /"House wash" service.*haven't priced/,
+  );
   const covered = { ...base, examples: { driveways: 2, 'house wash': 1 } };
   // Each draw below 0.3 says yes: the other service, an extra or two, bad shape, and so on.
   const draws =
