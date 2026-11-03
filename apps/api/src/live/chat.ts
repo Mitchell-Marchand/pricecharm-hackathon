@@ -60,8 +60,8 @@ import {
   readPhotos,
 } from './photo-readings.js';
 import { currencyOf, money as formatMoney } from '../money.js';
+import { businessLocations } from '../locations.js';
 import {
-  businessLocations,
   customerLine,
   intakeTurnDowns,
   leadDays,
@@ -166,6 +166,8 @@ export async function publicProfile(business: Row) {
     taking: Boolean(business.link_on),
     /** Takes walk-around videos, which need Meta's models to watch and measure. */
     videos: aiProvider === 'meta' || aiMode === 'demo',
+    /** The contact form at a yes, a visit or a question asks for the job's street address. */
+    asksAddress: asksAddress(business),
   };
 }
 
@@ -180,12 +182,16 @@ export async function addMessage(
     photoIds?: string[];
     videoId?: string;
     chips?: string[];
-    /** A reply to a line added a moment before, stamped a millisecond later so it sorts after. */
-    reply?: boolean;
+    /**
+     * A reply to a line added a moment before, stamped a millisecond later so it sorts after. A
+     * number is how many lines after, for a second one in the same moment.
+     */
+    reply?: boolean | number;
   },
 ) {
+  const after = Math.min(5, Number(input.reply ?? 0)) * 1000;
   await mutate(
-    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${input.reply ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
+    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${after ? `DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${after} MICROSECOND)` : 'UTC_TIMESTAMP(3)'})`,
     [
       randomUUID(),
       input.businessId,
@@ -706,8 +712,22 @@ const emailSchema = z
   .max(254)
   .transform((value) => value.trim().toLowerCase());
 
-export type ContactInput = { name: string; email?: string; phone?: string };
-type Contact = { name: string; email: string | null; phone: string | null };
+export type ContactInput = { name: string; email?: string; phone?: string; address?: string };
+type Contact = { name: string; email: string | null; phone: string | null; address: string | null };
+
+/**
+ * The job's street address as the customer typed it, on one line. It's for the owner alone: it
+ * never goes to the AI, into a URL or a log, and it's deleted with the chat.
+ */
+export function cleanAddress(text: string): string | null {
+  const address = text
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (address.length > 200)
+    throw new ApiError(422, 'ADDRESS_LONG', 'Keep the address to 200 characters or fewer.');
+  return address || null;
+}
 
 /**
  * A customer's name and a way to reach them: an email, a phone number, or both. Nothing is sent
@@ -737,7 +757,12 @@ export function parseContact(input: ContactInput): Contact {
       'CONTACT_REQUIRED',
       'Add a phone number or an email so they can reach you.',
     );
-  return { name: input.name.trim(), email: email?.data ?? null, phone: typedPhone || null };
+  return {
+    name: input.name.trim(),
+    email: email?.data ?? null,
+    phone: typedPhone || null,
+    address: cleanAddress(input.address ?? ''),
+  };
 }
 
 /** A way to reach the customer: an email, a phone number, or the WhatsApp chat they wrote from. */
@@ -771,10 +796,15 @@ function cardName(name: string) {
   return parts.length > 1 ? `${parts[0]} ${parts.at(-1)?.[0]}.` : name.trim();
 }
 
-async function saveContact(connection: Sql, chatId: string, contact: Contact) {
+/** The contact form asks for the job's street address. On unless the owner turned it off. */
+export const asksAddress = (business: Row) => Boolean(business.ask_job_address ?? true);
+
+/** Saves who the customer is. The job's address only when the owner asks for it. */
+async function saveContact(connection: Sql, business: Row, chatId: string, contact: Contact) {
+  const address = asksAddress(business) ? contact.address : null;
   await mutate(
-    'UPDATE lead_chats SET customer_name=?,customer_email=COALESCE(?,customer_email),customer_phone=COALESCE(?,customer_phone) WHERE id=?',
-    [contact.name, contact.email, contact.phone, chatId],
+    'UPDATE lead_chats SET customer_name=?,customer_email=COALESCE(?,customer_email),customer_phone=COALESCE(?,customer_phone),job_address=COALESCE(?,job_address) WHERE id=?',
+    [contact.name, contact.email, contact.phone, address, chatId],
     connection,
   );
   // The quote card says who it's for, once they've said.
@@ -808,16 +838,16 @@ export async function leaveContact(
       businessId = String(business.id);
     const quote = await liveQuoteFor(chatId, connection);
     if (locked.status === 'chatting') {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       return false;
     }
     if (locked.status === 'contact' && !quote) {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       await mutate("UPDATE lead_chats SET status='quoting' WHERE id=?", [chatId], connection);
       return true;
     }
     if (locked.status === 'contact' && quote?.status === 'review') {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       await mutate("UPDATE lead_chats SET status='review' WHERE id=?", [chatId], connection);
       const owner = (await contactName(business, connection)) || String(business.name);
       await addMessage(connection, {
@@ -835,7 +865,7 @@ export async function leaveContact(
     if (quote && ANSWERABLE.includes(String(quote.status))) {
       if (purpose === 'copy' && !contact.email)
         throw new ApiError(422, 'EMAIL_REQUIRED', 'Add your email so we can send it.');
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       if (purpose === 'copy')
         await addMessage(connection, {
           businessId,
@@ -1354,7 +1384,8 @@ async function notifyCustomerQuote(
   );
 }
 
-type OwnerEvent = 'review' | 'sent' | 'lead' | 'accepted' | 'visit' | 'message' | 'lost';
+type OwnerEvent =
+  'review' | 'sent' | 'lead' | 'accepted' | 'visit' | 'message' | 'lost' | 'address';
 
 /**
  * Owners hear about every request that needs them and every customer who leaves a way to reach
@@ -1372,7 +1403,7 @@ export async function notifyOwner(
     connection,
   );
   const [chat] = await rows(
-    'SELECT customer_name,customer_email,customer_phone,service_name FROM lead_chats WHERE id=?',
+    'SELECT customer_name,customer_email,customer_phone,job_address,service_name FROM lead_chats WHERE id=?',
     [chatId],
     connection,
   );
@@ -1396,6 +1427,7 @@ export async function notifyOwner(
   const reach = [
     chat.customer_phone ? `Phone: ${chat.customer_phone}` : '',
     chat.customer_email ? `Email: ${chat.customer_email}` : '',
+    chat.job_address ? `Job address: ${chat.job_address}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -1425,6 +1457,10 @@ export async function notifyOwner(
     visit: {
       subject: `${first} would like a site visit`,
       text: `${first} would like you to see the job before going ahead.${details}\n\n${link}`,
+    },
+    address: {
+      subject: `${first} sent the job address`,
+      text: `${first} sent the address for the job.${details}\n\n${link}`,
     },
     message: {
       subject: `${first} sent you a message`,
@@ -1490,7 +1526,7 @@ export async function decide(
     if (!quote || !ANSWERABLE.includes(String(quote.status)))
       throw new ApiError(409, 'QUOTE_NOT_OPEN', 'This quote can’t be changed now.');
     if (decision !== 'decline') {
-      if (contact) await saveContact(connection, String(chat.id), contact);
+      if (contact) await saveContact(connection, business, String(chat.id), contact);
       else if (!hasContact(chat))
         throw new ApiError(
           422,
@@ -1573,6 +1609,28 @@ export async function decide(
             ? await visitMessage(business, undefined, owner)
             : `Thanks for letting ${owner} know.`,
     });
+    // WhatsApp has no form, so the address is asked for in the chat once they've said yes. Their
+    // next message that reads like one is kept as the address (takeAddress).
+    if (
+      decision !== 'decline' &&
+      chat.channel_account_id &&
+      asksAddress(business) &&
+      !chat.job_address
+    ) {
+      await addMessage(connection, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        sender: 'assistant',
+        kind: 'status',
+        text: `What’s the street address for the job? ${owner} needs it to come out.`,
+        reply: 2,
+      });
+      await mutate(
+        'UPDATE lead_chats SET address_asked_at=UTC_TIMESTAMP(3) WHERE id=?',
+        [chat.id],
+        connection,
+      );
+    }
     if (chat.source !== 'test')
       await notifyOwner(
         String(business.id),
@@ -1581,6 +1639,49 @@ export async function decide(
         connection,
       );
   });
+}
+
+/** Seven or more characters with a number in them, not a question: how a street address reads. */
+export const looksLikeAddress = (text: string) =>
+  /\d/.test(text) && /[a-z]/i.test(text) && !text.trim().endsWith('?') && text.trim().length >= 7;
+
+/**
+ * A WhatsApp customer's answer when asked for the job's address after their yes. It's kept for
+ * the owner, out of the chat's messages, so nothing the AI reads later holds it.
+ */
+export async function takeAddress(chatId: string, text: string, { quiet = false } = {}) {
+  const address = cleanAddress(text.slice(0, 200));
+  if (!address) return false;
+  const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
+  const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
+  if (!asksAddress(business)) return false;
+  // Shared before the yes, as a pin, it's only kept. Nobody asked for it yet.
+  if (quiet) {
+    await mutate('UPDATE lead_chats SET job_address=? WHERE id=?', [address, chatId]);
+    return true;
+  }
+  const owner = await contactAt(business);
+  await transaction(async (connection) => {
+    await mutate('UPDATE lead_chats SET job_address=? WHERE id=?', [address, chatId], connection);
+    await addMessage(connection, {
+      businessId: String(business.id),
+      chatId,
+      sender: 'customer',
+      kind: 'status',
+      text: 'Sent the job address.',
+    });
+    await addMessage(connection, {
+      businessId: String(business.id),
+      chatId,
+      sender: 'assistant',
+      kind: 'status',
+      text: `Thanks, ${owner} has it now.`,
+      reply: true,
+    });
+    if (chat.source !== 'test')
+      await notifyOwner(String(business.id), chatId, 'address', connection);
+  });
+  return true;
 }
 
 export async function chatPhoto(req: Request) {

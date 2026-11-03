@@ -19,9 +19,11 @@ import {
   chatEmailLink,
   continueChat,
   decide,
+  looksLikeAddress,
   MAX_MESSAGES,
   notifyOwner,
   startChat,
+  takeAddress,
   type Asker,
 } from '../live/chat.js';
 import { recordLiveDelivery } from '../live/billing.js';
@@ -298,8 +300,22 @@ async function take(
   try {
     switch (message.kind) {
       case 'text':
-      case 'location':
+        // Asked for the job's address after their yes, an answer that reads like one is kept as
+        // it, for the owner, and stays out of the chat.
+        if (chat.address_asked_at && !chat.job_address && looksLikeAddress(message.text))
+          return (await takeAddress(chatId, message.text)) ? null : await says(message.text);
         return message.text.trim() ? await says(message.text.trim().slice(0, 2000)) : null;
+      case 'location': {
+        // A pin is a street address, which is the owner's alone and never goes to the AI. The
+        // chat only learns that one was shared, so it still asks for the area if it needs it.
+        const place = message.text.replace(/^my location:\s*/i, '');
+        if (chat.address_asked_at && !chat.job_address) {
+          await takeAddress(chatId, place);
+          return null;
+        }
+        if (!chat.job_address) await takeAddress(chatId, place, { quiet: true });
+        return await says('Shared a location pin.');
+      }
       case 'choice':
         return await chose(line, business, chat, message, owner, says);
       case 'photo': {

@@ -10,7 +10,7 @@ import { compareDraft, AGREE_PERCENT } from './pricing/accuracy.js';
 import { draftForBusiness } from './pricing/draft.js';
 import { businessContext, type HistoryOptions } from './pricing/history.js';
 import { median } from './pricing/rates.js';
-import { describeSpec, specFromScenario, type JobSpec } from './pricing/spec.js';
+import { describeSpec, pooledLocation, specFromScenario, type JobSpec } from './pricing/spec.js';
 import {
   quoteTotal,
   type DraftedQuote,
@@ -88,6 +88,12 @@ async function photos(businessId: string, conversationId: string): Promise<AiIma
   return images;
 }
 
+/** Replays can be pooled across businesses, so where the job was goes no finer than a ZIP's start. */
+function pooledSpec(spec: JobSpec | null): JobSpec | null {
+  if (!spec?.location) return spec;
+  return { ...spec, location: pooledLocation(spec.location) };
+}
+
 /** Quotes the owner checked before they went to a real customer, newest first. */
 export async function liveCases(businessId: string, limit: number): Promise<ReplayCase[]> {
   const quotes = await rows(
@@ -115,7 +121,7 @@ export async function liveCases(businessId: string, limit: number): Promise<Repl
         from: message.sender === 'customer' ? ('customer' as const) : ('owner' as const),
         text: String(message.text),
       })),
-      spec: json<JobSpec | null>(quote.spec_json, null),
+      spec: pooledSpec(json<JobSpec | null>(quote.spec_json, null)),
       images: await photos(businessId, String(quote.chat_id)),
       history: { excludeQuoteId: String(quote.id), before },
     });

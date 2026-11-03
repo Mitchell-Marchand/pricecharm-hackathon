@@ -129,7 +129,7 @@ ownerQuotesRouter.get('/app/quotes', async (req, res) => {
 
 async function quoteDetail(businessId: string, quoteId: string) {
   const [quote] = await rows(
-    `SELECT q.*,c.customer_name,c.customer_email,c.customer_phone,c.service_name,c.source,c.summary,c.spec_json,c.id AS chat_id
+    `SELECT q.*,c.customer_name,c.customer_email,c.customer_phone,c.job_address,c.service_name,c.source,c.summary,c.spec_json,c.id AS chat_id
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id WHERE q.id=? AND q.business_id=?`,
     [quoteId, businessId],
   );
@@ -144,6 +144,8 @@ async function quoteDetail(businessId: string, quoteId: string) {
     ...listItem(quote),
     customerEmail: quote.customer_email ? String(quote.customer_email) : null,
     customerPhone: quote.customer_phone ? String(quote.customer_phone) : null,
+    /** The job's street address, when they left it. Only ever shown to the owner. */
+    jobAddress: quote.job_address ? String(quote.job_address) : null,
     summary: String(quote.summary || ''),
     /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
     details: describeSpec(json<JobSpec | null>(quote.spec_json, null)),
