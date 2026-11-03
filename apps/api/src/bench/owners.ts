@@ -878,8 +878,9 @@ export function pastJobs(rng: Rng, owner: SimOwner, count: number): SimJob[] {
     if (owner.rules.recurring) job.frequency = owner.rules.usually ?? ONE_TIME;
     return job;
   });
+  // Fewer than three, as with --past 0, keeps the draws the same so other runs still compare.
   return [
-    ...first,
+    ...first.slice(0, count),
     ...Array.from({ length: Math.max(0, count - 3) }, () => drawJob(rng, owner, 'any')),
   ];
 }

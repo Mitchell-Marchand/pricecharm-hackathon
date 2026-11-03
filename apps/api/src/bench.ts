@@ -73,7 +73,8 @@ import { accuracy, closer, share } from './proof.js';
  * practice adds.
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
- *     [--past 10] [--practice original] [--concurrency 4] [--json <file>] [--formula-only]
+ *     [--past 10] [--practice original] [--practice-count 6] [--concurrency 4] [--json <file>]
+ *     [--formula-only]
  *     [--replay <file>] [--fill] [--compare <file>] [--trades classic|wide|<id,id...>]
  *
  * The sealed test set is seeds 9001–9100 and the held-out trades (painting, pest control and pool
@@ -159,6 +160,20 @@ PLANS.usual = [
   ...PLANS.experiments,
   ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
 ];
+// Setup for an owner with no past jobs, as newOwnerSituations in src/practice/plan.ts has it: a
+// usual job, the small end, a big one with an extra, the other service, rough shape, a hard reach,
+// a regular schedule, then everyday customers. Run it with --past 0, and --practice-count to
+// stop after that many customers, so runs at 3, 6, 9, 12 and 15 show how far practice alone goes.
+PLANS.newowner = [
+  { shape: 'plain', extra: 0 },
+  { shape: 'small' },
+  { shape: 'bigger', extra: 1 },
+  { shape: 'other' },
+  { shape: 'heavy' },
+  { shape: 'tall' },
+  { shape: 'plain', aim: 'schedule' },
+  ...Array.from({ length: 8 }, () => ({ shape: 'any' as const })),
+];
 const PLAN = 'experiments';
 /**
  * The most questions a --chat run's customer chat asks before the job is priced anyway. A live
@@ -184,6 +199,11 @@ function fileOption(name: string) {
 
 const number = (name: string, fallback: number, max: number) =>
   Math.min(Math.max(Math.round(Number(option(name) ?? fallback)) || fallback, 1), max);
+/** Like number, but 0 is a real answer, as in --past 0 for an owner with no past jobs. */
+const countOption = (name: string, fallback: number, max: number) => {
+  const given = Number(option(name) ?? fallback);
+  return Number.isFinite(given) ? Math.min(Math.max(Math.round(given), 0), max) : fallback;
+};
 
 /**
  * Saves the owner as a business with its past jobs and finished practice customers, the rows the
@@ -646,11 +666,18 @@ async function main() {
       '--curve compares the Charm’s usual drafts, so it can’t run with --formula-only.',
     );
   const messy = process.argv.includes('--messy');
-  const past = number('past', 10, 50);
+  const past = countOption('past', 10, 50);
   const planName = option('practice') ?? PLAN;
-  const plan = PLANS[planName];
-  if (!plan)
+  const fullPlan = PLANS[planName];
+  if (!fullPlan)
     throw new Error(`No practice plan called ${planName}. Try ${Object.keys(PLANS).join(' or ')}.`);
+  // Fewer customers than the plan has, or more: everyday ones fill in past its end.
+  const practiceCount = countOption('practice-count', fullPlan.length, 40);
+  const plan = Array.from(
+    { length: practiceCount },
+    (_, index) => fullPlan[index] ?? { shape: 'any' as const },
+  );
+  if (!past && !plan.length) throw new Error('With --past 0 an owner needs some practice.');
   const tokens = { input: 0, output: 0, calls: 0 };
   /** Each kind of model call: how many were answered, their tokens, and why any failed. */
   const calls: Record<
