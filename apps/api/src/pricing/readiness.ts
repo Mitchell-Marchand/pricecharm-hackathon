@@ -277,7 +277,8 @@ async function comparisons(businessId: string, closePercent: number): Promise<Co
       return shadow?.decision === 'quote' && shadow.lines.length
         ? [{ service, agree: false, at }]
         : [];
-    if (!shadow || !quote) return [];
+    // A guess it held back, before it had a formula, wasn't a guess to hold it to.
+    if (!shadow || !quote || shadow.withheld) return [];
     return [{ service, agree: compareDraft(shadow, quoteTotal(quote), closePercent).agree, at }];
   });
   const live = (await liveRecord(businessId, closePercent)).map((item) => ({

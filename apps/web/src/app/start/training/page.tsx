@@ -47,7 +47,8 @@ export default function TrainingStep() {
           </li>
           <li className="flex gap-3">
             <TrendingUp className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
-            Before you send, your Charm guesses the price, so you can watch it learn.
+            After your first three, your Charm guesses your price before you send, so you can watch
+            it learn.
           </li>
           <li className="flex gap-3">
             <Receipt className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />

@@ -219,7 +219,9 @@ export async function buildLibraryEntry(
   for (const overlay of reading.overlays)
     drawn.push({ label: overlay.label, key: overlay.storageKey });
   const reconciled = reconcileScenario(scenario, reading);
-  for (const change of reconciled.changes) log(`  Squared with the photos: ${change}.`);
+  // The customer's facts stay as written. A photo that disagrees is for whoever checks the
+  // library to look at, and make again with --replace if it's off.
+  for (const change of reconciled.changes) log(`  Photos disagree, check them: ${change}.`);
   const photos: LibraryPhotos = {
     opener: opener.map(({ scene, key }) => ({ scene, key })),
     extra: { scene: scenario.extraPhoto.scene, key: extra.key },

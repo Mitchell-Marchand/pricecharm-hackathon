@@ -84,7 +84,18 @@ export interface PracticeRun {
   quote: Quote | null;
   siteVisitReason: string | null;
   /** The AI's private guess. Shown only after the owner answers. */
-  shadow: { cents: number; siteVisit: boolean; reason: string; confidence: string } | null;
+  shadow: {
+    cents: number;
+    siteVisit: boolean;
+    reason: string;
+    confidence: string;
+    /**
+     * Why it didn't guess: too few priced customers yet (`toGo` more before this one), a service
+     * it hadn't seen priced, or a formula still being worked out. Missing from older APIs.
+     */
+    withheld?: 'learning' | 'service' | 'working' | null;
+    toGo?: number | null;
+  } | null;
   insights: { id: string; text: string }[];
   /**
    * Other businesses' combined rate for this service, when the owner charged clearly less than

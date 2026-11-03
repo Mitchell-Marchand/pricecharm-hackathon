@@ -34,6 +34,22 @@ test(
         name: 'Moss & Stone Exterior Care',
       })
       .expect(200);
+    // Three past jobs, so the Charm guesses from the first customer: it waits for three prices.
+    for (const [size, priceCents] of [
+      [500, 20000],
+      [800, 28000],
+      [1200, 38000],
+    ])
+      await owner
+        .post('/api/v1/onboarding/jobs')
+        .set('Origin', origin)
+        .send({
+          serviceName: 'Driveways',
+          description: 'Driveway wash.',
+          priceCents,
+          size: `${size} sq ft`,
+        })
+        .expect(201);
     await owner.post('/api/v1/onboarding/practice/prepare').set('Origin', origin).expect(200);
     async function ready(position: number) {
       for (let attempt = 0; attempt < 80; attempt++) {

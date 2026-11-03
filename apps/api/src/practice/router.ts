@@ -144,7 +144,8 @@ practiceRouter.post(
     const { businessId } = workspace(req);
     const run = await sendPracticeQuote(businessId, runId.parse(req.params.id), req.body);
     const ownerCents = run.quote ? quoteTotal(run.quote) : 0;
-    const guess = run.shadow && !run.shadow.siteVisit ? run.shadow.cents : null;
+    const guess =
+      run.shadow && !run.shadow.siteVisit && !run.shadow.withheld ? run.shadow.cents : null;
     // How close the Charm's own guess came to the owner's price: the moment it clicks, or doesn't.
     await recordRequestEvent(
       req,

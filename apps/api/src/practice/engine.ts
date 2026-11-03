@@ -24,16 +24,23 @@ import {
   type StoredReading,
 } from './photos.js';
 import { reportError } from '../error-reporting.js';
+import { recordEvent } from '../metrics.js';
 import { ApiError } from '../http.js';
 import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
 import { AGREE_PERCENT, closePercentFor } from '../pricing/accuracy.js';
 import { draftForBusiness } from '../pricing/draft.js';
-import { refreshFormula } from '../pricing/formula-draft.js';
-import { businessContext, examplesFor, loadPricingData } from '../pricing/history.js';
+import { currentFormula, formulaExamples, refreshFormula } from '../pricing/formula-draft.js';
+import {
+  businessContext,
+  examplesFor,
+  loadPricingData,
+  type PricingData,
+} from '../pricing/history.js';
 import { marketPricesEnabled, marketRate } from '../pricing/market.js';
 import { chargesLine } from '../pricing/rates.js';
 import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
+import { knownSpec, saidSpec } from './known.js';
 import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
@@ -126,11 +133,12 @@ export async function addPracticeRun(
   return transaction(async (connection) => {
     await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [businessId], connection);
     const runs = await rows(
-      'SELECT id,position,status FROM practice_runs WHERE business_id=? ORDER BY position',
+      'SELECT id,position,status,outcome FROM practice_runs WHERE business_id=? ORDER BY position',
       [businessId],
       connection,
     );
-    const open = runs.find((run) => run.status !== 'finished');
+    // One the owner has answered is finishing in the background, not waiting on them.
+    const open = runs.find((run) => run.status !== 'finished' && !run.outcome);
     if (open) return String(open.id);
     if (runs.length >= (draft ? MAX_PRACTICE_RUNS.draft : MAX_PRACTICE_RUNS.active))
       throw new ApiError(
@@ -508,10 +516,12 @@ async function addMessage(
   kind: 'text' | 'quote' | 'site_visit' | 'declined',
   text: string,
   photoIds: string[] = [],
+  /** Saved in the same moment as the message before it, and sorted after it. */
+  after = false,
 ) {
   const id = randomUUID();
   await mutate(
-    'INSERT INTO practice_messages (id,business_id,run_id,sender,kind,text,photo_ids_json,created_at) VALUES (?,?,?,?,?,?,?,UTC_TIMESTAMP(3))',
+    `INSERT INTO practice_messages (id,business_id,run_id,sender,kind,text,photo_ids_json,created_at) VALUES (?,?,?,?,?,?,?,${after ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
     [id, businessId, runId, sender, kind, text, JSON.stringify(photoIds)],
     connection,
   );
@@ -606,6 +616,8 @@ function runView(run: Row, messages: Row[], known?: TurnDownView) {
           siteVisit: shadow.decision === 'site_visit',
           reason: shadow.reason,
           confidence: shadow.confidence,
+          withheld: shadow.withheld ?? null,
+          toGo: shadow.toGo ?? null,
         }
       : null,
     insights: json<(Insight & { edited?: boolean })[]>(run.insights_json, []).map(
@@ -673,6 +685,7 @@ export async function practiceState(businessId: string) {
     `SELECT ${RUN_COLUMNS} FROM practice_runs WHERE business_id=? ORDER BY position`,
     [businessId],
   );
+  await resumeFinishing(businessId, runs);
   const messages = await rows(
     'SELECT * FROM practice_messages WHERE business_id=? ORDER BY created_at,id',
     [businessId],
@@ -868,16 +881,82 @@ async function runImages(businessId: string, runId: string, messages: Row[]): Pr
  * The AI's private guess for this request, made from everything except the owner's answer to it.
  * It's computed before the owner's quote is saved, and kept once made.
  */
-export async function computeShadow(businessId: string, runId: string): Promise<Shadow> {
+/** Priced customers before the Charm guesses: what its formula needs to be worked out. */
+export const FIRST_GUESS_AFTER = 3;
+/** How long a guess waits for the formula that was being worked out from the latest quote. */
+const FORMULA_WAIT_MS = 90_000;
+/** One guess per customer at a time, however many requests ask for it. */
+const guessing = new Map<string, Promise<Shadow>>();
+
+/**
+ * The Charm's own price for a practice job, before it sees the owner's. Asked for as the owner
+ * opens the quote form and again as their quote goes in, it's worked out once: a second request
+ * waits on the first instead of paying for another.
+ */
+export function computeShadow(businessId: string, runId: string): Promise<Shadow> {
+  let pending = guessing.get(runId);
+  if (!pending) {
+    pending = guessFor(businessId, runId).finally(() => guessing.delete(runId));
+    guessing.set(runId, pending);
+  }
+  return pending;
+}
+
+/** A practice job's price the Charm doesn't give yet, and why. */
+const withheld = (why: NonNullable<Shadow['withheld']>, toGo = 0): Shadow => ({
+  decision: 'quote',
+  reason: '',
+  lines: [],
+  discount: null,
+  start: '',
+  duration: '',
+  confidence: 'low',
+  reasoning: '',
+  cents: 0,
+  withheld: why,
+  ...(toGo ? { toGo } : {}),
+});
+
+/**
+ * Whether the owner's formula has been worked out from every priced customer so far. Right after
+ * a quote it's being worked out again, so this waits for it, a little.
+ */
+async function formulaReady(businessId: string, data: PricingData, examples: number) {
+  const until = Date.now() + FORMULA_WAIT_MS;
+  for (;;) {
+    const learned = await currentFormula(businessId, data);
+    if (learned && (learned.totals?.length ?? 0) >= examples) return true;
+    if (Date.now() > until) return false;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
+async function guessFor(businessId: string, runId: string): Promise<Shadow> {
   const run = await loadRun(businessId, runId);
   const existing = json<Shadow | null>(run.shadow_json, null);
   if (existing) return existing;
-  if (run.outcome)
+  if (run.status === 'finished')
     throw new ApiError(409, 'PRACTICE_CLOSED', 'This practice request is already done.');
   const all = await runMessages(runId);
-  assertIdle(run, all);
+  if (!run.outcome) assertIdle(run, all);
+  // No guess until it comes from what this owner taught: a formula worked out from enough of
+  // their own quotes. A stranger's guess on the first customers says nothing about them.
+  const taught = await loadPricingData(businessId, { excludeRunId: runId });
+  const examples = formulaExamples(taught.history).length;
+  if (examples < FIRST_GUESS_AFTER) {
+    const shadow = withheld('learning', FIRST_GUESS_AFTER - examples);
+    await keepShadow(runId, shadow);
+    return shadow;
+  }
+  if (aiMode !== 'demo' && !(await formulaReady(businessId, taught, examples)))
+    return withheld('working');
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-  const messages = all.filter((message) => message.kind === 'text');
+  // Only the chat up to the owner's answer: it can be guessed after their quote goes in, but never
+  // from it or from what the customer said back.
+  const answered = all.findIndex((message) => message.kind !== 'text');
+  const messages = (answered === -1 ? all : all.slice(0, answered)).filter(
+    (message) => message.kind === 'text',
+  );
   const readingAt = JSON.stringify(run.photo_reading_json ?? null);
   // Demo customers keep their fixed pattern, which knows each one's size and add-ons.
   const demo = async () => {
@@ -912,7 +991,9 @@ export async function computeShadow(businessId: string, runId: string): Promise<
         from: message.sender as 'customer' | 'owner',
         text: String(message.text),
       })),
-      spec: specFromScenario(scenario),
+      // Only the size the customer said. What the photos show comes from the Charm's reading of
+      // them, as a live customer's does, never from what the pretend customer knows.
+      spec: saidSpec(scenario, json<string[]>(run.asked_json, [])),
       // What it saw in the photos, with the owner's fixes: the same notes the card shows.
       media: practicePhotoNotes(run),
       images: aiMode === 'demo' ? [] : await runImages(businessId, runId, messages),
@@ -920,10 +1001,20 @@ export async function computeShadow(businessId: string, runId: string): Promise<
       demo: aiMode === 'demo' ? await demo() : undefined,
     }),
   );
-  const shadow: Shadow = { ...drafted, cents: quoteTotal(drafted), engine };
+  // Not priced by the formula, like a service it hasn't seen priced: the AI's own guess is a
+  // stranger's, so it isn't given.
+  const shadow: Shadow =
+    aiMode !== 'demo' && !engine?.formula
+      ? withheld('service')
+      : { ...drafted, cents: quoteTotal(drafted), engine };
   // A fix to the reading while this was drafting makes it again next time, from the fix.
   const [now] = await rows('SELECT photo_reading_json FROM practice_runs WHERE id=?', [runId]);
   if (JSON.stringify(now?.photo_reading_json ?? null) !== readingAt) return shadow;
+  return keepShadow(runId, shadow);
+}
+
+/** Saves a guess unless one is already saved, and gives back the one that's kept. */
+async function keepShadow(runId: string, shadow: Shadow): Promise<Shadow> {
   await mutate('UPDATE practice_runs SET shadow_json=? WHERE id=? AND shadow_json IS NULL', [
     JSON.stringify(shadow),
     runId,
@@ -961,9 +1052,9 @@ async function insightsFor(
     const quote = outcome.quote;
     if (!labels.length) items.push('Quotes straight from the photos when a job looks clear');
     const main = quote.lines[0];
-    // With a size it's simple division, the same size the rate card reads. The AI only words it
-    // when there's no size to divide by.
-    const spec = specFromScenario(scenario);
+    // With a size it's simple division, the same size the rate card reads: the size the owner
+    // knew. The AI only words it when there's no size to divide by.
+    const spec = knownSpec(scenario, asked);
     // A price at or under the least they've charged for this service is likely their minimum,
     // which says nothing about a rate, so it's said as it is. Other services' minimums can be
     // lower, so they're only used when this service has no other prices.
@@ -1036,8 +1127,9 @@ async function marketBeside(
   context: { tradeId: string | null; trade: string },
   scenario: PracticeScenario,
   quote: QuoteDraft,
+  asked: string[],
 ): Promise<PracticeMarket | null> {
-  const spec = specFromScenario(scenario);
+  const spec = knownSpec(scenario, asked);
   const main = quote.lines[0];
   if (!marketPricesEnabled() || !context.tradeId || !spec.quantity || !spec.unit || !main)
     return null;
@@ -1058,19 +1150,20 @@ async function marketBeside(
     : null;
 }
 
+/** How long finishing a practice customer in the background holds it before it's tried again. */
+const FINISH_SECONDS = 180;
+
+/**
+ * The owner's answer, in at once with the customer's reply. What the Charm would have charged and
+ * what it picked up follow in the background (completeRun), and the card waits for them, so
+ * sending never waits on the guess.
+ */
 async function finishRun(
   businessId: string,
   runId: string,
   outcome: { quote: QuoteDraft } | { siteVisit: string },
 ) {
-  // The AI's private guess only measures how close it gets. If it can't be made, the owner's
-  // answer still goes through, and this run just has no guess.
-  await computeShadow(businessId, runId).catch((error) => {
-    if (error instanceof ApiError && error.code === 'PRACTICE_CLOSED') throw error;
-    reportError(error, { event: 'practice_guess' });
-  });
-  const context = await businessContext(businessId);
-  const scenario = await transaction(async (connection) => {
+  await transaction(async (connection) => {
     const run = await loadRun(businessId, runId, connection, true);
     openRun(run);
     const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
@@ -1107,25 +1200,6 @@ async function finishRun(
         connection,
       );
     }
-    return scenario;
-  });
-  const [run] = await rows('SELECT asked_json FROM practice_runs WHERE id=?', [runId]);
-  const insights = await insightsFor(
-    businessId,
-    runId,
-    scenario,
-    json<string[]>(run.asked_json, []),
-    outcome,
-    context.trade,
-  );
-  const market =
-    'quote' in outcome
-      ? await marketBeside(businessId, context, scenario, outcome.quote).catch((error) => {
-          reportError(error, { event: 'practice_market' });
-          return null;
-        })
-      : null;
-  await transaction(async (connection) => {
     await addMessage(
       connection,
       businessId,
@@ -1133,16 +1207,103 @@ async function finishRun(
       'customer',
       'text',
       'quote' in outcome ? scenario.acceptReply : scenario.siteVisitReply,
+      [],
+      true,
     );
     await mutate(
-      "UPDATE practice_runs SET insights_json=?,market_json=?,status='finished',finished_at=UTC_TIMESTAMP(3) WHERE id=?",
-      [JSON.stringify(insights), market && JSON.stringify(market), runId],
+      `UPDATE practice_runs SET finish_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${FINISH_SECONDS} SECOND) WHERE id=?`,
+      [runId],
       connection,
     );
   });
+  void completeRun(businessId, runId).catch((error) =>
+    reportError(error, { event: 'practice_finish' }),
+  );
+  return viewOf(businessId, runId);
+}
+
+/** One finish per customer at a time in this process. The lease covers other processes. */
+const completing = new Map<string, Promise<void>>();
+
+/**
+ * The rest of a practice customer once the owner has answered: the Charm's guess, what it picked
+ * up, then the customer counts as done. A restart part way through picks it up again.
+ */
+function completeRun(businessId: string, runId: string): Promise<void> {
+  let pending = completing.get(runId);
+  if (!pending) {
+    pending = complete(businessId, runId).finally(() => completing.delete(runId));
+    completing.set(runId, pending);
+  }
+  return pending;
+}
+
+async function complete(businessId: string, runId: string) {
+  // The AI's private guess only measures how close it gets. If it can't be made, the owner's
+  // answer still stands, and this run just has no guess.
+  await computeShadow(businessId, runId).catch((error) => {
+    if (!(error instanceof ApiError && error.code === 'PRACTICE_CLOSED'))
+      reportError(error, { event: 'practice_guess' });
+  });
+  const run = await loadRun(businessId, runId);
+  if (run.status === 'finished' || !run.outcome) return;
+  // How close the Charm's own guess came to the owner's price: the moment it clicks, or doesn't.
+  const guessed = json<Shadow | null>(run.shadow_json, null);
+  const priced = json<Quote | null>(run.quote_json, null);
+  if (priced && guessed) {
+    const ownerCents = quoteTotal(priced);
+    const guess = guessed.withheld || guessed.decision === 'site_visit' ? null : guessed.cents;
+    await recordEvent(
+      undefined,
+      businessId,
+      'practice_guess_compared',
+      {
+        guess_cents: guess,
+        owner_cents: ownerCents,
+        gap_pct: guess === null ? null : gapPercent(guess, ownerCents),
+        withheld: guessed.withheld ?? '',
+        formula: Boolean(guessed.engine?.formula),
+      },
+      { ref: runId, value: ownerCents },
+    ).catch(() => {});
+  }
+  const context = await businessContext(businessId);
+  const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+  const asked = json<string[]>(run.asked_json, []);
+  const quote = json<Quote | null>(run.quote_json, null);
+  const outcome: { quote: Quote } | { siteVisit: string } =
+    run.outcome === 'quote' && quote
+      ? { quote }
+      : { siteVisit: String(run.site_visit_reason ?? '') };
+  const insights = await insightsFor(businessId, runId, scenario, asked, outcome, context.trade);
+  const market =
+    'quote' in outcome
+      ? await marketBeside(businessId, context, scenario, outcome.quote, asked).catch((error) => {
+          reportError(error, { event: 'practice_market' });
+          return null;
+        })
+      : null;
+  await mutate(
+    "UPDATE practice_runs SET insights_json=?,market_json=?,status='finished',finished_at=UTC_TIMESTAMP(3),finish_until=NULL WHERE id=? AND status<>'finished'",
+    [JSON.stringify(insights), market && JSON.stringify(market), runId],
+  );
   refreshFormula(businessId);
   await kickPreparation(businessId);
-  return viewOf(businessId, runId);
+}
+
+/** Customers answered but not done, whose finish stopped, as at a restart: finished again. */
+async function resumeFinishing(businessId: string, runs: Row[]) {
+  for (const run of runs) {
+    if (!run.outcome || run.status === 'finished') continue;
+    if (run.finish_until && new Date(run.finish_until) > new Date()) continue;
+    await mutate(
+      `UPDATE practice_runs SET finish_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${FINISH_SECONDS} SECOND) WHERE id=?`,
+      [run.id],
+    );
+    void completeRun(businessId, String(run.id)).catch((error) =>
+      reportError(error, { event: 'practice_finish' }),
+    );
+  }
 }
 
 export async function sendPracticeQuote(businessId: string, runId: string, body: unknown) {
@@ -1237,7 +1398,7 @@ export async function declinePrefill(businessId: string, runId: string) {
   const run = await loadRun(businessId, runId);
   openRun(run);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-  const spec = specFromScenario(scenario);
+  const spec = knownSpec(scenario, json<string[]>(run.asked_json, []));
   const written = scenario as PracticeScenario & {
     distance?: unknown;
     customer?: { distance?: unknown };

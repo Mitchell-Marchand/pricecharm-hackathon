@@ -115,7 +115,7 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expect(saw).toContainText('[Demo] A concrete patio with a flagstone section');
   await expect(saw).toContainText('Patio, about 500–600 sq ft');
   await expect(saw).toContainText('About 3 planters');
-  await expect(saw).toContainText('Its guess on this job uses what it saw.');
+  await expect(saw).toContainText('This is how it reads a customer’s photos.');
   await expectNoSideways(page);
 
   // The photos open full screen, zoom with a pinch and swipe to the next one.
@@ -162,7 +162,7 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await saw.getByRole('button', { name: 'Save fix' }).click();
   await expect(saw).toContainText('Patio, 800 sq ft');
   await expect(saw).toContainText('You added: Two of the planters are huge');
-  await expect(saw).toContainText('Its guess on this job uses your fix.');
+  await expect(saw).toContainText('It goes on your fix for this job.');
   await page.screenshot({ path: test.info().outputPath('fixed.png'), fullPage: true });
 
   // The prepared photo comes at once. The next is taken for what was asked.
@@ -195,7 +195,7 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
     page.getByRole('heading', { name: /Here.s what your Charm picked up/ }),
   ).toBeVisible();
   await expect(saw.getByRole('button', { name: 'Fix' })).toHaveCount(0);
-  await expect(saw).toContainText('Its guess on this job uses your fix.');
+  await expect(saw).toContainText('It goes on your fix for this job.');
   await expectNoSideways(page);
 });
 

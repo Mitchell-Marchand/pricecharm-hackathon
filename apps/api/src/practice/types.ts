@@ -136,7 +136,17 @@ export type DraftEngine = {
   formula?: boolean;
 };
 
-export type Shadow = DraftedQuote & { cents: number; engine?: DraftEngine };
+/**
+ * The Charm's own price for a practice job, before it sees the owner's. `withheld` when it doesn't
+ * guess yet: too few priced customers for a formula (`toGo` more), a service it hasn't seen
+ * priced, or a formula still being worked out. Cents are 0 then.
+ */
+export type Shadow = DraftedQuote & {
+  cents: number;
+  engine?: DraftEngine;
+  withheld?: 'learning' | 'service' | 'working';
+  toGo?: number;
+};
 
 export type Insight = { id: string; text: string };
 

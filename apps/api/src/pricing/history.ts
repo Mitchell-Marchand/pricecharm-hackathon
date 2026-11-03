@@ -14,7 +14,8 @@ import {
 } from '../practice/types.js';
 import { lossReasonPhrase } from '../live/outcomes.js';
 import { describeRate, fitRates, type PricePoint } from './rates.js';
-import { describeSpec, specFromScenario, type JobSpec } from './spec.js';
+import { knownSpec, photoLines } from '../practice/known.js';
+import { describeSpec, type JobSpec } from './spec.js';
 import { parseQuantity } from './units.js';
 import { currencyOf, money as formatMoney, type Currency } from '../money.js';
 import { travelMiles, turnDownRules } from '../turn-downs.js';
@@ -183,9 +184,11 @@ export async function loadPricingData(
       .map((message) => `${message.sender === 'owner' ? 'Owner' : 'Customer'}: ${message.text}`)
       .join('\n')
       .slice(0, 1500);
+    // The job as the owner knew it: the chat, and what the photos showed that it doesn't say.
+    const asked = json<string[]>(run.asked_json, []);
     practice.push({
       service: scenario.serviceName,
-      request: conversation,
+      request: [conversation, ...photoLines(scenario, asked)].join('\n'),
       outcome: run.outcome === 'site_visit' ? 'site_visit' : 'quote',
       lines: quote?.lines.map(({ label, amountCents }) => ({ label, amountCents })) ?? [],
       discount: quote?.discount ?? null,
@@ -194,7 +197,7 @@ export async function loadPricingData(
       note: quote?.note ?? '',
       siteVisitReason: String(run.site_visit_reason ?? ''),
     });
-    const spec = specFromScenario(scenario);
+    const spec = knownSpec(scenario, asked);
     if (quote?.lines[0] && spec.quantity)
       points.push({
         service: scenario.serviceName,

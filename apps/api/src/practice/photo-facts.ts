@@ -103,56 +103,55 @@ function shownFacts(facts: Fact[]) {
 }
 
 /**
- * The scenario with its size and counts taken from the reading, and what changed, like
- * "windows: 18 to 15". With `exact`, the reading's numbers are the owner's own and are taken as
- * they are; otherwise a surface's size only moves when the customer's is well outside its range.
+ * Where the customer's facts and their photos' reading disagree, like "trees: says 1, photos show
+ * 2". The customer's own words never change for it: generated photos drift on counts and readers
+ * miscount, and a customer who contradicts their own answer is worse than a photo that's off.
+ * Only an owner's fix to the reading (`exact`) is taken as the job, and then just the number
+ * moves, where it's written as one. Nothing is added to what the customer said.
  */
 export function reconcileScenario(
   scenario: PracticeScenario,
   reading: Walkaround,
   { exact = false }: { exact?: boolean } = {},
 ): { scenario: PracticeScenario; changes: string[] } {
+  const spec = specFromScenario(scenario);
+  const unit = spec.unit ? unitOf(spec.unit) : '';
+  const target =
+    spec.quantity && unit ? sizeFromReading(spec.quantity, reading, unit, exact) : null;
+  if (!exact)
+    return {
+      scenario,
+      changes:
+        spec.quantity && target !== null
+          ? [`${unit}: says ${formatNumber(spec.quantity)}, photos show ${formatNumber(target)}`]
+          : [],
+    };
   const next: PracticeScenario = {
     ...scenario,
     facts: scenario.facts.map((fact) => ({ ...fact })),
     suggestions: [...scenario.suggestions],
   };
   const changes: string[] = [];
-  const spec = specFromScenario(scenario);
-  const unit = spec.unit ? unitOf(spec.unit) : '';
-  const target =
-    spec.quantity && unit ? sizeFromReading(spec.quantity, reading, unit, exact) : null;
   if (spec.quantity && target !== null) {
     const from = spec.quantity;
     next.quantity = target;
     next.unit = unit;
     changes.push(`${unit}: ${formatNumber(from)} to ${formatNumber(target)}`);
-    const sizeFacts = next.facts.filter((fact) => SIZE_FACT.test(fact.key));
-    let said = false;
     // In the size answer any mention of the number is the size. Elsewhere only "18 windows" is.
     for (const fact of next.facts) {
       const swapped = SIZE_FACT.test(fact.key)
         ? swapNumber(fact.answer, from, target)
         : swapNumberOf(fact.answer, from, target, unit);
-      if (swapped !== null) {
-        fact.answer = swapped;
-        said = true;
-      }
-    }
-    // The size was worked out from something else, like "12 by 16": say the size outright.
-    const sizeFact = sizeFacts[0];
-    if (!said && sizeFact) {
-      const counted = readSize(reading, unit)?.kind === 'count';
-      sizeFact.answer = `${sizeFact.answer.replace(/\s+$/, '')} ${counted ? `I count ${formatQuantity(target, unit)}.` : `It's about ${formatQuantity(target, unit)}.`}`;
+      if (swapped !== null) fact.answer = swapped;
     }
     next.suggestions = next.suggestions.map(
       (line) => swapNumberOf(line, from, target, unit) ?? line,
     );
     next.opener = swapNumberOf(next.opener, from, target, unit) ?? next.opener;
   }
-  // Other things counted in the photos, like "3 skylights", say the same number as the photos.
+  // Other things the owner counted, like "3 skylights", say the same number as their fix.
   for (const item of reading.counts) {
-    if (!item.count || (item.atLeast && !exact) || unitOf(item.unit) === unit) continue;
+    if (!item.count || unitOf(item.unit) === unit) continue;
     for (const fact of shownFacts(next.facts)) {
       const swapped = swapCounted(fact.answer, item.label, item.count);
       if (swapped !== fact.answer) {

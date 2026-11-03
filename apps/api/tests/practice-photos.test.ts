@@ -84,39 +84,42 @@ const counted = (label: string, count: number, more: object = {}) => ({
   ...more,
 });
 
-test('a customer’s count takes what their photos show, and nothing else moves', () => {
+test('photos that disagree with the customer are reported, and what the customer said stands', () => {
   const { scenario, changes } = reconcileScenario(
     windows,
     reading({ counts: [counted('windows', 15), counted('skylights', 2)] }),
   );
-  assert.equal(scenario.quantity, 15);
-  assert.equal(scenario.facts[0].answer, 'About 15 windows, 6 of them upstairs.');
-  assert.equal(scenario.facts[1].answer, 'Yeah, 2 skylights on the back.');
-  assert.equal(
-    scenario.facts[2].answer,
-    'Before the 18th if you can. We have 18 people coming.',
-    'A date or a count of something else isn’t the size',
-  );
-  assert.deepEqual(scenario.suggestions, ['Exterior windows, 15 windows', 'Screens']);
-  assert.deepEqual(changes, ['windows: 18 to 15', 'skylights in skylights']);
-  assert.equal(windows.quantity, 18, 'The scenario passed in is left as it was');
+  assert.equal(scenario, windows, 'Nothing about the customer changes');
+  assert.deepEqual(changes, ['windows: says 18, photos show 15']);
 
   const same = reconcileScenario(windows, reading({ counts: [counted('windows', 18)] }));
   assert.deepEqual(same.changes, []);
-  assert.equal(same.scenario.facts[0].answer, windows.facts[0].answer);
 });
 
-test('a count that ran past what could be followed only moves a smaller number up', () => {
-  const many = reading({ counts: [counted('windows', 30, { atLeast: true })] });
-  assert.equal(reconcileScenario(windows, many).scenario.quantity, 30);
-  assert.equal(
-    reconcileScenario({ ...windows, quantity: 40 }, many).scenario.quantity,
-    40,
-    '“At least 30” doesn’t contradict 40',
-  );
+test('the tree test: one oak, a reader that counts two, and the customer still says one', () => {
+  const oak: PracticeScenario = {
+    ...windows,
+    serviceName: 'Trimming',
+    quantity: 1,
+    unit: 'trees',
+    facts: [
+      {
+        key: 'count',
+        label: 'the number of trees',
+        question: 'How many trees need trimming?',
+        answer: 'Just the one little oak out front.',
+        visible: true,
+      },
+    ],
+    suggestions: ['Trim one oak'],
+  };
+  const { scenario, changes } = reconcileScenario(oak, reading({ counts: [counted('trees', 2)] }));
+  assert.equal(scenario.quantity, 1);
+  assert.equal(scenario.facts[0].answer, 'Just the one little oak out front.');
+  assert.deepEqual(changes, ['trees: says 1, photos show 2']);
 });
 
-test('a surface only moves when the customer’s size is well outside what the photos show', () => {
+test('a surface the customer gave is reported only when it’s well outside what the photos show', () => {
   const patio: PracticeScenario = {
     ...windows,
     serviceName: 'Patios & pavers',
@@ -136,30 +139,14 @@ test('a surface only moves when the customer’s size is well outside what the p
   const read = reading({
     area: { surface: 'patio', low: 450, high: 550, unit: 'sq ft', basis: 'the table' },
   });
-  const moved = reconcileScenario(patio, read).scenario;
-  assert.equal(moved.quantity, 500);
-  assert.equal(moved.facts[0].answer, 'Around 500 sq ft.');
-  assert.deepEqual(moved.suggestions, ['Patio wash, about 500 sq ft']);
-  assert.equal(
-    reconcileScenario({ ...patio, quantity: 650 }, read).scenario.quantity,
-    650,
-    'Inside the range, give or take, the customer’s own size stands',
+  const far = reconcileScenario(patio, read);
+  assert.equal(far.scenario.quantity, 700);
+  assert.deepEqual(far.changes, ['sq ft: says 700, photos show 500']);
+  assert.deepEqual(
+    reconcileScenario({ ...patio, quantity: 650 }, read).changes,
+    [],
+    'Inside the range, give or take, there’s nothing to report',
   );
-
-  // A size worked out from "12 by 16" is said outright once it changes.
-  const derived: PracticeScenario = {
-    ...patio,
-    quantity: null,
-    unit: '',
-    facts: [{ ...patio.facts[0], answer: 'The patio is about 12 by 16.' }],
-  };
-  assert.equal(specFromScenario(derived).quantity, 192);
-  const said = reconcileScenario(
-    derived,
-    reading({ area: { surface: 'patio', low: 300, high: 400, unit: 'sq ft', basis: 'steps' } }),
-  ).scenario;
-  assert.equal(said.quantity, 350);
-  assert.equal(said.facts[0].answer, "The patio is about 12 by 16. It's about 350 sq ft.");
 });
 
 test('the owner’s fix is taken exactly, and only what they fixed moves', () => {

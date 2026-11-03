@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Ban, MessageSquarePlus, Pencil, Receipt, RotateCw } from 'lucide-react';
+import { ArrowUp, Ban, Check, MessageSquarePlus, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
 import { PhotoViewer, type ViewerPhoto } from '@/components/PhotoViewer';
 import {
@@ -191,7 +191,7 @@ function InsightCard({
                   : "It'll get closer with each practice quote."}
               </>
             ) : (
-              <>It didn&apos;t have enough to go on to guess this one. Now it does.</>
+              <HeldBack run={run} />
             )}
           </p>
           {market && (
@@ -355,6 +355,89 @@ function ExplainPrice({
   );
 }
 
+/** Why the Charm didn't guess this one, and when it will. */
+function HeldBack({ run }: { run: PracticeRun }) {
+  const why = run.shadow?.withheld;
+  // How many it still needed before this one. This one counts now.
+  const left = Math.max(0, (run.shadow?.toGo ?? 1) - 1);
+  if (why === 'learning')
+    return left ? (
+      <>
+        Your Charm doesn&apos;t guess yet. It makes its first guess after{' '}
+        <span className="font-semibold text-ink">
+          {left} more {left === 1 ? 'customer' : 'customers'}
+        </span>
+        , once it has enough of your prices to work from.
+      </>
+    ) : (
+      <>
+        That&apos;s enough to go on.{' '}
+        <span className="font-semibold text-ink">
+          From your next customer, it guesses your price before you send yours.
+        </span>
+      </>
+    );
+  if (why === 'service')
+    return (
+      <>
+        It hadn&apos;t seen a {run.serviceName?.toLowerCase() ?? 'job like this'} priced yet, so it
+        didn&apos;t guess this one. Now it has.
+      </>
+    );
+  if (why === 'working')
+    return (
+      <>
+        It was still working out your prices from your last quote, so it didn&apos;t guess this one.
+      </>
+    );
+  return <>It didn&apos;t have enough to go on to guess this one. Now it does.</>;
+}
+
+/** While its guess and what it picked up come in, after the owner has answered. */
+function LookingAtIt() {
+  const steps = [
+    'Reading the job',
+    'Working out what it would have charged',
+    'Lining it up with yours',
+  ];
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setStep((current) => Math.min(current + 1, steps.length - 1)),
+      2500,
+    );
+    return () => window.clearInterval(timer);
+  }, [steps.length]);
+  return (
+    <section
+      className="fade-up rounded-md border border-line bg-surface p-5 shadow-1 sm:p-6"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <p className="t-label text-muted">Only you see this</p>
+      <h2 className="t-h2 mt-2">Your Charm is looking at how you priced it</h2>
+      <ol className="mt-5 flex flex-col gap-3">
+        {steps.map((label, index) => (
+          <li key={label} className="flex items-center gap-3 text-[15px]">
+            <span
+              className={cx(
+                'inline-flex size-5 shrink-0 items-center justify-center rounded-full',
+                index < step && 'bg-go text-surface',
+                index === step && 'border-2 border-accent border-t-transparent animate-spin',
+                index > step && 'border border-line-strong',
+              )}
+              aria-hidden
+            >
+              {index < step && <Check className="size-3.5" />}
+            </span>
+            <span className={index > step ? 'text-muted' : 'text-ink'}>{label}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 /** After the owner answers, the quote lands first, then the customer replies, then the insights. */
 type Reveal = { runId: string; messages: number; insights: boolean };
 
@@ -432,15 +515,17 @@ export function PracticeSession({
   // While the Charm reads the photos or the customer takes one, check back until it's done.
   const reading = run?.photoReading?.status === 'reading';
   const waiting = run?.status === 'ready' && (reading || Boolean(run.takingPhoto));
+  // Answered, and its guess and what it picked up still coming: check back until they're in.
+  const finishing = Boolean(run?.outcome) && !run?.finished;
   useEffect(() => {
-    if (!waiting) return;
+    if (!waiting && !finishing) return;
     const poll = window.setInterval(() => {
       loadPractice()
         .then(onState)
         .catch(() => {});
     }, 1500);
     return () => window.clearInterval(poll);
-  }, [waiting, run?.id, onState]);
+  }, [waiting, finishing, run?.id, onState]);
 
   const visibleMessages = run
     ? reveal?.runId === run.id
@@ -698,6 +783,9 @@ export function PracticeSession({
                   Writing a practice customer for your trade, with photos of the job. This takes
                   about half a minute the first time.
                 </p>
+              )}
+              {run && finishing && (reveal?.runId !== run.id || reveal?.insights) && (
+                <LookingAtIt />
               )}
               {run && showInsights && (
                 <InsightCard

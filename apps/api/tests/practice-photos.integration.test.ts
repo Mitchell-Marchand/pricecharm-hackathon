@@ -34,17 +34,23 @@ async function setup(
   const owner = request.agent(createApp()).set('X-Forwarded-For', ADDRESS);
   await owner.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
   await owner.patch('/api/v1/onboarding/business').set('Origin', origin).send(body).expect(200);
+  // Three past jobs, so the Charm guesses from the first customer: it waits for three prices.
   if (pastJob)
-    await owner
-      .post('/api/v1/onboarding/jobs')
-      .set('Origin', origin)
-      .send({
-        serviceName: body.services[0],
-        description: 'Back patio and walkway.',
-        priceCents: 27500,
-        size: '600 sq ft',
-      })
-      .expect(201);
+    for (const [size, priceCents] of [
+      [600, 27500],
+      [400, 21000],
+      [900, 36000],
+    ])
+      await owner
+        .post('/api/v1/onboarding/jobs')
+        .set('Origin', origin)
+        .send({
+          serviceName: body.services[0],
+          description: 'Back patio and walkway.',
+          priceCents,
+          size: `${size} sq ft`,
+        })
+        .expect(201);
   await owner.post('/api/v1/onboarding/practice/prepare').set('Origin', origin).expect(200);
   const state = async () => (await owner.get('/api/v1/onboarding/practice')).body.data;
   /** The current customer once they're ready, their photos read and any photo taken. */
@@ -228,20 +234,18 @@ test(
       'PRACTICE_CLOSED',
     );
 
-    // Marcus says 700 sq ft, but his photos show about 500: his facts take the photos' size.
+    // Marcus says 700 sq ft, and his photos read about 500. What he says stands: a reader that's
+    // off never puts words in his mouth. What it read shows on the card, for the owner to fix.
     const marcus = await settled(1);
     const [{ scenario_json: marcusJson }] = await rows(
       'SELECT scenario_json FROM practice_runs WHERE id=?',
       [marcus.id],
     );
-    const squared = parse<{ quantity: number; facts: { key: string; answer: string }[] }>(
-      marcusJson,
-    );
-    assert.equal(squared.quantity, 500);
-    assert.match(squared.facts.find((fact) => fact.key === 'size')!.answer, /^Around 500 sq ft\./);
-    assert.equal(marcus.suggestions[0], 'Patio wash, about 500 sq ft');
+    const kept = parse<{ quantity: number; facts: { key: string; answer: string }[] }>(marcusJson);
+    assert.equal(kept.quantity, 700);
+    assert.match(kept.facts.find((fact) => fact.key === 'size')!.answer, /^Around 700 sq ft\./);
     const sized = await send(marcus.id, 'post', 'messages', { text: 'How big is the patio?' });
-    assert.match(sized.body.data.run.messages.at(-1).text, /Around 500 sq ft/);
+    assert.match(sized.body.data.run.messages.at(-1).text, /Around 700 sq ft/);
   },
 );
 
@@ -323,7 +327,11 @@ test(
         log: (line) => lines.push(line),
       });
       assert.deepEqual(built, [0, 1, 2]);
-      assert.ok(lines.some((line) => line.includes('Squared with the photos: sq ft: 700 to 500')));
+      assert.ok(
+        lines.some((line) =>
+          line.includes('Photos disagree, check them: sq ft: says 700, photos show 500'),
+        ),
+      );
       assert.deepEqual(
         await buildLibrary({
           trade: 'pressure-washing',

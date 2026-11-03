@@ -291,10 +291,10 @@ export function PhotoReadingCard({
           )}
           <p className="mt-2.5 text-xs text-muted">
             {fixed
-              ? 'Its guess on this job uses your fix.'
+              ? 'It goes on your fix for this job.'
               : canFix
-                ? 'Its guess on this job uses what it saw. Fix anything it got wrong.'
-                : 'Its guess on this job used what it saw.'}
+                ? 'This is how it reads a customer’s photos. Fix anything it got wrong.'
+                : 'This is how it read the photos.'}
           </p>
           {onShowDrawn && reading.drawn.length > 0 && (
             <button

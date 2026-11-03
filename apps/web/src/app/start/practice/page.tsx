@@ -162,8 +162,8 @@ export default function PracticeStep() {
                 </button>
                 <h1 className="t-h1 mt-4">Answer it like a real lead.</h1>
                 <p className="mt-3 text-lg text-ink-2">
-                  Ask what you&apos;d normally ask, then send a quote. Your Charm guesses before you
-                  do. Its first guess is a stranger&apos;s; watch it get closer to yours.
+                  Ask what you&apos;d normally ask, then send a quote. After your first three, your
+                  Charm starts guessing your price before you send yours, from what you taught it.
                 </p>
               </div>
             )}

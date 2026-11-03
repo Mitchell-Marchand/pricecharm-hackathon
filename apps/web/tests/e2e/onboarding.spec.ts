@@ -385,7 +385,9 @@ test('practice comes first, then the account, a test, the plans and going live',
   await expect(
     page.getByText('Remembers why: “Heavy moss on half of it, so a second pass.”'),
   ).toBeVisible();
-  await expect(page.getByText(/Before you sent yours, it guessed \$/)).toBeVisible();
+  // No guess on the first customers: it makes one once three of your prices are in.
+  await expect(page.getByText(/makes its first guess after 2 more customers/)).toBeVisible();
+  await expect(page.getByText(/Before you sent yours, it guessed/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Fix' }).first().click();
   await page.getByLabel('Correct this').fill('Asks about size and stains');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
