@@ -9,6 +9,11 @@ import { closeDatabase, mutate, rows } from '../src/db.js';
 
 const enabled = process.env.RUN_DB_TESTS === '1';
 const origin = 'http://localhost:3100';
+// Setups here come from an address of their own, behind a trusted proxy, so they don't use up the
+// day's setups from 127.0.0.1 that the other test files share.
+const ADDRESS = '10.52.0.1';
+process.env.TRUST_PROXY = '1';
+process.env.LOCAL_SETUPS_PER_ADDRESS ??= '500';
 /** Each owner's wait for their customers still being written. */
 const owners: (() => Promise<void>)[] = [];
 after(async () => {
@@ -25,10 +30,8 @@ async function setup(
   pastJob = true,
 ) {
   process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-photos-'));
-  // Several setups from one address, like a few owners in a row.
-  process.env.LOCAL_SETUPS_PER_ADDRESS ??= '500';
   const { createApp } = await import('../src/app.js');
-  const owner = request.agent(createApp());
+  const owner = request.agent(createApp()).set('X-Forwarded-For', ADDRESS);
   await owner.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
   await owner.patch('/api/v1/onboarding/business').set('Origin', origin).send(body).expect(200);
   if (pastJob)
@@ -204,7 +207,9 @@ test(
     await send(dana.id, 'post', 'guess').expect(200);
     assert.ok((await guessOf())!.cents > before, 'A bigger patio is a bigger guess');
 
-    const stranger = request.agent((await import('../src/app.js')).createApp());
+    const stranger = request
+      .agent((await import('../src/app.js')).createApp())
+      .set('X-Forwarded-For', ADDRESS);
     await stranger.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
     assert.equal(
       (
