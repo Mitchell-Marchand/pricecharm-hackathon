@@ -6,6 +6,12 @@ import type { DraftedQuote, PracticeScenario, QuoteLine } from './types.js';
  * fixed pressure-washing customers from the prototype, answering from patterns, with bundled photos.
  */
 
+/**
+ * What a practice customer says when the owner turns their job down, in demo mode and whenever
+ * the customer wasn't written with a line of their own.
+ */
+export const DECLINE_REPLY = 'No worries, thanks for letting me know.';
+
 const SIZE =
   /\b(how big|size|sq ?ft|sqft|square|feet|foot|footage|dimensions?|measure\w*|how large|how much (area|space))\b/i;
 const SURFACE =

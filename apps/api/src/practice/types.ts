@@ -28,6 +28,8 @@ export type PracticeScenario = {
   siteVisitCue: string;
   acceptReply: string;
   siteVisitReply: string;
+  /** What they say when the owner turns the job down. Older customers say DECLINE_REPLY. */
+  declineReply?: string;
   /** Set for the demo customers, which answer from fixed patterns instead of the AI. */
   demoId?: string;
   /** The job's main size as a number, like 550 and "sq ft". Older customers don't have it. */

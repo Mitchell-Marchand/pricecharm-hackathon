@@ -18,7 +18,14 @@ import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
 import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
-import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
+import {
+  DECLINE_REPLY,
+  demoDraftQuote,
+  demoPhoto,
+  demoRateLine,
+  demoReply,
+  demoScenario,
+} from './demo.js';
 import { focusSituation, planSituation } from './plan.js';
 import {
   gapPercent,
@@ -31,6 +38,16 @@ import {
   type Shadow,
 } from './types.js';
 import { money as formatMoney } from '../money.js';
+import {
+  addTurnDown,
+  REASONS,
+  ruleInput,
+  setMinimum,
+  turnDownView,
+  type TurnDownKind,
+  type TurnDownView,
+} from '../turn-downs.js';
+import { z } from 'zod';
 
 /** Practice quotes to finish before the AI counts as trained. More can follow later. */
 export const PRACTICE_COUNT = 6;
@@ -49,6 +66,8 @@ type PracticeMarket = {
   ownerCentsPerUnit: number;
 };
 const UNDER_MARKET = 0.9;
+/** The owner's side of a turned-down customer's chat. Only the reason is kept. */
+const DECLINED_LINE = 'Sorry, we can’t take this one on.';
 
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 const joinList = (items: string[]) =>
@@ -300,7 +319,7 @@ async function addMessage(
   businessId: string,
   runId: string,
   sender: 'customer' | 'owner',
-  kind: 'text' | 'quote' | 'site_visit',
+  kind: 'text' | 'quote' | 'site_visit' | 'declined',
   text: string,
   photoIds: string[] = [],
 ) {
@@ -323,7 +342,31 @@ function customerOf(scenario: PracticeScenario, position: number) {
   };
 }
 
-function runView(run: Row, messages: Row[]) {
+/** What the owner chose when they turned a practice customer down. */
+type SavedTurnDown = { reason: TurnDownKind; ruleId?: string; minimumCents?: number };
+
+/**
+ * A turned-down customer's reason, and the rule or minimum it saved as it stands now: changed or
+ * removed since from What it knows or Settings, the card says so.
+ */
+function declinedView(run: Row, known: TurnDownView | undefined) {
+  const saved = json<SavedTurnDown | null>(run.turn_down_json, null);
+  if (!saved) return null;
+  const rule = saved.ruleId
+    ? (known?.rules.find((item) => item.id === saved.ruleId) ?? null)
+    : null;
+  const minimum = saved.minimumCents !== undefined;
+  return {
+    reason: saved.reason,
+    reasonText: REASONS[saved.reason],
+    rule,
+    minimumCents: minimum ? (known?.minimumCents ?? null) : null,
+    /** Taken out since, so live chats don't follow it anymore. */
+    removed: saved.ruleId ? !rule : minimum && !known?.minimumCents,
+  };
+}
+
+function runView(run: Row, messages: Row[], known?: TurnDownView) {
   const scenario = json<PracticeScenario | null>(run.scenario_json, null);
   const position = Number(run.position);
   const quote = json<Quote | null>(run.quote_json, null);
@@ -346,7 +389,11 @@ function runView(run: Row, messages: Row[]) {
             id: String(message.id),
             from: message.sender as 'customer' | 'owner',
             text:
-              message.kind === 'quote' || message.kind === 'site_visit' ? '' : String(message.text),
+              message.kind === 'quote' || message.kind === 'site_visit'
+                ? ''
+                : message.kind === 'declined'
+                  ? DECLINED_LINE
+                  : String(message.text),
             photos: json<string[]>(message.photo_ids_json, []).map((id) => ({
               id,
               url: photoUrl(id),
@@ -369,6 +416,8 @@ function runView(run: Row, messages: Row[]) {
       ({ id, text }) => ({ id, text }),
     ),
     market: market && market.ownerCentsPerUnit < market.centsPerUnit * UNDER_MARKET ? market : null,
+    /** Set once the owner turned this one down. */
+    turnDown: declinedView(run, known),
     finished: run.status === 'finished',
   };
 }
@@ -387,8 +436,9 @@ export type PracticeResult = {
 
 /** How close the AI's private guesses were to the owner's real answers, within the owner's percent. */
 export function practiceResults(views: RunView[], closePercent = AGREE_PERCENT): PracticeResult[] {
+  // A job the owner turned down has no price to hold a guess to.
   return views
-    .filter((run) => run.finished)
+    .filter((run) => run.finished && run.outcome !== 'declined')
     .map((run) => {
       const guessCents = run.shadow?.cents || null;
       const aiFlagged = Boolean(run.shadow?.siteVisit);
@@ -426,10 +476,12 @@ export async function practiceState(businessId: string) {
     'SELECT * FROM practice_messages WHERE business_id=? ORDER BY created_at,id',
     [businessId],
   );
+  const known = runs.some((run) => run.turn_down_json) ? await turnDownView(businessId) : undefined;
   const views = runs.map((run) =>
     runView(
       run,
       messages.filter((message) => message.run_id === run.id),
+      known,
     ),
   );
   const firstOpen = views.findIndex((run) => !run.finished);
@@ -470,7 +522,8 @@ function openRun(run: Row) {
 
 async function viewOf(businessId: string, runId: string) {
   const run = await loadRun(businessId, runId);
-  return runView(run, await runMessages(runId));
+  const known = run.turn_down_json ? await turnDownView(businessId) : undefined;
+  return runView(run, await runMessages(runId), known);
 }
 
 export async function sendOwnerMessage(businessId: string, runId: string, text: string) {
@@ -634,6 +687,20 @@ export async function computeShadow(businessId: string, runId: string): Promise<
   return json<Shadow>(saved.shadow_json, shadow);
 }
 
+/** What the owner asked this customer about, as "Asks about ___" reads it. */
+function askedLabels(scenario: PracticeScenario, asked: string[]) {
+  return [
+    ...new Set(
+      asked.flatMap((key) => {
+        const fact = scenario.facts?.find((item) => item.key === key);
+        // The AI sometimes writes the whole phrase, "Asks about the window count", as the label.
+        const label = fact?.label.replace(/^\s*asks about\s+/i, '').trim();
+        return label ? [label] : [];
+      }),
+    ),
+  ];
+}
+
 async function insightsFor(
   businessId: string,
   runId: string,
@@ -642,16 +709,7 @@ async function insightsFor(
   outcome: { quote: QuoteDraft } | { siteVisit: string },
   trade: string,
 ): Promise<Insight[]> {
-  const labels = [
-    ...new Set(
-      asked.flatMap((key) => {
-        const fact = scenario.facts.find((item) => item.key === key);
-        // The AI sometimes writes the whole phrase, "Asks about the window count", as the label.
-        const label = fact?.label.replace(/^\s*asks about\s+/i, '').trim();
-        return label ? [label] : [];
-      }),
-    ),
-  ];
+  const labels = askedLabels(scenario, asked);
   const items: string[] = [];
   if (labels.length) items.push(`Asks about ${joinList(labels)}`);
   if ('quote' in outcome) {
@@ -844,6 +902,94 @@ async function finishRun(
 
 export async function sendPracticeQuote(businessId: string, runId: string, body: unknown) {
   return finishRun(businessId, runId, { quote: quoteDraftSchema.parse(body) });
+}
+
+/** Why the owner turns a job down: a rule the live chat follows, or the least they charge. */
+export const declineInput = z.union([
+  ruleInput,
+  z
+    .object({
+      kind: z.literal('minimum'),
+      minimumCents: z.number().int().min(100).max(100_000_000),
+    })
+    .strict(),
+]);
+export type DeclineInput = z.infer<typeof declineInput>;
+
+/**
+ * The owner turns this customer down. It saves the rule they chose, or their minimum for a job
+ * that's too small, and the customer says no worries. There's no price, so the guess isn't held
+ * to anything and the score stays as it was, but it's a finished customer: the next one comes.
+ */
+export async function declinePracticeRun(businessId: string, runId: string, body: unknown) {
+  const input = declineInput.parse(body);
+  const scenario = await transaction(async (connection) => {
+    const run = await loadRun(businessId, runId, connection, true);
+    openRun(run);
+    let saved: SavedTurnDown;
+    if (input.kind === 'minimum') {
+      await setMinimum(businessId, input.minimumCents, connection);
+      saved = { reason: 'too_small', minimumCents: input.minimumCents };
+    } else
+      saved = {
+        reason: input.kind,
+        ruleId: await addTurnDown(connection, businessId, input, runId),
+      };
+    await mutate(
+      "UPDATE practice_runs SET outcome='declined',turn_down_json=? WHERE id=?",
+      [JSON.stringify(saved), runId],
+      connection,
+    );
+    await addMessage(connection, businessId, runId, 'owner', 'declined', saved.reason);
+    return json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+  });
+  const [run] = await rows('SELECT asked_json FROM practice_runs WHERE id=?', [runId]);
+  const labels = askedLabels(scenario, json<string[]>(run.asked_json, []));
+  const insights = labels.length
+    ? [{ id: `${runId.slice(0, 8)}-0`, text: `Asks about ${joinList(labels)}` }]
+    : [];
+  await transaction(async (connection) => {
+    await addMessage(
+      connection,
+      businessId,
+      runId,
+      'customer',
+      'text',
+      scenario.declineReply?.trim() || DECLINE_REPLY,
+    );
+    await mutate(
+      "UPDATE practice_runs SET insights_json=?,status='finished',finished_at=UTC_TIMESTAMP(3) WHERE id=?",
+      [JSON.stringify(insights), runId],
+      connection,
+    );
+  });
+  await kickPreparation(businessId);
+  return viewOf(businessId, runId);
+}
+
+const distanceSchema = z.object({ value: z.number().positive(), unit: z.enum(['mi', 'km']) });
+
+/**
+ * What the "Why not?" sheet fills in from this customer: the job's size, the service and the
+ * extras on it, and how far away they are. The size is only shown once the owner turns them down.
+ */
+export async function declinePrefill(businessId: string, runId: string) {
+  const run = await loadRun(businessId, runId);
+  openRun(run);
+  const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+  const spec = specFromScenario(scenario);
+  const written = scenario as PracticeScenario & {
+    distance?: unknown;
+    customer?: { distance?: unknown };
+  };
+  const distance = distanceSchema.safeParse(written.distance ?? written.customer?.distance);
+  return {
+    size: spec.quantity && spec.unit ? { quantity: spec.quantity, unit: spec.unit } : null,
+    service: scenario.serviceName ?? '',
+    // The first suggestion is the main work. The rest are the extras on this job.
+    extras: (scenario.suggestions ?? []).slice(1, 5),
+    distance: distance.success ? distance.data : null,
+  };
 }
 
 /** The owner's correction. It goes to the AI as something they taught it. */

@@ -32,6 +32,7 @@ import { practiceRouter } from './practice/router.js';
 import { profileRouter } from './profile.js';
 import { charmRouter } from './charm.js';
 import { charmNotesRouter } from './charm-notes.js';
+import { turnDownsRouter } from './turn-downs.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { agentRouter } from './live/agent.js';
@@ -169,6 +170,7 @@ export function createApp() {
     profileRouter,
     charmRouter,
     charmNotesRouter,
+    turnDownsRouter,
     chatRouter,
     logoRouter,
     demoRouter,

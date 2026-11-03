@@ -4,7 +4,7 @@ import { DRAFT_PROMPT_VERSION, draftQuote, type DraftRequest } from '../ai/quote
 import { rows } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import type { PastJob } from '../past-jobs.js';
-import { subtotal, type DraftEngine, type DraftedQuote } from '../practice/types.js';
+import { quoteTotal, subtotal, type DraftEngine, type DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
 import {
   currentFormula,
@@ -18,7 +18,8 @@ import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
 import { describeJob, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
-import { roughMoney, type Currency } from '../money.js';
+import { money, roughMoney, type Currency } from '../money.js';
+import { minimumCharge } from '../turn-downs.js';
 
 /** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
 const FORMULA_VERSION = 'formula-2026-11-01';
@@ -60,6 +61,39 @@ export function demoDraft(
     reasoning: estimate
       ? 'Demo mode: your usual rate for this size.'
       : 'Demo mode: the middle price of your similar past jobs.',
+  };
+}
+
+/**
+ * The owner's minimum as a floor on the total: a smaller job's first line is raised to it, and a
+ * discount never takes the total under it.
+ */
+export function withMinimum(
+  drafted: DraftedQuote,
+  minimumCents: number | null,
+  currency: Currency = 'USD',
+): DraftedQuote {
+  if (!minimumCents || drafted.decision !== 'quote' || !drafted.lines.length) return drafted;
+  if (quoteTotal(drafted) >= minimumCents) return drafted;
+  const reasoning = [drafted.reasoning, `Raised to your ${money(minimumCents, currency)} minimum.`]
+    .filter(Boolean)
+    .join(' ');
+  const before = subtotal(drafted);
+  if (before < minimumCents)
+    return {
+      ...drafted,
+      discount: null,
+      reasoning,
+      lines: drafted.lines.map((line, index) =>
+        index === 0 ? { ...line, amountCents: line.amountCents + minimumCents - before } : line,
+      ),
+    };
+  const off = before - minimumCents;
+  return {
+    ...drafted,
+    reasoning,
+    discount:
+      off > 0 ? { kind: 'amount', value: off, reason: drafted.discount?.reason ?? '' } : null,
   };
 }
 
@@ -133,6 +167,8 @@ export async function draftForBusiness(input: {
   const { currency } = data.history.business;
   const rates = fitRates(data.points);
   const estimate = estimateFor(rates, serviceName, spec?.quantity ?? null, spec?.unit ?? '');
+  // Today's minimum, like today's formula: a replay of an old quote goes without it.
+  const minimum = input.history?.before ? null : await minimumCharge(businessId);
   const examples = {
     pastJobs: data.history.pastJobs.length,
     practice: data.history.practice.length,
@@ -169,7 +205,7 @@ export async function draftForBusiness(input: {
     ]);
     if (priced?.drafted)
       return {
-        drafted: priced.drafted,
+        drafted: withMinimum(priced.drafted, minimum, currency),
         ...(open && priced.use.used
           ? {
               unsettled: {
@@ -271,6 +307,7 @@ export async function draftForBusiness(input: {
     };
   // A price from other businesses is a first guess. The owner always sees it before it goes out.
   if (startingPoint) drafted = { ...drafted, confidence: 'low' };
+  drafted = withMinimum(drafted, minimum, currency);
 
   return {
     drafted,
