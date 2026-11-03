@@ -108,9 +108,10 @@ test('setup asks one thing a screen and saves each as you go', async ({ page }) 
   // Between questions, a number about their trade.
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page).toHaveURL(/\/start\/why$/);
-  await expect(page.getByText('quote requests a week come in after hours')).toBeVisible();
+  // How customers shop, never a claim about a business setup knows nothing about yet.
+  await expect(page.getByText('Window cleaning customers')).toBeVisible();
   await expect(
-    page.getByText(/window cleaning business like yours gets about 14 a week/),
+    page.getByRole('heading', { name: /7 in 10\s*want a price before they call anyone/ }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Continue' }).click();
 
