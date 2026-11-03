@@ -183,13 +183,23 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
   }
   await page.goto('/pricing');
   const pricing = (await (await page.request.get('/api/v1/pricing')).json()).data;
-  await expect(page.getByText('up front', { exact: true })).toHaveCount(2);
+  // One plan is picked, not all three added up.
+  await expect(page.getByRole('heading', { name: 'Pick one way to pay.' })).toBeVisible();
+  await expect(page.getByText('$0 up front', { exact: true })).toHaveCount(2);
   await expect(
     page.getByText(`$${pricing.perQuoteCents / 100} per quote`, { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(`${pricing.accepted.basisPoints / 100}% of accepted quotes`, { exact: true }),
   ).toBeVisible();
+  // The calculator marks the plan that costs least for the numbers typed in.
+  await page.getByLabel('Quotes a month').press('End');
+  await page.getByLabel('A typical job').fill('5000');
+  const month = page.getByRole('list', { name: 'Your month' });
+  await expect(month.getByRole('listitem').filter({ hasText: 'Lowest for you' })).toHaveCount(1);
+  await expect(month.getByRole('listitem').filter({ hasText: 'Lowest for you' })).toContainText(
+    'Subscription',
+  );
   await page.goto('/privacy');
   const site = (await (await page.request.get('/api/v1/site')).json()).data;
   await expect(page.locator('#contact')).toContainText(site.operatorName);

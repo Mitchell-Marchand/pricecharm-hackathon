@@ -364,6 +364,7 @@
 .qf-stamp.is-sent {
   color: var(--paper-ink);
 }
+.qf-stamp.is-free,
 .qf-stamp.is-accepted {
   color: var(--stamp-green);
 }

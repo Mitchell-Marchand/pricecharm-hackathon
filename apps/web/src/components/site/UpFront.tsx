@@ -13,7 +13,7 @@ let loading: Promise<Pricing> | null = null;
  * The prices on the home page, in the visitor's own currency once the browser says where it is.
  * The page renders in dollars first, from the server.
  */
-function useVisitorPricing(initial: Pricing) {
+export function useVisitorPricing(initial: Pricing) {
   const [pricing, setPricing] = useState(initial);
   useEffect(() => {
     const guess = guessCurrency();

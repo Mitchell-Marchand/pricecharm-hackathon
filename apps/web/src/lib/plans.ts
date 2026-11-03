@@ -17,6 +17,8 @@ export interface Pricing {
   trialQuotes: number;
   /** Quote fees in the 30 days after the first card stop here. An older API leaves it out. */
   firstMonthMaxCents?: number;
+  /** The monthly limit on fees a new account starts with. An older API leaves it out. */
+  spendingCapCents?: number;
 }
 
 /** The API's defaults, shown only if it can't be reached. */
@@ -33,6 +35,7 @@ export const DEFAULT_PRICING: Pricing = {
   },
   trialQuotes: 0,
   firstMonthMaxCents: 4900,
+  spendingCapCents: 10000,
 };
 
 export type Plan = 'per_quote' | 'per_accepted' | 'monthly' | 'yearly';
@@ -43,7 +46,7 @@ export const choiceOf = (plan: Plan): PlanChoice =>
   plan === 'monthly' || plan === 'yearly' ? 'subscription' : plan;
 
 const percent = (pricing: Pricing) => `${pricing.accepted.basisPoints / 100}%`;
-const freeTime = (days: number) => (days === 7 ? 'week' : `${days} days`);
+export const freeTime = (days: number) => (days === 7 ? 'week' : `${days} days`);
 
 /** A plan in a few words: "$2 per quote", "$49 a month". */
 export function planName(plan: Plan, pricing: Pricing): string {
