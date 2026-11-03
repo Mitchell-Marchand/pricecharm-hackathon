@@ -175,7 +175,11 @@ agentRouter.get('/agent/businesses/:slug', async (req, res) => {
       services,
       serviceArea: String(business.service_area ?? ''),
       taking,
-      asksAbout: await questionChecklist(id),
+      // The chat also asks where the job is, as an area. Never the street address.
+      asksAbout: [
+        ...(await questionChecklist(id)),
+        'Where is the job? A ZIP or postcode, or the town or neighborhood.',
+      ],
       priceDependsOn: {
         sizes: drivers.services.map((service) => ({
           service: service.name,

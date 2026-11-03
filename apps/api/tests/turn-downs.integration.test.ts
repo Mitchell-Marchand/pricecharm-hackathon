@@ -17,10 +17,12 @@ test(
   { skip: !enabled },
   async () => {
     process.env.UPLOAD_DIR ??= await fs.mkdtemp(path.join(os.tmpdir(), 'pricecharm-turn-downs-'));
+    // Each setup comes from its own address, so the per-address setup limit isn't shared.
+    process.env.TRUST_PROXY = '1';
     const { createApp } = await import('../src/app.js');
     const app = createApp();
-    const owner = request.agent(app),
-      stranger = request.agent(app);
+    const owner = request.agent(app).set('X-Forwarded-For', '203.0.113.81'),
+      stranger = request.agent(app).set('X-Forwarded-For', '203.0.113.82');
     for (const agent of [owner, stranger])
       await agent.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
     await owner
@@ -207,7 +209,7 @@ test(
     const customerAgent = () =>
       request.agent(app).set('X-Forwarded-For', `198.51.100.${100 + ++visitor}`);
 
-    const owner = request.agent(app);
+    const owner = request.agent(app).set('X-Forwarded-For', '203.0.113.83');
     await owner.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
     await owner
       .patch('/api/v1/onboarding/business')

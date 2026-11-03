@@ -224,7 +224,8 @@ export function KnowsEditor({
           Questions it asks
         </h2>
         <p className="mt-2 text-ink-2">
-          In this order. It skips any the customer already answered or the photos show.
+          In this order. It skips any the customer already answered or the photos show. It also asks
+          where the job is, a ZIP code or neighborhood, and never the street address.
         </p>
         <EditableList
           name="Questions it asks"
