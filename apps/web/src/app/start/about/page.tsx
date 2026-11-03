@@ -24,7 +24,7 @@ export default function AboutStep() {
 /** The business's name, where it works from, and what its quotes are in. */
 function AboutForm({ business }: { business: BusinessDraft }) {
   const router = useRouter();
-  const { updateBusiness, goTo } = useOnboarding();
+  const { updateBusiness, goTo, flush } = useOnboarding();
   const [tried, setTried] = useState(false);
   const [moving, setMoving] = useState(false);
   const [changingCurrency, setChangingCurrency] = useState(false);
@@ -66,11 +66,14 @@ function AboutForm({ business }: { business: BusinessDraft }) {
       return show(named ? placeInput.current : nameInput.current);
     }
     setMoving(true);
-    pixelEvent('Lead');
-    // The first practice customer is written while they read what's coming.
-    void preparePractice().catch(() => {});
-    await goTo('practice', '/start/training');
+    // Saved first, so the first practice customer is written for this business, while they read
+    // what's coming.
+    const saved = await flush();
     setMoving(false);
+    if (!saved) return;
+    pixelEvent('Lead');
+    void preparePractice().catch(() => {});
+    void goTo('practice', '/start/training');
   };
 
   return (

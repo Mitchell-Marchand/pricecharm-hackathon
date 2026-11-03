@@ -144,6 +144,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
 
   const goTo = useCallback(
     async (step: Step, path = `/start/${step}`) => {
+      // The next screen opens at once, and saving finishes behind it: waiting on two saves made a
+      // tap on a phone feel dead. A save that fails shows in the header with Try again, and goes
+      // again with the next change.
+      router.push(path);
       if (!(await flush())) return;
       try {
         const next = await api<Onboarding>('/onboarding/step', {
@@ -154,7 +158,6 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       } catch {
         // The step is only a bookmark for coming back later; moving on still works.
       }
-      router.push(path);
     },
     [flush, router],
   );
