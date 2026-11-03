@@ -67,7 +67,7 @@ test('a trade’s ad lands on the funnel and starts setup on that trade', async 
   await expect(page.getByText('Free to train. Free to start.', { exact: false })).toBeVisible();
   // Channels that aren't ready for new owners say so.
   await expect(page.getByText('Instagram')).toContainText('soon');
-  await page.getByRole('link', { name: 'Start training free' }).first().click();
+  await page.getByRole('link', { name: 'Deliver more quotes' }).first().click();
   await expect(page).toHaveURL(/\/start\/services$/);
   await expect(page.getByRole('button', { name: 'Exterior windows' })).toHaveAttribute(
     'aria-pressed',

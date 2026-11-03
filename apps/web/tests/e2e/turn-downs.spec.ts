@@ -65,7 +65,7 @@ test('an owner turns a practice customer down, and the rule it saves can be chan
   await expect(page.getByText('Turns down jobs of 300 sq ft or less')).toBeVisible();
 
   // The next customer comes, and this one is too far.
-  await page.getByRole('button', { name: 'Next practice request' }).click();
+  await page.getByRole('button', { name: /^(Next customer|Keep training)/ }).click();
   await expect(page.getByText('Marcus T. · North Hills')).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'We don’t do this job' }).click();
   await page

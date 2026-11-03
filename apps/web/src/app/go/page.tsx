@@ -1,9 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { ArrowRight, Camera, Globe, Link2, MessageCircle, Receipt, Sprout } from 'lucide-react';
-import { Logo } from '@/components/Logo';
 import { HeroQuotes } from '@/components/site/HeroQuotes';
-import { SiteFooter } from '@/components/site/SiteHeader';
+import { SiteFooter, SiteHeader } from '@/components/site/SiteHeader';
 import { ButtonLink, Tag } from '@/components/ui';
 import { TRADES_BY_ID } from '@/lib/trades';
 import { cx } from '@/lib/util';
@@ -24,6 +22,8 @@ const CHANNELS = [
   { id: 'messenger', name: 'Messenger' },
   { id: 'quickbooks', name: 'QuickBooks' },
 ];
+/** The one thing the page asks for, in the header and twice below. */
+const CTA = 'Deliver more quotes';
 const LIVE = new Set(
   (process.env.NEXT_PUBLIC_LIVE_CHANNELS ?? '')
     .split(',')
@@ -48,12 +48,7 @@ export default async function GoPage({
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="gutter mx-auto flex h-16 w-full max-w-6xl items-center justify-between">
-        <Logo href="/" className="max-sm:[&>span]:text-[17px]" />
-        <Link href="/login" className="rounded-sm px-3 py-2 text-[15px] text-ink-2 hover:text-ink">
-          Sign in
-        </Link>
-      </header>
+      <SiteHeader focused start={{ href: start, label: CTA }} />
 
       <main className="flex-1">
         <section className="gutter mx-auto grid max-w-6xl items-center gap-12 pt-4 pb-16 md:grid-cols-[1.1fr_1fr] md:pt-12 md:pb-24">
@@ -73,7 +68,7 @@ export default async function GoPage({
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
               <ButtonLink href={start} size="lg" className="w-full sm:w-auto">
-                Start training free <ArrowRight aria-hidden />
+                {CTA} <ArrowRight aria-hidden />
               </ButtonLink>
             </div>
             <p className="mt-4 text-[15px] font-semibold">
@@ -154,7 +149,7 @@ export default async function GoPage({
               7 in 10 homeowners want a price before they call anyone.
             </p>
             <ButtonLink href={start} size="lg" variant="quote" className="shrink-0">
-              Start training free <ArrowRight aria-hidden />
+              {CTA} <ArrowRight aria-hidden />
             </ButtonLink>
           </div>
         </section>
