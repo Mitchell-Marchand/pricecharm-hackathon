@@ -394,7 +394,7 @@ function OwnerQuestion({
           <Check className="mt-0.5 size-4 shrink-0 text-go" aria-hidden />
           <span>
             Got it. It follows this on every quote now:{' '}
-            <span className="font-semibold">{question.note}</span>
+            <span className="font-semibold">{question.answer}</span>
           </span>
         </p>
       </section>
@@ -438,7 +438,7 @@ function OwnerQuestion({
             id={`${id}-own`}
             autoFocus
             className="h-10"
-            maxLength={120}
+            maxLength={100}
             placeholder="In a few words"
             // Clear of the bar at the bottom, and the keyboard on a phone.
             onFocus={(event) => event.currentTarget.scrollIntoView({ block: 'center' })}

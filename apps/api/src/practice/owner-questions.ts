@@ -152,8 +152,7 @@ export async function pickQuestion(
     String(business?.currency ?? ''),
   ).find(
     (driver) =>
-      !asked.has(driver.key) &&
-      !notes.some((note) => note.startsWith(`${sameText(driver.label)}:`)),
+      !asked.has(driver.key) && !notes.some((note) => note.startsWith(sameText(driver.ask))),
   );
   if (!question) return null;
   await mutate(
@@ -164,11 +163,16 @@ export async function pickQuestion(
   return question;
 }
 
-/** The note an answer is saved as: "Tree height: Yes, about 25% more over 30 ft." */
+/**
+ * The note an answer is saved as, with the question it answers: "Does a tree’s height change your
+ * price? Yes, about 50% more over 30 ft." Without the question a no says too much: "Plated or
+ * buffet: No, same price" was read as nothing about how the food is served changing the price,
+ * and the benchmark's owners lost their charge for a staffed buffet.
+ */
 export function answerNote(question: TradeDriver, answer: string) {
   const said = answer.trim().replace(/\s+/g, ' ');
   const sentence = said.charAt(0).toUpperCase() + said.slice(1);
-  return `${question.label}: ${sentence}${/[.!?]$/.test(sentence) ? '' : '.'}`.slice(0, 200);
+  return `${question.ask} ${sentence}${/[.!?]$/.test(sentence) ? '' : '.'}`.slice(0, 200);
 }
 
 /**

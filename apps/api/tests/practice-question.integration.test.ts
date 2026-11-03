@@ -66,7 +66,7 @@ test(
     const answered = (await reply(first.id, { answer: driver.answers[0] }).expect(200)).body
       .data as Run;
     assert.equal(answered.question?.answer, driver.answers[0]);
-    assert.match(answered.question?.note ?? '', new RegExp(`^${driver.label}: `));
+    assert.equal(answered.question?.note, `${driver.ask} ${driver.answers[0]}.`);
     let known = await knows();
     assert.ok(
       known.notes.some((note: { text: string }) => note.text === answered.question?.note),
@@ -87,7 +87,10 @@ test(
     await reply(second.id, { answer: 'No minimum' }).expect(200);
     known = await knows();
     assert.ok(
-      known.notes.some((note: { text: string }) => note.text === 'Minimum charge: No minimum.'),
+      known.notes.some(
+        (note: { text: string }) =>
+          note.text === 'What’s the least you’d charge for any job? No minimum.',
+      ),
     );
 
     // The third is skipped: nothing is saved, and it isn't asked again.

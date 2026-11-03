@@ -6,7 +6,7 @@
 export type TradeDriver = {
   /** Unique within the trade, kebab-case: 'tree-height'. */
   key: string;
-  /** A short name; the saved note starts with it: "Tree height: About 25% more over 30 ft." */
+  /** A short name for it: "Tree height". */
   label: string;
   /** The question to the owner, plain and short (90 characters at most). */
   ask: string;

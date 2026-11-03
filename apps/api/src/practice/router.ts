@@ -224,7 +224,7 @@ practiceRouter.post(
   async (req, res) => {
     const reply = z
       .union([
-        z.object({ answer: z.string().trim().min(1).max(120) }).strict(),
+        z.object({ answer: z.string().trim().min(1).max(100) }).strict(),
         z.object({ skip: z.literal(true) }).strict(),
       ])
       .parse(req.body);
