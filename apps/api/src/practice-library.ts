@@ -20,6 +20,12 @@ import { buildLibraryEntry, LIBRARY_POSITIONS } from './practice/library.js';
  * mode's customers. Slots that are already filled are left alone unless --replace is given.
  */
 
+/** Why it won't run: it would spend on paid models without being told to. Null when it may. */
+export function spendRefusal(mode: 'live' | 'demo', spend: boolean, customers: number) {
+  if (mode === 'demo' || spend) return null;
+  return `This makes about ${customers * 3} images and ${customers * 3} model calls on ${aiProvider}, which costs credits. Run it again with --spend to go ahead.`;
+}
+
 export async function buildLibrary(input: {
   trade: string;
   positions: number[];
@@ -29,10 +35,8 @@ export async function buildLibrary(input: {
 }) {
   const log = input.log ?? console.info;
   if (!TRADES_BY_ID[input.trade]) throw new Error(`There's no trade called ${input.trade}.`);
-  if (aiMode !== 'demo' && !input.spend)
-    throw new Error(
-      `This makes about ${input.positions.length * 3} images and ${input.positions.length * 2} model calls on ${aiProvider}. Run it again with --spend to go ahead.`,
-    );
+  const refusal = spendRefusal(aiMode, input.spend, input.positions.length);
+  if (refusal) throw new Error(refusal);
   const filled = new Set(
     (await rows('SELECT position FROM practice_library WHERE trade_id=?', [input.trade])).map(
       (row) => Number(row.position),

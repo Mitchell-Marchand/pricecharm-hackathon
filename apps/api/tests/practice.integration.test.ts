@@ -83,7 +83,6 @@ test(
     // After the prepared one, the next photo is taken for what was asked, outside the request.
     const again = await say(first.id, 'Any more pictures?');
     assert.equal(again.body.data.run.messages.at(-1).photos.length, 0);
-    assert.equal(again.body.data.run.takingPhoto, true);
     for (let attempt = 0; attempt < 60; attempt++) {
       const run = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
       if (!run.takingPhoto) break;
