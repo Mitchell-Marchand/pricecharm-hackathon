@@ -40,7 +40,7 @@ test(
       .patch('/api/v1/onboarding/business')
       .set('Origin', origin)
       .send({ name, services: ['Lawn mowing'] });
-    for (const step of ['jobs', 'practice', 'jobs', 'practice'])
+    for (const step of ['services', 'practice', 'services', 'practice'])
       await browser.patch('/api/v1/onboarding/step').set('Origin', origin).send({ step });
     const [business] = await rows('SELECT id,metrics_subject FROM businesses WHERE name=?', [name]);
     const subject = String(business.metrics_subject);
@@ -67,8 +67,8 @@ test(
       'account_created',
       'email_verified',
       'setup_started',
-      'setup_step:jobs',
       'setup_step:practice',
+      'setup_step:services',
     ];
     assert.deepEqual((await eventsFor(subject)).sort(), recorded);
 
