@@ -528,3 +528,18 @@ test('a long history keeps the examples most like the request', () => {
     10,
   );
 });
+
+test('one price is a rate, not a floor: six trees at $1,100 makes two trees about $367', () => {
+  const tree = (quantity: number, cents: number) => ({
+    service: 'Trimming',
+    quantity,
+    unit: 'trees',
+    cents,
+    source: 'practice' as const,
+  });
+  const once = fitRates([tree(6, 110000)]);
+  assert.equal(estimateFor(once, 'Trimming', 2, 'trees')!.cents, 36700);
+  // Two prices: the cheapest holds small jobs up, as the owner's card shows it.
+  const twice = fitRates([tree(6, 110000), tree(2, 50000)]);
+  assert.equal(estimateFor(twice, 'Trimming', 1, 'trees')!.cents, 50000);
+});
