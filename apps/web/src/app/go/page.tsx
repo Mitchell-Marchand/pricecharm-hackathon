@@ -74,7 +74,6 @@ export default async function GoPage({
             <p className="mt-4 text-[15px] font-semibold">
               Free to train. Free to start. Sign up in a minute.
             </p>
-            <p className="mt-1 text-sm text-muted">No card until you go live.</p>
           </div>
           <HeroQuotes afterHours />
         </section>

@@ -18,7 +18,7 @@ export function SiteHeader({
   focused?: boolean;
 }) {
   return (
-    <header className="gutter mx-auto flex h-18 max-w-6xl items-center justify-between gap-3 sm:gap-4">
+    <header className="gutter mx-auto flex h-18 w-full max-w-6xl items-center justify-between gap-3 sm:gap-4">
       {/* A smaller wordmark on phones leaves room for both buttons. */}
       <Logo href="/" className="max-sm:[&>span]:text-[17px]" />
       <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
@@ -63,7 +63,7 @@ export function SiteHeader({
 
 export function SiteFooter() {
   return (
-    <footer className="gutter mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 py-8 text-sm text-muted">
+    <footer className="gutter mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 py-8 text-sm text-muted">
       <span>© {new Date().getFullYear()} PriceCharm</span>
       <nav aria-label="Footer" className="flex gap-5">
         <Link href="/pricing" className="hover:text-ink">
