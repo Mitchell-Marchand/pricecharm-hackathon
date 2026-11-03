@@ -3,13 +3,48 @@ import { expect, test, type Page } from '@playwright/test';
 
 const photo = path.resolve('public/photos/patio-overview.jpg');
 
-async function finishStepOne(page: Page, name: string) {
+/** Setup's first screens, done the way an owner does them, up to the training intro. */
+async function describeBusiness(page: Page, name: string) {
   await page.goto('/start');
-  await expect(page).toHaveURL(/\/start\/business$/);
+  await expect(page).toHaveURL(/\/start\/trade$/);
   await page.getByRole('radio', { name: 'Pressure washing' }).click();
-  await page.getByLabel('Business name').fill(name);
+  await expect(page).toHaveURL(/\/start\/services$/);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page).toHaveURL(/\/start\/jobs$/);
+  await expect(page).toHaveURL(/\/start\/why$/);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/about$/);
+  await page.getByLabel('Business name').fill(name);
+  await page.getByLabel('Main location').fill('Portland, OR');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/training$/);
+}
+
+/**
+ * A signed-up pressure washing business on the try page, with its past jobs open. Past jobs come
+ * after the account now, so the business and the account are made through the API.
+ */
+async function pastJobsAfterSignup(page: Page, name: string) {
+  await page.goto('/start');
+  await expect(page).toHaveURL(/\/start\/trade$/);
+  const headers = { Origin: new URL(page.url()).origin };
+  const send = async (url: string, method: 'post' | 'patch', data: object) => {
+    const response = await page.request[method](url, { headers, data });
+    expect(response.ok(), `${url}: ${await response.text()}`).toBe(true);
+  };
+  await send('/api/v1/onboarding/business', 'patch', {
+    tradeId: 'pressure-washing',
+    services: ['Driveways', 'House wash', 'Patios & pavers'],
+    name,
+    locations: ['Portland, OR'],
+  });
+  await send('/api/v1/auth/register', 'post', {
+    firstName: 'Maya',
+    lastName: 'Lopez',
+    email: `maya-jobs-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`,
+    password: 'test password strong123',
+  });
+  await page.goto('/start/try');
+  await page.getByRole('button', { name: 'Add past jobs' }).click();
 }
 
 test('the landing page leads into setup', async ({ page }) => {
@@ -18,21 +53,38 @@ test('the landing page leads into setup', async ({ page }) => {
     page.getByRole('heading', { name: 'Accurate quotes for your customers with your own AI' }),
   ).toBeVisible();
   await page.getByRole('link', { name: 'Get started' }).first().click();
-  await expect(page).toHaveURL(/\/start\/business$/);
+  await expect(page).toHaveURL(/\/start\/trade$/);
   await expect(
     page.getByRole('heading', { name: 'What kind of business do you run?' }),
   ).toBeVisible();
 });
 
-test('step 1 saves the trade, services and business details as you go', async ({ page }) => {
+test('a trade’s ad lands on the funnel and starts setup on that trade', async ({ page }) => {
+  await page.goto('/go?trade=window-cleaning&utm_source=meta');
+  await expect(
+    page.getByRole('heading', { name: /4 in 10 quote requests come in after you.ve closed/ }),
+  ).toBeVisible();
+  await expect(page.getByText('Free to train. Free to start.', { exact: false })).toBeVisible();
+  // Channels that aren't ready for new owners say so.
+  await expect(page.getByText('Instagram')).toContainText('soon');
+  await page.getByRole('link', { name: 'Start training free' }).first().click();
+  await expect(page).toHaveURL(/\/start\/services$/);
+  await expect(page.getByRole('button', { name: 'Exterior windows' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('setup asks one thing a screen and saves each as you go', async ({ page }) => {
   await page.goto('/start');
-  await expect(page).toHaveURL(/\/start\/business$/);
-  const next = page.getByRole('button', { name: 'Continue' });
+  await expect(page).toHaveURL(/\/start\/trade$/);
   // Continue never sits disabled: it says what's missing instead.
-  await next.click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Pick your trade, or type it in the search.')).toBeVisible();
-  await expect(page).toHaveURL(/\/start\/business$/);
+  await expect(page).toHaveURL(/\/start\/trade$/);
+  // A tap on a trade is the answer: it moves straight on.
   await page.getByRole('radio', { name: 'Window cleaning' }).click();
+  await expect(page).toHaveURL(/\/start\/services$/);
   await expect(page.getByRole('button', { name: 'Exterior windows' })).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -40,78 +92,88 @@ test('step 1 saves the trade, services and business details as you go', async ({
   await page.getByRole('button', { name: 'Skylights' }).click();
   await page.getByPlaceholder('Add a service').fill('Solar panels');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
-  await next.click();
-  await expect(page.getByText('Add your business name.')).toBeVisible();
-  await expect(page.getByLabel('Business name')).toBeFocused();
-  await page.getByLabel('Business name').fill('Clearview Windows');
-  await page.getByLabel('Where do you work?').fill('Boise, ID');
-  await page.getByLabel(/How far you.ll travel/).selectOption('50');
   await expect(page.getByText('Saved.')).toBeVisible();
 
-  await page.reload();
-  await expect(page.getByLabel('Business name')).toHaveValue('Clearview Windows');
-  await expect(page.getByLabel('Where do you work?')).toHaveValue('Boise, ID');
-  await expect(page.getByLabel(/How far you.ll travel/)).toHaveValue('50');
+  // Coming back, tapping the trade they picked keeps the services they chose.
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page).toHaveURL(/\/start\/trade$/);
+  await page.getByRole('radio', { name: 'Window cleaning' }).click();
+  await expect(page).toHaveURL(/\/start\/services$/);
   for (const service of ['Exterior windows', 'Skylights', 'Solar panels'])
     await expect(page.getByRole('button', { name: service })).toHaveAttribute(
       'aria-pressed',
       'true',
     );
-  // Coming back, tapping the trade they picked goes to their services and keeps them.
-  await page.getByRole('radio', { name: 'Window cleaning' }).click();
-  await expect(
-    page.getByRole('heading', { name: 'Which of these do you offer?' }),
-  ).toBeInViewport();
-  for (const service of ['Skylights', 'Solar panels'])
-    await expect(page.getByRole('button', { name: service })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
 
-  await next.click();
-  await expect(page).toHaveURL(/\/start\/jobs$/);
+  // Between questions, a number about their trade.
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/why$/);
+  await expect(page.getByText('quote requests a week come in after hours')).toBeVisible();
+  await expect(
+    page.getByText(/window cleaning business like yours gets about 14 a week/),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect(page).toHaveURL(/\/start\/about$/);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('Add your business name.')).toBeVisible();
+  await expect(page.getByLabel('Business name')).toBeFocused();
+  await page.getByLabel('Business name').fill('Clearview Windows');
+  await page.getByLabel('Main location').fill('Boise, ID');
+  await page.getByRole('button', { name: 'Add another location' }).click();
+  await page.getByLabel('Location 2').fill('Meridian, ID');
+  await expect(page.getByText(/How far you.ll travel/)).toHaveCount(0);
+  await expect(page.getByText('Saved.')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Business name')).toHaveValue('Clearview Windows');
+  await expect(page.getByLabel('Main location')).toHaveValue('Boise, ID');
+  await expect(page.getByLabel('Location 2')).toHaveValue('Meridian, ID');
+
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/training$/);
+  await expect(page.getByRole('heading', { name: 'Ready to start training?' })).toBeVisible();
+  await expect(page.getByText('By starting, you agree to our', { exact: false })).toBeVisible();
+  // The fact and training screens aren't bookmarks: setup picks up at practice.
   await page.goto('/start');
-  await expect(page).toHaveURL(/\/start\/jobs$/, { timeout: 15_000 });
+  await expect(page).toHaveURL(/\/start\/practice$/, { timeout: 15_000 });
 });
 
 test('a trade that isn’t listed is picked straight from the search', async ({ page }) => {
   await page.goto('/start');
-  await expect(page).toHaveURL(/\/start\/business$/);
+  await expect(page).toHaveURL(/\/start\/trade$/);
   const search = page.getByLabel('Search trades');
   await search.fill('Dog grooming');
   await page.getByRole('radio', { name: 'Use “Dog grooming”' }).click();
-  const picked = page.getByRole('radio', { name: 'Dog grooming', exact: true });
-  await expect(picked).toHaveAttribute('aria-checked', 'true');
+  await expect(page).toHaveURL(/\/start\/services$/);
   await expect(page.getByRole('button', { name: 'Dog grooming', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await search.fill('');
-  await expect(picked, 'Clearing the search keeps it in view').toHaveAttribute(
-    'aria-checked',
-    'true',
-  );
+  await page.getByRole('button', { name: 'Back' }).click();
+  const picked = page.getByRole('radio', { name: 'Dog grooming', exact: true });
+  await expect(picked).toHaveAttribute('aria-checked', 'true');
 
-  await search.fill('Pet sitting');
-  await search.press('Enter');
-  await expect(page.getByRole('radio', { name: 'Pet sitting', exact: true })).toHaveAttribute(
-    'aria-checked',
+  await page.getByLabel('Search trades').fill('Pet sitting');
+  await page.getByLabel('Search trades').press('Enter');
+  await expect(page).toHaveURL(/\/start\/services$/);
+  await expect(page.getByRole('button', { name: 'Pet sitting', exact: true })).toHaveAttribute(
+    'aria-pressed',
     'true',
   );
-  await page.getByLabel('Business name').fill('Clean Paws');
-  await expect(page.getByText('Saved.')).toBeVisible();
   await page.reload();
+  await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByRole('radio', { name: 'Pet sitting', exact: true })).toHaveAttribute(
     'aria-checked',
     'true',
   );
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page).toHaveURL(/\/start\/jobs$/);
+  // Its card takes them on too, as a listed trade's does.
+  await page.getByRole('radio', { name: 'Pet sitting', exact: true }).click();
+  await expect(page).toHaveURL(/\/start\/services$/);
 });
 
 test('the public pages render without sideways scrolling on a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/', '/demo', '/pricing', '/privacy', '/terms']) {
+  for (const path of ['/', '/go', '/demo', '/pricing', '/privacy', '/terms']) {
     await page.goto(path);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),
@@ -133,7 +195,7 @@ test('the public pages render without sideways scrolling on a phone', async ({ p
 });
 
 test('the job sheet marks what the API turned down', async ({ page }) => {
-  await finishStepOne(page, 'Moss & Stone Exterior Care');
+  await pastJobsAfterSignup(page, 'Moss & Stone Exterior Care');
   await page.getByRole('button', { name: 'Add a usual Driveways job' }).click();
   const sheet = page.getByRole('dialog', { name: 'Add a job' });
   await sheet.getByLabel('What was the job?').fill('Two-car driveway.');
@@ -171,20 +233,23 @@ test('the job sheet marks what the API turned down', async ({ page }) => {
   await expect(sheet).toBeHidden();
 });
 
-test('step 2 asks for a small, a usual and a big job, and edits and removes them', async ({
+test('past jobs ask for a small, a usual and a big job, and edit and remove them', async ({
   page,
 }) => {
-  await finishStepOne(page, 'Moss & Stone Exterior Care');
-  const next = page.getByRole('button', { name: 'Continue' });
-  await expect(next).toBeDisabled();
+  await pastJobsAfterSignup(page, 'Moss & Stone Exterior Care');
   await expect(page.getByRole('region', { name: 'Driveways' })).toContainText('0 of 3 with a size');
   await expect(page.getByRole('button', { name: 'Add a Patios & pavers job' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add a usual Driveways job' }).click();
   const sheet = page.getByRole('dialog', { name: 'Add a job' });
   await expect(sheet).toContainText('A usual Driveways job, the kind you do most.');
-  await sheet.locator('input[type=file]').setInputFiles(photo);
-  await expect(sheet.getByRole('img', { name: 'Job photo 1' })).toBeVisible();
+  // Photos picked together all arrive, however many: they upload in turn.
+  await sheet.locator('input[type=file]').setInputFiles([photo, photo, photo, photo]);
+  for (const index of [1, 2, 3, 4])
+    await expect(sheet.getByRole('img', { name: `Job photo ${index}` })).toBeVisible();
+  for (const index of [4, 3, 2])
+    await sheet.getByRole('button', { name: `Remove photo ${index}` }).click();
+  await expect(sheet.getByRole('img', { name: 'Job photo 2' })).toHaveCount(0);
   await sheet.getByRole('button', { name: 'Patios & pavers' }).click();
   await sheet.getByLabel('What was the job?').fill('Back patio and walkway.');
   await sheet.getByLabel('What did you charge?').fill('275');
@@ -205,9 +270,9 @@ test('step 2 asks for a small, a usual and a big job, and edits and removes them
   await expect(card).toContainText('$25 off, repeat customer');
   await expect(card.locator('img')).toBeVisible();
   await expect(patios.getByRole('button', { name: 'Add a big Patios & pavers job' })).toBeVisible();
-  await expect(next).toBeEnabled();
 
   await page.reload();
+  await page.getByRole('button', { name: 'Add past jobs' }).click();
   await card.getByRole('button', { name: 'Edit' }).click();
   const edit = page.getByRole('dialog', { name: 'Edit job' });
   await edit.getByLabel('What did you charge?').fill('290');
@@ -224,11 +289,10 @@ test('step 2 asks for a small, a usual and a big job, and edits and removes them
 
   await card.getByRole('button', { name: 'Remove' }).click();
   await expect(page.getByRole('button', { name: 'Add a Patios & pavers job' })).toBeVisible();
-  await expect(next).toBeDisabled();
 });
 
 test('several old invoices are read in the background and saved together', async ({ page }) => {
-  await finishStepOne(page, 'Driveway Pros');
+  await pastJobsAfterSignup(page, 'Driveway Pros');
   await page.locator('input[type=file][multiple][accept*="application/pdf"]').setInputFiles([
     {
       name: 'invoice-1187.pdf',
@@ -266,26 +330,19 @@ test('several old invoices are read in the background and saved together', async
       .filter({ hasText: 'Driveway wash' }),
   ).toContainText('$20 off, repeat customer');
   await expect(page.getByRole('list', { name: 'Your House wash jobs' })).toContainText('$410');
-  await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled();
   await page.reload();
+  await page.getByRole('button', { name: 'Add past jobs' }).click();
   await expect(page.getByRole('heading', { name: 'Check these jobs' })).toHaveCount(0);
 });
 
-test('step 3 runs six practice customers and learns from each one', async ({ page }) => {
-  await finishStepOne(page, 'Moss & Stone Exterior Care');
-  const created = await page.request.post('/api/v1/onboarding/jobs', {
-    headers: { Origin: new URL(page.url()).origin },
-    data: {
-      serviceName: 'Driveways',
-      description: 'Back patio and walkway, about 600 sq ft.',
-      priceCents: 27500,
-      size: '600 sq ft',
-    },
-  });
-  expect(created.status()).toBe(201);
-  await page.reload();
-  await page.getByRole('button', { name: 'Continue' }).click();
+test('practice comes first, then the account, a test, the plans and going live', async ({
+  page,
+}) => {
+  await describeBusiness(page, 'Moss & Stone Exterior Care');
+  await page.getByRole('button', { name: 'Start practice' }).click();
   await expect(page).toHaveURL(/\/start\/practice$/);
+  const meter = page.getByRole('meter', { name: 'How trained your Charm is' });
+  await expect(meter).toHaveAttribute('aria-valuenow', '0');
 
   const quote = async (label: string, price: string) => {
     await page.getByRole('button', { name: 'I have enough to quote' }).click();
@@ -306,6 +363,12 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await reply.press('Enter');
   await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible();
   await quote('Patio wash, about 550 sq ft', '280');
+  await expect(meter).not.toHaveAttribute('aria-valuenow', '0');
+  await expect(page.getByText(/About \d+ more to reach 85%/)).toBeVisible();
+  // After one customer they can stop and pick it up later, from an emailed link.
+  await page.getByRole('button', { name: /finish this later/ }).click();
+  await expect(page.getByRole('dialog', { name: 'Save your Charm' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByText('Asks about size')).toBeVisible();
   await expect(page.getByText(/Before you sent yours, it guessed \$/)).toBeVisible();
   await page.getByRole('button', { name: 'Fix' }).first().click();
@@ -313,7 +376,7 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Asks about size and stains')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Next practice request' }).click();
+  await page.getByRole('button', { name: /^(Next customer|Keep training)/ }).click();
   await expect(page.getByText('Marcus T. · North Hills')).toBeVisible({ timeout: 15_000 });
   // Wanting to see it first is said in the chat. The customer asks once for a rough price.
   await expect(page.getByRole('button', { name: /see it first/i })).toHaveCount(0);
@@ -327,7 +390,7 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
     timeout: 15_000,
   });
 
-  await page.getByRole('button', { name: 'Next practice request' }).click();
+  await page.getByRole('button', { name: /^(Next customer|Keep training)/ }).click();
   await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });
   await quote('Flagstone wash, about 350 sq ft', '175');
   await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
@@ -337,7 +400,7 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
     ['Marcus T. · North Hills', 'Patio wash, about 400 sq ft', '220'],
     ['Priya S. · Old Town', 'Flagstone wash, about 350 sq ft', '175'],
   ]) {
-    await page.getByRole('button', { name: 'Next practice request' }).click();
+    await page.getByRole('button', { name: /^(Next customer|Keep training)/ }).click();
     await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
     await quote(label, price);
   }
@@ -349,7 +412,7 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
     page.getByRole('heading', { name: /^Your Charm is (\d+% trained|ready to quote)\.$/ }),
   ).toBeVisible();
   await expect(
-    page.getByText('It learned from 1 past job and 6 practice customers.', { exact: false }),
+    page.getByText('It learned from 6 practice customers.', { exact: false }),
   ).toBeVisible();
   await expect(page.getByText('How big is the area?')).toBeVisible();
   // How it prices is the rate its drafts are held to, not a line from each practice run.
@@ -377,11 +440,9 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await expect(quoting).toBeChecked();
   const services = charm.getByRole('list', { name: 'Your services' });
   const driveways = services.getByRole('listitem').filter({ hasText: 'Driveways' });
-  await expect(driveways).toContainText(
-    'Customers get a price range for now. Add 2 more Driveways jobs with a size.',
-  );
+  await expect(driveways).toContainText(/Add (\d+ more |\d+ |a )Driveways jobs? with a size\./);
   await expect(services.getByRole('listitem').filter({ hasText: 'House wash' })).toContainText(
-    'Add 3 House wash jobs with a size.',
+    /Add (\d+ more |\d+ |a )House wash jobs? with a size\./,
   );
 
   // Each gap is one tap away: a job to add here, or a practice customer for that service.
@@ -391,7 +452,6 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await sheet.getByLabel('What did you charge?').fill('400');
   await sheet.getByLabel('How big was it?').fill('1,000 sq ft');
   await sheet.getByRole('button', { name: 'Save job' }).click();
-  await expect(driveways).toContainText('Add a Driveways job with a size.');
   await driveways.getByRole('button', { name: 'Practice a Driveways job' }).click();
   await expect(page).toHaveURL(/\/start\/practice$/);
   await expect(page.getByRole('heading', { name: 'Practice a Driveways job' })).toBeVisible();
@@ -400,11 +460,10 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
   await page.getByRole('button', { name: 'See your Charm' }).click();
   await expect(page).toHaveURL(/\/start\/ready$/);
   await expect(
-    page.getByText('It learned from 2 past jobs and 7 practice customers.', { exact: false }),
+    page.getByText('It learned from 7 practice customers and 1 past job.', { exact: false }),
   ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Create your free account' }).click();
-  await expect(page).toHaveURL(/\/start\/account$/);
+  // The account is made right here, next to what it learned.
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByText('Add your first name.')).toBeVisible();
   await expect(page.getByText('Check the box to agree first.')).toBeVisible();
@@ -417,30 +476,36 @@ test('step 3 runs six practice customers and learns from each one', async ({ pag
 
   // Then trying it as a customer would, in the same chat, before any plan.
   await expect(page).toHaveURL(/\/start\/try$/);
-  await expect(page.getByRole('heading', { name: 'Try your Charm.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Ask for a quote' }).click();
+  await expect(page.getByRole('heading', { name: 'Test your Charm.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Test your Charm' }).click();
   const trial = page.getByRole('dialog', { name: 'Try your Charm' });
   await expect(trial.getByText(/this is a test\. Nothing is emailed or billed\./)).toBeVisible();
   await expect(trial.getByText(/I'm the quote assistant for Moss & Stone/)).toBeVisible();
   await trial.getByRole('button', { name: 'Close' }).click();
 
   // Then the plans, then a card, then going live. No email check first.
-  await page.getByRole('button', { name: 'Go live' }).click();
+  await page.getByRole('button', { name: 'Let’s go live' }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
-  await expect(page.getByRole('heading', { name: 'Pick a plan. Then go live.' })).toBeVisible();
-  const plans = page.getByRole('list', { name: 'Plans' });
+  await expect(page.getByRole('heading', { name: 'Pick how you pay.' })).toBeVisible();
+  const plans = page.getByRole('radiogroup', { name: 'Plans' });
   for (const name of ['Pay per quote', 'Pay when you win', 'Subscription'])
-    await expect(plans.getByRole('listitem', { name, exact: true })).toBeVisible();
-  const subscription = plans.getByRole('listitem', { name: 'Subscription' });
+    await expect(plans.getByRole('radio', { name, exact: true })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  // Nothing is picked for them: the button says to pick one.
+  await page.getByRole('button', { name: 'Pick a plan' }).click();
+  await expect(page.getByText('Tap one of the plans above first.')).toBeVisible();
+  const subscription = plans.getByRole('radio', { name: 'Subscription' });
   await expect(subscription).toContainText('First week free');
-  await subscription.getByRole('radio', { name: 'Yearly' }).click();
+  await page.getByRole('radio', { name: 'Yearly' }).click();
+  await expect(subscription).toHaveAttribute('aria-checked', 'true');
   await expect(subscription).toContainText('$499');
   await expect(page.getByText('Switch plans or cancel any time.', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toHaveCount(0);
-  await plans
-    .getByRole('listitem', { name: 'Pay per quote' })
-    .getByRole('button', { name: 'Start with $2 a quote' })
-    .click();
+  await plans.getByRole('radio', { name: 'Pay per quote' }).click();
+  await expect(subscription).toHaveAttribute('aria-checked', 'false');
+  await page.getByRole('button', { name: 'Start with $2 a quote' }).click();
   await expect(page.getByRole('heading', { name: 'Ready when you are.' })).toBeVisible();
   await expect(page.getByText('$2 per quote, card added')).toBeVisible();
   await expect(

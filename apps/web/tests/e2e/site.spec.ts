@@ -164,12 +164,11 @@ test('the demo page starts setup on the trade being tried', async ({ page }) => 
   await expect(create).toHaveCount(2);
   await expect(create.last()).toHaveAttribute('href', '/start?trade=roofing');
   await create.first().click();
-  await expect(page).toHaveURL(/\/start\/business#services$/);
+  await expect(page).toHaveURL(/\/start\/services$/);
+  await expect(page.getByRole('heading', { name: 'Which of these do you offer?' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back' }).click();
   await expect(page.getByRole('radio', { name: 'Roofing' })).toHaveAttribute(
     'aria-checked',
     'true',
   );
-  await expect(
-    page.getByRole('heading', { name: 'Which of these do you offer?' }),
-  ).toBeInViewport();
 });
