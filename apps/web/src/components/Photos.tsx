@@ -9,10 +9,13 @@ export function PhotoGrid({
   photos,
   label,
   className,
+  onOpen,
 }: {
   photos: string[];
   label: string;
   className?: string;
+  /** Opens a photo somewhere else, like a full-screen viewer, instead of the lightbox here. */
+  onOpen?: (index: number) => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   if (!photos.length) return null;
@@ -29,7 +32,7 @@ export function PhotoGrid({
           <button
             key={`${photo.slice(0, 40)}-${index}`}
             type="button"
-            onClick={() => setOpen(photo)}
+            onClick={() => (onOpen ? onOpen(index) : setOpen(photo))}
             className="group relative overflow-hidden rounded-sm bg-surface-2"
             aria-label={`Open photo ${index + 1} of ${photos.length} from ${label}`}
           >
@@ -41,7 +44,7 @@ export function PhotoGrid({
           </button>
         ))}
       </div>
-      <Lightbox photo={open} onClose={() => setOpen(null)} label={label} />
+      {!onOpen && <Lightbox photo={open} onClose={() => setOpen(null)} label={label} />}
     </>
   );
 }

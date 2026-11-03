@@ -80,8 +80,19 @@ test(
       1,
       'Asking gets the extra photo',
     );
+    // After the prepared one, the next photo is taken for what was asked, outside the request.
     const again = await say(first.id, 'Any more pictures?');
     assert.equal(again.body.data.run.messages.at(-1).photos.length, 0);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const run = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
+      if (!run.takingPhoto) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const taken = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
+    assert.equal(taken.messages.at(-1).photos.length, 1, 'The asked-for photo arrives');
+    const noMore = await say(first.id, 'Can you send another photo?');
+    assert.equal(noMore.body.data.run.messages.at(-1).photos.length, 0, 'Two at most');
+    assert.equal(noMore.body.data.run.takingPhoto, false);
     const priced = await say(first.id, 'I could do it for $280.');
     assert.equal(priced.body.data.nudge, true, 'A price in chat nudges toward the quote builder');
     assert.equal(

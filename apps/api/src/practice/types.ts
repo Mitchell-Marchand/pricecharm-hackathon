@@ -9,9 +9,19 @@ export type Fact = {
   /** How the owner would ask it, like "How big is the area?" */
   question: string;
   answer: string;
+  /** The customer's photos show it, like the size, the state it's in or a second story. */
+  visible?: boolean;
 };
 
 export type PracticePhoto = { scene: string; photoId: string | null };
+
+/** How far the job is from the business: miles for US dollar businesses, km otherwise. */
+export type Distance = {
+  value: number;
+  unit: 'mi' | 'km';
+  /** The owner's location it's measured from, as they typed it. */
+  from?: string;
+};
 
 /** A fictional customer request, written for this business's trade. */
 export type PracticeScenario = {
@@ -37,6 +47,10 @@ export type PracticeScenario = {
   unit?: string;
   /** What kind of request this was written to be, so the next one can be different. */
   situation?: string;
+  /** How far the job is from the owner. Older customers don't have it. */
+  distance?: Distance | null;
+  /** The checked library entry this customer was copied from (src/practice/library.ts). */
+  libraryId?: string;
 };
 
 export const discountSchema = z

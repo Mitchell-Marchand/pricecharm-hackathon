@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { notesFor, type Walkaround } from '../ai/walkaround.js';
 import type { DraftedQuote, PracticeScenario, QuoteLine } from './types.js';
 
 /**
@@ -72,8 +73,14 @@ type DemoCustomer = {
   opener: string;
   photos: string[];
   extraPhoto: { photo: string; text: string };
+  /** The photo they take when asked for one more, and what they send with it. */
+  askedPhoto: { photo: string; text: string };
   areaSqFt: number;
   kindLabel: string;
+  /** How far away they are, in miles. */
+  miles: number;
+  /** What demo mode's photo reading says their photos show. */
+  reading: Pick<Walkaround, 'summary' | 'counts' | 'area' | 'condition' | 'material' | 'findings'>;
   facts: [key: string, answer: string][];
   suggestions: string[];
   addOns: { pattern: RegExp; typicalCents: number }[];
@@ -99,8 +106,19 @@ const CUSTOMERS: DemoCustomer[] = [
       photo: 'patio-door',
       text: "Here's the spot right outside the sliding door. It's the worst part.",
     },
+    askedPhoto: { photo: 'patio-overview', text: "Here's the whole patio from the back steps." },
     areaSqFt: 550,
     kindLabel: 'patios',
+    miles: 6,
+    reading: {
+      summary:
+        '[Demo] A concrete patio with a flagstone section in the middle, dark patches all over and worst by the sliding door.',
+      counts: [{ label: 'planters', phrase: 'planter', unit: 'planters', count: 3, sparkCount: 3 }],
+      area: { surface: 'patio', low: 500, high: 600, unit: 'sq ft', basis: 'the sliding door' },
+      condition: 'dark stains, worst by the door',
+      material: 'concrete with a flagstone middle',
+      findings: [],
+    },
     facts: [
       [
         'size',
@@ -145,8 +163,20 @@ const CUSTOMERS: DemoCustomer[] = [
       'Hey, I need the back patio cleaned before a party on the 14th. My neighbor says you give a discount when two houses on the street book together. Is that still a thing? Pics attached.',
     photos: ['table-patio', 'table-stains'],
     extraPhoto: { photo: 'planters', text: "This is by the planters. It's pretty green there." },
+    askedPhoto: { photo: 'table-patio', text: 'Here it is from the back door.' },
     areaSqFt: 700,
     kindLabel: 'patios',
+    miles: 11,
+    // Smaller than Marcus says, so demo mode shows his size taking what the photos show.
+    reading: {
+      summary:
+        '[Demo] A concrete patio with a table, chairs and pots, dark spots under the table and green by the planters.',
+      counts: [{ label: 'chairs', phrase: 'chair', unit: 'chairs', count: 6, sparkCount: 6 }],
+      area: { surface: 'patio', low: 450, high: 550, unit: 'sq ft', basis: 'the table and chairs' },
+      condition: 'dark spots under the table, green by the planters',
+      material: 'concrete with a flagstone edge',
+      findings: [],
+    },
     facts: [
       ['size', 'Around 700 sq ft. The table area is the biggest part.'],
       ['surface', 'Concrete, with a strip of flagstone along the edge.'],
@@ -191,8 +221,19 @@ const CUSTOMERS: DemoCustomer[] = [
       photo: 'flagstone-close',
       text: 'This is the section that moves. The dark stone in the middle rocks the most.',
     },
+    askedPhoto: { photo: 'flagstone-wide', text: 'Here’s the whole thing, walkway and all.' },
     areaSqFt: 350,
     kindLabel: 'flagstone',
+    miles: 4,
+    reading: {
+      summary:
+        '[Demo] A flagstone patio and walkway, black and green in the shade, with a few stones sitting loose.',
+      counts: [],
+      area: { surface: 'flagstone', low: 300, high: 400, unit: 'sq ft', basis: 'the back steps' },
+      condition: 'black and green in the shade',
+      material: 'flagstone, partly in mortar',
+      findings: [{ what: 'loose stones', detail: 'five or so, one cracked', severity: 'moderate' }],
+    },
     facts: [
       [
         'size',
@@ -229,6 +270,8 @@ const CUSTOMERS: DemoCustomer[] = [
   },
 ];
 const BY_ID = Object.fromEntries(CUSTOMERS.map((customer) => [customer.id, customer]));
+/** What the demo customers' photos show. */
+const VISIBLE = new Set(['size', 'surface', 'stains', 'damage', 'furniture']);
 
 export function demoScenario(position: number, services: string[]): PracticeScenario {
   const customer = CUSTOMERS[position % CUSTOMERS.length];
@@ -239,8 +282,15 @@ export function demoScenario(position: number, services: string[]): PracticeScen
     place: customer.place,
     serviceName:
       services.find((name) => /patio|paver|flat/i.test(name)) ?? services[0] ?? 'Patio cleaning',
+    quantity: customer.areaSqFt,
+    unit: 'sq ft',
     opener: customer.opener,
-    facts: customer.facts.map(([key, answer]) => ({ key, ...LABELS[key], answer })),
+    facts: customer.facts.map(([key, answer]) => ({
+      key,
+      ...LABELS[key],
+      answer,
+      ...(VISIBLE.has(key) ? { visible: true } : {}),
+    })),
     photos: customer.photos.map((photo) => ({ scene: photo, photoId: null })),
     extraPhoto: { scene: customer.extraPhoto.photo, text: customer.extraPhoto.text, photoId: null },
     suggestions: customer.suggestions,
@@ -257,6 +307,32 @@ export function demoPhoto(scene: string): Promise<Buffer> {
   return fs.readFile(new URL(`../../assets/practice/${scene}.jpg`, import.meta.url));
 }
 
+/** How far a demo customer is, in miles. */
+export function demoMiles(scenario: PracticeScenario): number {
+  return (BY_ID[scenario.demoId ?? ''] ?? CUSTOMERS[0]).miles;
+}
+
+/**
+ * Demo mode's stand-in for reading a practice customer's photos: a fixed, labelled reading of
+ * the bundled photos, so local runs and tests show the card without Meta.
+ */
+export function demoPhotoReading(scenario: PracticeScenario): Walkaround {
+  const customer = BY_ID[scenario.demoId ?? ''] ?? CUSTOMERS[0];
+  const area = customer.reading.area;
+  const reading = {
+    source: 'photos' as const,
+    narration: '',
+    serviceName: scenario.serviceName,
+    ...customer.reading,
+    quantity: area ? Math.round((area.low + area.high) / 2) : null,
+    unit: area ? area.unit : '',
+    access: '',
+    extras: [],
+    overlays: [],
+  };
+  return { ...reading, notes: notesFor(reading) };
+}
+
 const NOT_SURE = [
   "Hmm, I'm not sure. What should I look for?",
   'Good question. I honestly don’t know.',
@@ -267,6 +343,9 @@ type DemoReply = {
   reply: string;
   askedKeys: string[];
   sendPhoto: boolean;
+  /** A new photo to take, as a bundled photo's name. Empty sends the prepared one. */
+  photoScene: string;
+  photoText: string;
   mentionsPrice: boolean;
   visitAsk: boolean;
   visitReason: string;
@@ -275,7 +354,7 @@ type DemoReply = {
 export function demoReply(
   scenario: PracticeScenario,
   text: string,
-  context: { photoSent: boolean; turn: number },
+  context: { photoAvailable: boolean; preparedPhoto: boolean; turn: number },
 ) {
   const customer = BY_ID[scenario.demoId ?? ''] ?? CUSTOMERS[0];
   const message = text.trim();
@@ -283,6 +362,8 @@ export function demoReply(
     reply,
     askedKeys: [],
     sendPhoto: false,
+    photoScene: '',
+    photoText: '',
     mentionsPrice: false,
     visitAsk: false,
     visitReason: '',
@@ -290,10 +371,17 @@ export function demoReply(
   });
   if (VISIT_ASK.test(message) && !PRICE_MENTION.test(message))
     return answer(customer.visitPushback, { visitAsk: true, visitReason: customer.siteVisitCue });
+  // The prepared photo goes first, straight away. After it, one more is taken for what they asked.
   if (PHOTO_REQUEST.test(message))
-    return context.photoSent
+    return !context.photoAvailable
       ? answer("That's all the photos I have right now. Anything else you need?")
-      : answer(scenario.extraPhoto.text, { sendPhoto: true });
+      : context.preparedPhoto
+        ? answer(scenario.extraPhoto.text, { sendPhoto: true })
+        : answer('Sure, give me a minute.', {
+            sendPhoto: true,
+            photoScene: customer.askedPhoto.photo,
+            photoText: customer.askedPhoto.text,
+          });
   const matches = scenario.facts.filter((fact) => PATTERNS[fact.key]?.test(message));
   if (!matches.length && PRICE_MENTION.test(message))
     return answer(customer.priceNudge, { mentionsPrice: true });
@@ -328,6 +416,12 @@ type PriorQuote = {
   discount: { kind: string; value: number } | null;
 };
 
+/** A demo customer's size: what their photos and the owner's fixes made it, or their usual one. */
+function areaOf(scenario: PracticeScenario): number | undefined {
+  if (scenario.quantity && scenario.unit === 'sq ft') return scenario.quantity;
+  return BY_ID[scenario.demoId ?? '']?.areaSqFt;
+}
+
 /** The prototype's stand-in for the AI's guess: a rate per square foot plus learned add-ons. */
 export function demoDraftQuote(input: {
   scenario: PracticeScenario;
@@ -336,7 +430,7 @@ export function demoDraftQuote(input: {
 }): DraftedQuote {
   const customer = BY_ID[input.scenario.demoId ?? ''] ?? CUSTOMERS[0];
   const fromPractice = input.prior.flatMap((item) => {
-    const area = BY_ID[item.scenario.demoId ?? '']?.areaSqFt;
+    const area = areaOf(item.scenario);
     return area && item.lines[0] ? [item.lines[0].amountCents / area] : [];
   });
   const fromJobs = input.jobs.flatMap((job) => {
@@ -349,7 +443,10 @@ export function demoDraftQuote(input: {
       ? median(fromJobs)
       : 45;
   const lines = [
-    { label: input.scenario.suggestions[0], amountCents: round5(rate * customer.areaSqFt) },
+    {
+      label: input.scenario.suggestions[0],
+      amountCents: round5(rate * (areaOf(input.scenario) ?? customer.areaSqFt)),
+    },
   ];
   for (const addOn of customer.addOns) {
     const earlier = [...input.prior]
@@ -384,6 +481,6 @@ export function demoDraftQuote(input: {
 export function demoRateLine(scenario: PracticeScenario, mainCents: number): string {
   const customer = BY_ID[scenario.demoId ?? ''];
   if (!customer) return '';
-  const perFoot = mainCents / customer.areaSqFt / 100;
+  const perFoot = mainCents / areaOf(scenario)! / 100;
   return `Charges about $${perFoot.toFixed(2)} per sq ft for ${customer.kindLabel}`;
 }
