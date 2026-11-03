@@ -28,7 +28,10 @@ test('step 1 saves the trade, services and business details as you go', async ({
   await page.goto('/start');
   await expect(page).toHaveURL(/\/start\/business$/);
   const next = page.getByRole('button', { name: 'Continue' });
-  await expect(next).toBeDisabled();
+  // Continue never sits disabled: it says what's missing instead.
+  await next.click();
+  await expect(page.getByText('Pick your trade, or type it in the search.')).toBeVisible();
+  await expect(page).toHaveURL(/\/start\/business$/);
   await page.getByRole('radio', { name: 'Window cleaning' }).click();
   await expect(page.getByRole('button', { name: 'Exterior windows' })).toHaveAttribute(
     'aria-pressed',
@@ -37,6 +40,9 @@ test('step 1 saves the trade, services and business details as you go', async ({
   await page.getByRole('button', { name: 'Skylights' }).click();
   await page.getByPlaceholder('Add a service').fill('Solar panels');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await next.click();
+  await expect(page.getByText('Add your business name.')).toBeVisible();
+  await expect(page.getByLabel('Business name')).toBeFocused();
   await page.getByLabel('Business name').fill('Clearview Windows');
   await page.getByLabel('Where do you work?').fill('Boise, ID');
   await page.getByLabel(/How far you.ll travel/).selectOption('50');
@@ -47,6 +53,16 @@ test('step 1 saves the trade, services and business details as you go', async ({
   await expect(page.getByLabel('Where do you work?')).toHaveValue('Boise, ID');
   await expect(page.getByLabel(/How far you.ll travel/)).toHaveValue('50');
   for (const service of ['Exterior windows', 'Skylights', 'Solar panels'])
+    await expect(page.getByRole('button', { name: service })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  // Coming back, tapping the trade they picked goes to their services and keeps them.
+  await page.getByRole('radio', { name: 'Window cleaning' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Which of these do you offer?' }),
+  ).toBeInViewport();
+  for (const service of ['Skylights', 'Solar panels'])
     await expect(page.getByRole('button', { name: service })).toHaveAttribute(
       'aria-pressed',
       'true',

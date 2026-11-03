@@ -228,6 +228,7 @@ export function BottomBar({
   onNext,
   nextLabel = 'Continue',
   disabled,
+  blocked,
   hint,
   width = 'max-w-[680px]',
 }: {
@@ -235,9 +236,12 @@ export function BottomBar({
   onNext: () => void;
   nextLabel?: string;
   disabled?: boolean;
+  /** Something's missing, but the button still works: onNext takes them to it. The hint says what. */
+  blocked?: boolean;
   hint?: string;
   width?: string;
 }) {
+  const waiting = (disabled || blocked) && hint;
   return (
     <div
       className="sticky bottom-0 z-30 border-t border-line bg-bg/92 backdrop-blur-md"
@@ -252,15 +256,13 @@ export function BottomBar({
           <span />
         )}
         <div className="flex min-w-0 items-center gap-3">
-          {disabled && hint && (
-            <p className="hidden truncate text-sm text-muted sm:block">{hint}</p>
-          )}
+          {waiting && <p className="hidden truncate text-sm text-muted sm:block">{hint}</p>}
           <Button size="lg" onClick={onNext} disabled={disabled}>
             {nextLabel} <ArrowRight aria-hidden />
           </Button>
         </div>
       </div>
-      {disabled && hint && <p className="gutter -mt-1 pb-3 text-sm text-muted sm:hidden">{hint}</p>}
+      {waiting && <p className="gutter -mt-1 pb-3 text-sm text-muted sm:hidden">{hint}</p>}
     </div>
   );
 }

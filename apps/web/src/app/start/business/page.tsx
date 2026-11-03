@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Briefcase, Check, Plus, Search, type LucideIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { SetupLoading } from '@/components/SetupLoading';
@@ -14,6 +14,18 @@ import { cx, prefersReducedMotion } from '@/lib/util';
 const selectClass =
   'h-12 w-full rounded-sm border border-line-strong bg-surface px-3 text-base text-ink focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none';
 
+/** Scrolls to a part of the page once it's there, as the services are right after a first pick. */
+function scrollSoon(target: RefObject<HTMLElement | null>, block: ScrollLogicalPosition = 'start') {
+  window.setTimeout(
+    () =>
+      target.current?.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block,
+      }),
+    80,
+  );
+}
+
 export default function BusinessStep() {
   const { state } = useOnboarding();
   if (!state) return <SetupLoading />;
@@ -26,26 +38,25 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
   const trade = business.tradeId ? TRADES_BY_ID[business.tradeId] : null;
   const [query, setQuery] = useState('');
   const [newService, setNewService] = useState('');
+  const [tried, setTried] = useState(false);
   const search = useRef<HTMLInputElement>(null);
   const details = useRef<HTMLDivElement>(null);
+  const servicesSection = useRef<HTMLElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
   const customTrade = business.customTrade.trim();
   const chosen = Boolean(trade || customTrade);
-  const firstChoice = useRef(!chosen);
 
-  // Picking a trade moves on to the services, as does arriving with one picked on a demo
-  // (/start/business#services). The address is read once the page is up, when it has the #.
+  // Arriving with a trade picked on a demo (/start/business#services) opens on the services. The
+  // address is read once the page is up, when it has the #.
   useEffect(() => {
-    if (!chosen) return;
-    const picked = firstChoice.current;
-    firstChoice.current = false;
     window.setTimeout(() => {
-      if (picked || window.location.hash === '#services')
+      if (window.location.hash === '#services')
         details.current?.scrollIntoView({
           behavior: prefersReducedMotion() ? 'auto' : 'smooth',
           block: 'start',
         });
     }, 80);
-  }, [chosen]);
+  }, []);
 
   const typed = query.trim();
   const matchesQuery = (name: string) => name.toLowerCase().includes(typed.toLowerCase());
@@ -58,12 +69,25 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
     ...(trade?.services ?? []),
     ...business.customServices.filter((name) => !trade?.services.includes(name)),
   ];
-  const canContinue = chosen && business.services.length > 0 && business.name.trim().length > 1;
+  const named = business.name.trim().length > 1;
+  const canContinue = chosen && business.services.length > 0 && named;
   const hint = !chosen
     ? 'Pick your trade to continue.'
     : business.services.length === 0
       ? 'Choose at least one service.'
       : 'Add your business name to continue.';
+
+  // Continue always answers: it moves on, or it takes them to what's missing and says so.
+  const next = () => {
+    if (canContinue) return void goTo('jobs');
+    setTried(true);
+    if (!chosen) scrollSoon(search, 'center');
+    else if (!business.services.length) scrollSoon(servicesSection);
+    else {
+      scrollSoon(nameInput, 'center');
+      nameInput.current?.focus({ preventScroll: true });
+    }
+  };
 
   const addService = () => {
     const name = newService.trim();
@@ -75,14 +99,19 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
       customServices: [...business.customServices, name],
     });
   };
+  // Picking a trade moves on to the services. Tapping the one already picked, as when coming back
+  // to setup, goes there too and keeps the services they chose.
   const pickTrade = (tradeId: string) => {
-    const picked = TRADES_BY_ID[tradeId];
-    updateBusiness({
-      tradeId,
-      customTrade: '',
-      services: picked.services.slice(0, picked.preselect),
-      customServices: [],
-    });
+    if (tradeId !== business.tradeId) {
+      const picked = TRADES_BY_ID[tradeId];
+      updateBusiness({
+        tradeId,
+        customTrade: '',
+        services: picked.services.slice(0, picked.preselect),
+        customServices: [],
+      });
+    }
+    scrollSoon(details);
   };
   // Their trade's own name starts as its first service, so there's something to switch on.
   const pickCustomTrade = (name: string) => {
@@ -93,6 +122,7 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
       services: [service],
       customServices: [service],
     });
+    scrollSoon(details);
   };
   const toggleService = (name: string) =>
     updateBusiness({
@@ -138,7 +168,7 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
           className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3"
         >
           {showCustom && (
-            <TradeCard icon={Briefcase} selected onClick={() => {}}>
+            <TradeCard icon={Briefcase} selected onClick={() => scrollSoon(details)}>
               {customTrade}
             </TradeCard>
           )}
@@ -163,6 +193,11 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
             </TradeCard>
           ))}
         </div>
+        {tried && !chosen && (
+          <p className="mt-3 text-sm text-stop" data-field-error="Trade">
+            Pick your trade, or type it in the search.
+          </p>
+        )}
         {!typed && !customTrade && (
           <Button
             variant="link"
@@ -184,7 +219,11 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
             ref={details}
             className="fade-up mt-12 flex scroll-mt-28 flex-col gap-10 border-t border-line pt-10"
           >
-            <section aria-labelledby="services-title">
+            <section
+              ref={servicesSection}
+              aria-labelledby="services-title"
+              className="scroll-mt-28"
+            >
               <h2 id="services-title" className="t-h2">
                 Which of these do you offer?
               </h2>
@@ -204,6 +243,11 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
                   </Chip>
                 ))}
               </div>
+              {tried && !business.services.length && (
+                <p className="mt-3 text-sm text-stop" data-field-error="Services">
+                  Turn on at least one service.
+                </p>
+              )}
               <form
                 className="mt-3 flex max-w-sm gap-2"
                 onSubmit={(event) => {
@@ -240,9 +284,12 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
                 label="Business name"
                 htmlFor="business-name"
                 hint="Customers see this on every quote."
+                error={tried && !named ? 'Add your business name.' : undefined}
               >
                 <TextInput
+                  ref={nameInput}
                   id="business-name"
+                  aria-invalid={tried && !named}
                   autoComplete="organization"
                   placeholder="Moss & Stone Exterior Care"
                   value={business.name}
@@ -296,12 +343,7 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
           </div>
         )}
       </main>
-      <BottomBar
-        onBack={() => router.push('/')}
-        onNext={() => void goTo('jobs')}
-        disabled={!canContinue}
-        hint={hint}
-      />
+      <BottomBar onBack={() => router.push('/')} onNext={next} blocked={!canContinue} hint={hint} />
     </div>
   );
 }
@@ -326,7 +368,7 @@ function TradeCard({
       aria-checked={selected}
       onClick={onClick}
       className={cx(
-        'relative flex min-h-[72px] min-w-0 items-center gap-3 rounded-md border px-3.5 py-3 text-left transition-[border-color,background-color] duration-150 sm:px-4',
+        'relative flex min-h-[72px] min-w-0 items-center gap-2.5 rounded-md border px-3 py-3 text-left transition-[border-color,background-color] duration-150 sm:gap-3 sm:px-4',
         selected
           ? 'border-accent bg-accent-soft shadow-[inset_0_0_0_1px_var(--accent)]'
           : 'border-line bg-surface hover:border-line-strong',
@@ -337,12 +379,13 @@ function TradeCard({
         className={cx('size-6 shrink-0', selected ? 'text-accent' : 'text-ink-2')}
         aria-hidden
       />
-      <span className="min-w-0 pr-4 text-[15px] leading-tight font-semibold break-words">
+      {/* Whole words on a phone: "Landscaping" fits a card 360px wide. Narrower ones hyphenate. */}
+      <span className="min-w-0 pr-3 text-[15px] leading-tight font-semibold break-words hyphens-auto max-[379px]:text-[14px]">
         {children}
       </span>
       {selected && (
-        <span className="absolute top-2 right-2 inline-flex size-5 items-center justify-center rounded-full bg-accent text-on-accent">
-          <Check className="size-3.5" aria-hidden />
+        <span className="absolute top-1.5 right-1.5 inline-flex size-4 items-center justify-center rounded-full bg-accent text-on-accent">
+          <Check className="size-3" aria-hidden />
         </span>
       )}
     </button>
