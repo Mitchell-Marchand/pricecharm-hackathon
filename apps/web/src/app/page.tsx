@@ -9,8 +9,16 @@ import { Avatar, ButtonLink, Tag } from '@/components/ui';
 import { PHOTOS } from '@/lib/photos';
 import { publicPricing } from '@/lib/server-api';
 
-export default async function LandingPage() {
-  const pricing = await publicPricing();
+/** Ads about quoting after hours. Their visitors land on a hero that tells the same story. */
+const AFTER_HOURS_ADS = new Set(['mt1-reel', 'mt1-after-hours']);
+
+export default async function LandingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const [pricing, query] = await Promise.all([publicPricing(), searchParams]);
+  const afterHours = AFTER_HOURS_ADS.has(String(query.utm_campaign ?? ''));
   return (
     <div className="min-h-dvh">
       <SiteHeader howItWorks />
@@ -21,11 +29,23 @@ export default async function LandingPage() {
             <Tag tone="canary" size="lg">
               Quote More, Book More
             </Tag>
-            <h1 className="t-hero mt-5">Accurate quotes for your customers with your own AI</h1>
-            <p className="mt-6 max-w-[34rem] text-lg text-ink-2">
-              Show it a few jobs you've done. It learns your prices and the questions you ask, then
-              quotes new customers on your website or through a link you send.
-            </p>
+            {afterHours ? (
+              <>
+                <h1 className="t-hero mt-5">Quotes go out while you're off</h1>
+                <p className="mt-6 max-w-[34rem] text-lg text-ink-2">
+                  A customer asks for a price at 8:40 pm. Your own AI asks what you'd ask and quotes
+                  it with your prices. You wake up to a yes.
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="t-hero mt-5">Accurate quotes for your customers with your own AI</h1>
+                <p className="mt-6 max-w-[34rem] text-lg text-ink-2">
+                  Show it a few jobs you've done. It learns your prices and the questions you ask,
+                  then quotes new customers on your website or through a link you send.
+                </p>
+              </>
+            )}
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <ButtonLink href="/start" size="lg">
                 Get started <ArrowRight aria-hidden />
@@ -39,7 +59,7 @@ export default async function LandingPage() {
             </p>
           </div>
 
-          <HeroQuotes />
+          <HeroQuotes afterHours={afterHours} />
         </section>
 
         <section id="how" className="border-y border-line bg-surface">
@@ -117,7 +137,7 @@ export default async function LandingPage() {
 
         <section
           id="demo"
-          className="gutter mx-auto grid max-w-6xl scroll-mt-6 items-start gap-14 py-20 md:grid-cols-2"
+          className="gutter mx-auto grid max-w-6xl scroll-mt-6 grid-cols-1 items-start gap-14 py-20 md:grid-cols-2"
         >
           <DemoExplorer
             intro={

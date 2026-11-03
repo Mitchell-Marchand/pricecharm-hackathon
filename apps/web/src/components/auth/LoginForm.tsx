@@ -83,7 +83,7 @@ export function LoginForm() {
       <p className="mt-10 border-t border-line pt-6 text-ink-2">
         New to PriceCharm?{' '}
         <Link href="/start" className="font-semibold text-accent underline underline-offset-4">
-          Set up your Charm
+          Get started free
         </Link>
       </p>
     </AuthShell>

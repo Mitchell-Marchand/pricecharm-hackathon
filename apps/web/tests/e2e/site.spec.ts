@@ -17,6 +17,33 @@ test('the hero cycles through accepted quotes from different trades', async ({ p
   );
 });
 
+test('visitors from the after-hours ads land on the same story', async ({ page }) => {
+  await page.goto('/?utm_source=meta&utm_campaign=mt1-reel');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    "Quotes go out while you're off",
+  );
+  await expect(page.getByText('New request · 8:40 pm · from your website')).toBeVisible();
+  await page.goto('/?utm_source=meta&utm_campaign=mt1-windows');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    'Accurate quotes for your customers with your own AI',
+  );
+});
+
+test('on a phone, the header and the sign-in page both lead into setup', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto('/');
+  const header = page.getByRole('navigation', { name: 'Main' });
+  await expect(header.getByRole('link', { name: 'Sign in' })).toBeVisible();
+  await expect(header.getByRole('link', { name: 'Get started' })).toHaveAttribute('href', '/start');
+  // Both fit without the page scrolling sideways.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+  await header.getByRole('link', { name: 'Sign in' }).click();
+  await expect(page.getByRole('link', { name: 'Get started free' })).toHaveAttribute(
+    'href',
+    '/start',
+  );
+});
+
 test('a visitor types to the demo and gets a quote for the trade they pick', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: 'Try the demo' }).click();
