@@ -1,5 +1,6 @@
 import { api, json, upload } from './api';
 import type { Quote } from './quote';
+import type { Currency } from './currency';
 
 /** A business's logo, trimmed and at most 512 px on its longer side. */
 export interface Logo {
@@ -12,6 +13,8 @@ export interface BusinessProfile {
   name: string;
   initials: string;
   trade: string;
+  /** What its prices are in. An older API leaves it out, for dollars. */
+  currency?: Currency;
   services: string[];
   /** Who the chat says will follow up: the owner's first name unless they chose another. */
   ownerFirstName: string;

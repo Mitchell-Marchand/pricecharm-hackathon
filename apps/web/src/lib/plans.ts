@@ -1,8 +1,10 @@
+import type { Currency } from './currency';
 import { money } from './util';
 
 /** The prices the API charges, read from it so nothing on the site can drift from billing. */
 export interface Pricing {
-  currency: 'USD';
+  /** Every amount here is in hundredths of it. */
+  currency: Currency;
   perQuoteCents: number;
   accepted: { basisPoints: number; minimumFeeCents: number; maximumFeeCents: number };
   subscription: {

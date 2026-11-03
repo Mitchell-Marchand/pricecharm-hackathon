@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { aiMode, requestJson, type AiDocument, type AiImage } from './index.js';
+import { amountsIn, type Currency } from '../money.js';
 
 /** A past job as the setup form holds it. Unknown values are empty or null, never guessed. */
 export type ReadJob = {
@@ -80,6 +81,7 @@ const resultSchema = z.object({
 export async function readPastJob(input: {
   trade: string;
   services: string[];
+  currency?: Currency;
   file: { document?: AiDocument; image?: AiImage };
 }): Promise<{ found: boolean; job: ReadJob; issues: string[] }> {
   if (aiMode === 'demo')
@@ -100,7 +102,7 @@ export async function readPastJob(input: {
     };
   const result = await requestJson(
     'read_past_job',
-    `Read the attached quote or invoice from a ${input.trade} business and fill in one past job for the owner to check.
+    `Read the attached quote or invoice from a ${input.trade} business and fill in one past job for the owner to check.${amountsIn(input.currency)}
 - found: false when the file isn't a quote or invoice for work this business did. Then leave every field empty or null.
 - Lines for the same visit, like screens cleaned along with the windows, are one job: priceCents is their total and description names each part with its price. Only separate jobs, on different dates or at different places, are more than one; then use the main one and say so in issues.
 - serviceName: exactly one of the business's services listed in the input, or an empty string if none fits.

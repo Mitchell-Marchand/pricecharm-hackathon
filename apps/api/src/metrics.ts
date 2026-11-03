@@ -339,8 +339,9 @@ async function between(since: Date, until: Date) {
     accepted: await event("name='quote_outcome' AND detail='accepted'"),
     visit: await event("name='quote_outcome' AND detail='visit'"),
     lost: await event("name='quote_outcome' AND detail='lost'"),
+    // Dollars only: rupees and dollars don't add up to one number.
     sentValue: await count(
-      `SELECT COALESCE(SUM(value),0) AS count FROM product_events WHERE name='quote_sent' AND detail<>'test' AND created_at>=? AND created_at<?`,
+      `SELECT COALESCE(SUM(value),0) AS count FROM product_events WHERE name='quote_sent' AND detail<>'test' AND created_at>=? AND created_at<? AND subject IN (SELECT metrics_subject FROM businesses WHERE currency='USD')`,
     ),
     activeBusinesses: await count(
       `SELECT COUNT(DISTINCT subject) AS count FROM product_events WHERE name='customer_chat' AND detail<>'test' AND created_at>=? AND created_at<?`,
@@ -432,7 +433,7 @@ export function formatReport(report: MetricsReport): string {
       (item) =>
         `${item.label.padEnd(width)}${String(item.count).padStart(6)}   was ${item.previous}${change(item.count, item.previous)}`,
     ),
-    `${'Value of quotes sent'.padEnd(width)}${dollars(report.sentValueCents).padStart(6)}   was ${dollars(report.previousSentValueCents)}`,
+    `${'Value of USD quotes sent'.padEnd(width)}${dollars(report.sentValueCents).padStart(6)}   was ${dollars(report.previousSentValueCents)}`,
     '',
     `Setups started in that time, and how far they've got`,
   ];

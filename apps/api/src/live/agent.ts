@@ -22,6 +22,7 @@ import {
   startChat,
 } from './chat.js';
 import { readingPhotos } from './photo-readings.js';
+import { currencyOf } from '../money.js';
 
 /**
  * For an AI agent asking for a quote on someone's behalf: the same Charm and the same prices as
@@ -86,6 +87,7 @@ async function agentView(business: Row, chat: Row, token: string) {
   const out = quote && OUT.includes(String(quote.status));
   const card = out ? json<Quote>(quote.quote_json, {} as Quote) : null;
   const totalCents = Number(quote?.total_cents ?? 0);
+  const currency = currencyOf(business.currency);
   const validUntil =
     card && quote.sent_at
       ? new Date(new Date(quote.sent_at).getTime() + card.validDays * 86_400_000).toISOString()
@@ -108,11 +110,13 @@ async function agentView(business: Row, chat: Row, token: string) {
       ? {
           number: Number(quote.number),
           status: String(quote.status),
+          /** What every amount is in, in hundredths of it. */
+          currency,
           price:
             card.style === 'range' && card.range
               ? { kind: 'range', lowCents: card.range.lowCents, highCents: card.range.highCents }
               : { kind: card.style === 'estimate' ? 'estimate' : 'firm', cents: totalCents },
-          text: priceText(card, totalCents),
+          text: priceText(card, totalCents, currency),
           lines: card.lines.map((line) => ({ label: line.label, cents: line.amountCents })),
           discount: card.discount,
           included: card.included,
@@ -152,7 +156,7 @@ async function view(req: Request, token = chatToken(req)) {
 agentRouter.get('/agent/businesses/:slug', async (req, res) => {
   const business = await businessBySlug(req.params.slug);
   const id = String(business.id);
-  const { name, trade, services, taking } = await publicProfile(business);
+  const { name, trade, currency, services, taking } = await publicProfile(business);
   const drivers = priceDrivers(
     await loadPricingData(id)
       .then((data) => currentFormula(id, data))
@@ -162,6 +166,7 @@ agentRouter.get('/agent/businesses/:slug', async (req, res) => {
     ok({
       name,
       trade,
+      currency,
       services,
       serviceArea: String(business.service_area ?? ''),
       taking,

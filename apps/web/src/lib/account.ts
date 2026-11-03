@@ -1,6 +1,7 @@
 import { api, json } from './api';
 import type { PracticeResult } from './practice';
 import type { Quote } from './quote';
+import type { Currency } from './currency';
 
 /** One real quote the owner reviewed: the Charm's draft against what they sent. */
 export interface ReviewedQuote {
@@ -124,7 +125,8 @@ export interface Me {
     email: string;
     emailVerified: boolean;
   };
-  business: { id: string; name: string; slug: string };
+  /** What the business's quotes and fees are in. An older API leaves it out, for dollars. */
+  business: { id: string; name: string; slug: string; currency?: Currency };
 }
 
 export interface Share {

@@ -59,6 +59,7 @@ import {
   readingPhotos,
   readPhotos,
 } from './photo-readings.js';
+import { currencyOf, money as formatMoney } from '../money.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -103,12 +104,6 @@ async function approveLink(connection: Sql | undefined, quoteId: string) {
 export function appOrigin() {
   return (process.env.APP_ORIGIN || 'http://localhost:3100').split(',')[0].trim();
 }
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
 
 export async function businessBySlug(slug: unknown, connection?: Sql) {
   const parsed = z
@@ -147,6 +142,8 @@ export async function publicProfile(business: Row) {
       .map((word) => word[0].toUpperCase())
       .join(''),
     trade: tradeName(business.trade_id, business.custom_trade),
+    /** What its prices are in. */
+    currency: currencyOf(business.currency),
     services: await services(String(business.id)),
     /** Who the chat says will follow up: the owner's first name unless they chose another. */
     ownerFirstName: await contactName(business),
@@ -813,6 +810,7 @@ async function checkDraft(
 ) {
   const checks: Check[] = [];
   const add = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
+  const money = (cents: number) => formatMoney(cents, currencyOf(business.currency));
   const { limitCents, autoSend } = settingsFromRow(business);
   const offered = await services(String(business.id));
   const service = String(chat.service_name || '');
@@ -1209,7 +1207,11 @@ async function notifyCustomerQuote(
   businessName: string,
 ) {
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId], connection);
-  const [business] = await rows('SELECT slug FROM businesses WHERE id=?', [businessId], connection);
+  const [business] = await rows(
+    'SELECT slug,currency FROM businesses WHERE id=?',
+    [businessId],
+    connection,
+  );
   const [quote] = await rows(
     'SELECT total_cents,quote_json FROM live_quotes WHERE chat_id=?',
     [chatId],
@@ -1226,7 +1228,7 @@ async function notifyCustomerQuote(
       replyTo: await ownerReplyTo(businessId, connection),
       fromName: businessName,
       subject: `Your quote from ${businessName}`,
-      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
+      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents), currencyOf(business.currency))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
     },
     connection,
   );
@@ -1255,7 +1257,7 @@ export async function notifyOwner(
     connection,
   );
   const [quote] = await rows(
-    'SELECT id,total_cents,quote_json,review_reason,outcome_reason,outcome_note FROM live_quotes WHERE chat_id=?',
+    'SELECT q.id,q.total_cents,q.quote_json,q.review_reason,q.outcome_reason,q.outcome_note,b.currency FROM live_quotes q JOIN businesses b ON b.id=q.business_id WHERE q.chat_id=?',
     [chatId],
     connection,
   );
@@ -1264,7 +1266,11 @@ export async function notifyOwner(
   const first = String(chat.customer_name).trim().split(/\s+/)[0] || 'A customer';
   const service = String(chat.service_name || '').toLowerCase();
   const total = quote
-    ? priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents))
+    ? priceText(
+        json<Quote | null>(quote.quote_json, null),
+        Number(quote.total_cents),
+        currencyOf(quote.currency),
+      )
     : '';
   const link = quote ? `${appOrigin()}/app/quotes/${quote.id}` : `${appOrigin()}/app`;
   const reach = [

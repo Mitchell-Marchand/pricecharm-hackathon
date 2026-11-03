@@ -165,6 +165,8 @@ function sampleHistory(demo: Demo, photosSent = 0): PricingHistory {
       services: Object.keys(demo.prices),
       area: demo.area,
       radiusMiles: null,
+      // The sample businesses are in the US.
+      currency: 'USD',
     },
     pastJobs: Object.entries(demo.prices).flatMap(([service, cents]) =>
       demo.size.options

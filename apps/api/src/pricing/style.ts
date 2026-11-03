@@ -1,4 +1,5 @@
 import { quoteTotal, type Quote } from '../practice/types.js';
+import { money, type Currency } from '../money.js';
 
 /** What goes out for a service the Charm is still learning: a range, an estimate, or a firm price. */
 export const LEARNING_STYLES = ['range', 'estimate', 'firm'] as const;
@@ -59,18 +60,15 @@ export function restyle(card: Quote, style: LearningStyle | undefined): Quote {
   return { ...firm, style: 'range', range: rangeAround(total, spread) };
 }
 
-export const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
-
 /** "$380 to $460" for a range, or the total. */
-export function priceText(card: Partial<Quote> | null | undefined, totalCents: number) {
+export function priceText(
+  card: Partial<Quote> | null | undefined,
+  totalCents: number,
+  currency: Currency = 'USD',
+) {
   return card?.style === 'range' && card.range
-    ? `${money(card.range.lowCents)} to ${money(card.range.highCents)}`
-    : money(totalCents);
+    ? `${money(card.range.lowCents, currency)} to ${money(card.range.highCents, currency)}`
+    : money(totalCents, currency);
 }
 
 /** A new card's price fields in this style. A firm price needs none. */

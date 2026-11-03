@@ -10,6 +10,7 @@ import { ToastProvider } from '@/components/Toast';
 import { Button } from '@/components/ui';
 import { loadMe, type Me } from '@/lib/account';
 import { ApiError, errorMessage } from '@/lib/api';
+import { setCurrency } from '@/lib/currency';
 import { cx } from '@/lib/util';
 
 const NAV = [
@@ -76,6 +77,8 @@ function SignedIn({ children }: { children: ReactNode }) {
       </div>
     );
 
+  // Every amount in the owner app is in their business's currency.
+  setCurrency(me.business.currency);
   const active = (href: string) =>
     href === '/app'
       ? pathname === '/app' || pathname.startsWith('/app/quotes')

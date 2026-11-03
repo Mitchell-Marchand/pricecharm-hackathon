@@ -8,7 +8,11 @@ import { BottomBar, WizardHeader } from '@/components/Wizard';
 import { Button, Chip, Field, TextInput } from '@/components/ui';
 import { useOnboarding, type BusinessDraft } from '@/lib/onboarding';
 import { TRADES, TRADES_BY_ID } from '@/lib/trades';
+import { CURRENCIES, currencySymbol, type Currency } from '@/lib/currency';
 import { cx, prefersReducedMotion } from '@/lib/util';
+
+const selectClass =
+  'h-12 w-full rounded-sm border border-line-strong bg-surface px-3 text-base text-ink focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none';
 
 export default function BusinessStep() {
   const { state } = useOnboarding();
@@ -260,7 +264,7 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
                     id="business-radius"
                     value={business.radius}
                     onChange={(event) => updateBusiness({ radius: event.target.value })}
-                    className="h-12 w-full rounded-sm border border-line-strong bg-surface px-3 text-base text-ink focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none"
+                    className={selectClass}
                   >
                     {['10', '15', '25', '50'].map((miles) => (
                       <option key={miles} value={miles}>
@@ -270,6 +274,24 @@ function BusinessForm({ business }: { business: BusinessDraft }) {
                   </select>
                 </Field>
               </div>
+              <Field
+                label="Currency"
+                htmlFor="business-currency"
+                hint="Your quotes and your PriceCharm plan are in it."
+              >
+                <select
+                  id="business-currency"
+                  value={business.currency ?? 'USD'}
+                  onChange={(event) => updateBusiness({ currency: event.target.value as Currency })}
+                  className={cx(selectClass, 'sm:max-w-xs')}
+                >
+                  {CURRENCIES.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.name} ({currencySymbol(item.code)})
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </section>
           </div>
         )}

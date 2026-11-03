@@ -47,8 +47,17 @@ test(
       customServices: ['Gutter brightening'],
       name: 'Moss & Stone Exterior Care',
       area: 'Portland, OR',
+      currency: 'USD',
       radius: '25',
     });
+    // Before a card, the currency can change, and back.
+    for (const currency of ['INR', 'USD']) {
+      const changed = await browser
+        .patch('/api/v1/onboarding/business')
+        .set('Origin', origin)
+        .send({ currency });
+      assert.equal(changed.body.data.business.currency, currency);
+    }
     const reordered = await browser
       .patch('/api/v1/onboarding/business')
       .set('Origin', origin)

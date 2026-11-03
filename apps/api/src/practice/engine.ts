@@ -30,18 +30,12 @@ import {
   type QuoteDraft,
   type Shadow,
 } from './types.js';
+import { money as formatMoney } from '../money.js';
 
 /** Practice quotes to finish before the AI counts as trained. More can follow later. */
 export const PRACTICE_COUNT = 6;
 const MAX_MESSAGES = 40;
 const TONES = ['canary', 'pink', 'blue'] as const;
-const centsFormat = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2,
-  minimumFractionDigits: 0,
-});
-const money = (cents: number) => centsFormat.format(cents / 100);
 /**
  * Other businesses' combined rate for a practice job's service, next to the owner's own rate on
  * it. The card shows it only when the owner charged this much less, so they can see when they
@@ -662,7 +656,10 @@ async function insightsFor(
     // A price at or under the least they've charged for this service is likely their minimum,
     // which says nothing about a rate, so it's said as it is. Other services' minimums can be
     // lower, so they're only used when this service has no other prices.
-    const others = (await loadPricingData(businessId, { excludeRunId: runId })).points;
+    const data = await loadPricingData(businessId, { excludeRunId: runId });
+    const others = data.points;
+    const { currency } = data.history.business;
+    const money = (cents: number) => formatMoney(cents, currency);
     const service = scenario.serviceName.trim().toLowerCase();
     const sameService = others.filter((point) => point.service.trim().toLowerCase() === service);
     const compared = sameService.length ? sameService : others;
@@ -676,12 +673,13 @@ async function insightsFor(
           : spec.quantity && spec.unit && atMinimum
             ? `Charges ${money(main.amountCents)} for ${lowerFirst(scenario.serviceName)}, ${formatQuantity(spec.quantity, spec.unit)}`
             : spec.quantity && spec.unit
-              ? `${chargesLine(main.amountCents, spec.quantity, spec.unit)} for ${lowerFirst(scenario.serviceName)}`
+              ? `${chargesLine(main.amountCents, spec.quantity, spec.unit, currency)} for ${lowerFirst(scenario.serviceName)}`
               : await withAiUsage(businessId, `practice:${runId}`, () =>
                   describeRate({
                     trade,
                     serviceName: scenario.serviceName,
                     mainLine: { label: main.label, amountCents: main.amountCents },
+                    currency,
                     sizeAnswer:
                       scenario.facts.find((fact) => SIZE_FACT.test(fact.key))?.answer ?? '',
                   }),

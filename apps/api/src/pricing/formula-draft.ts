@@ -21,6 +21,7 @@ import {
 import { loadPricingData, type HistoryOptions, type PricingData } from './history.js';
 import { describeJob, type JobSpec } from './spec.js';
 import { canonicalUnit } from './units.js';
+import { wholeMoney, type Currency } from '../money.js';
 
 /**
  * Formula pricing: the owner's formula, worked out from their quotes and checked against all of
@@ -147,7 +148,8 @@ async function learnFrom(
   model?: string,
 ): Promise<Learned> {
   const { notes } = data.history;
-  const business = { trade: data.history.business.trade, services: data.history.business.services };
+  const { trade, services, currency } = data.history.business;
+  const business = { trade, services, currency };
   const ask = (reading: number, quick: boolean) =>
     learnFormula({ quick, business, examples, notes, model, reading });
   // Working out a formula reasons at length, and the API sometimes gives up on long calls, so it
@@ -434,8 +436,6 @@ async function readingPrice(
   return { formula, priced, doubts, parts };
 }
 
-const dollars = (cents: number) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
-
 /**
  * The quote from the owner's formula, when it fits their own quotes and covers everything the
  * customer asks for. The AI only reads the request; the server does the arithmetic. Each reading
@@ -450,6 +450,7 @@ export async function priceFromFormula(
     /** What was measured and seen in the customer's video and photos, in words. */
     media?: string[];
     model?: string;
+    currency?: Currency;
   },
 ): Promise<{ drafted: DraftedQuote | null; use: FormulaUse }> {
   const skip = (reason: string) => ({ drafted: null, use: { used: false as const, reason } });
@@ -474,7 +475,7 @@ export async function priceFromFormula(
     ...middle.doubts,
     ...(high > low * 1.1
       ? [
-          `Your quotes can be read more than one way for this job: anywhere from ${dollars(low)} to ${dollars(high)}.`,
+          `Your quotes can be read more than one way for this job: anywhere from ${wholeMoney(low, input.currency)} to ${wholeMoney(high, input.currency)}.`,
         ]
       : []),
   ];

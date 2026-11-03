@@ -1,19 +1,13 @@
 import { mutate, rows, transaction } from '../db.js';
 import { ownerReplyTo, queueEmail } from '../integrations/email.js';
 import { json } from '../models.js';
+import { currencyOf, money } from '../money.js';
 import type { Quote } from '../practice/types.js';
 import { chatEmailLink } from './chat.js';
 
 /** Days after a quote goes out before a customer who hasn't answered gets one reminder. */
 export const FOLLOW_UP_DAYS = 3;
 const DAY = 86_400_000;
-
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
 
 /**
  * One reminder to customers who haven't answered, asking them to accept, ask, or say they're not
@@ -33,7 +27,7 @@ export async function followUpQuotes(now = new Date()) {
   for (const { id } of due)
     await transaction(async (connection) => {
       const [quote] = await rows(
-        `SELECT q.id,q.business_id,q.chat_id,q.total_cents,c.customer_name,c.customer_email,b.name,b.slug
+        `SELECT q.id,q.business_id,q.chat_id,q.total_cents,c.customer_name,c.customer_email,b.name,b.slug,b.currency
          FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id JOIN businesses b ON b.id=q.business_id
          WHERE q.id=? AND q.status='sent' AND q.followup_sent_at IS NULL FOR UPDATE`,
         [id],
@@ -59,7 +53,7 @@ export async function followUpQuotes(now = new Date()) {
           replyTo: await ownerReplyTo(String(quote.business_id), connection),
           fromName: String(quote.name),
           subject: `Your quote from ${quote.name}`,
-          text: `Hi${first ? ` ${first}` : ''},\n\nYour ${money(Number(quote.total_cents))} quote from ${quote.name} is still here:\n${link}\n\nYou can accept it or ask a question there. If you’ve decided not to go ahead, you can tell them in one tap, which helps them either way.\n\nThe link works for ${days} days. Keep it to yourself, since anyone with it can see your quote.`,
+          text: `Hi${first ? ` ${first}` : ''},\n\nYour ${money(Number(quote.total_cents), currencyOf(quote.currency))} quote from ${quote.name} is still here:\n${link}\n\nYou can accept it or ask a question there. If you’ve decided not to go ahead, you can tell them in one tap, which helps them either way.\n\nThe link works for ${days} days. Keep it to yourself, since anyone with it can see your quote.`,
         },
         connection,
       );

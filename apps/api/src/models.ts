@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { rows, type Sql } from './db.js';
 import { ApiError } from './http.js';
+import { currencyOf, type Currency } from './money.js';
 
 export type Row = RowDataPacket;
 
@@ -9,6 +10,8 @@ export interface Business {
   name: string;
   slug: string;
   serviceArea: string;
+  /** What its quotes and its PriceCharm fees are in. */
+  currency: Currency;
   createdAt: string;
 }
 
@@ -31,6 +34,7 @@ export function mapBusiness(row: Row): Business {
     name: row.name,
     slug: row.slug,
     serviceArea: row.service_area ?? '',
+    currency: currencyOf(row.currency),
     createdAt: iso(row.created_at),
   };
 }

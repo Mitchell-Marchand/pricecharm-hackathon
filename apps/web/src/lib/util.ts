@@ -1,29 +1,43 @@
-const wholeDollars = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 0,
-});
-const exactDollars = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+import { currentCurrency, localeOf, type Currency } from './currency';
 
-export function money(cents: number): string {
-  return Math.round(cents) % 100 === 0
-    ? wholeDollars.format(Math.round(cents) / 100)
-    : exactDollars.format(Math.round(cents) / 100);
+const formats = new Map<string, Intl.NumberFormat>();
+function format(currency: Currency, digits: number) {
+  const key = `${currency}:${digits}`;
+  let found = formats.get(key);
+  if (!found) {
+    found = new Intl.NumberFormat(localeOf(currency), {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    formats.set(key, found);
+  }
+  return found;
+}
+
+/** An amount in the page's currency, or the one given: "$350", "$12.50", "₹1,499". */
+export function money(cents: number, currency: Currency = currentCurrency()): string {
+  const rounded = Math.round(cents);
+  return format(currency, rounded % 100 ? 2 : 0).format(rounded / 100);
 }
 
 /** Rates per square foot keep their cents, e.g. $0.46. */
-export function rate(centsPerUnit: number): string {
-  return exactDollars.format(centsPerUnit / 100);
+export function rate(centsPerUnit: number, currency: Currency = currentCurrency()): string {
+  return format(currency, 2).format(centsPerUnit / 100);
 }
 
-/** Parses "$1,250.5" style input into integer cents; null when empty or invalid. */
+/**
+ * Parses typed money into integer cents; null when empty or invalid. A point or comma before the
+ * last one or two digits is the decimal point, and any other is a thousands mark, so "1,250.50",
+ * "1.250,50" (as in Brazil) and "1,00,000" (as in India) all read right.
+ */
 export function parseMoney(input: string): number | null {
-  const cleaned = input.replace(/[$,\s]/g, '');
+  const typed = input.replace(/[^\d.,]/g, '');
+  const decimal = typed.match(/[.,](\d{1,2})$/);
+  const cleaned = decimal
+    ? `${typed.slice(0, decimal.index).replace(/[.,]/g, '')}.${decimal[1]}`
+    : typed.replace(/[.,]/g, '');
   if (!cleaned || !/^\d+(\.\d{0,2})?$/.test(cleaned)) return null;
   const [whole, fraction = ''] = cleaned.split('.');
   return Number(whole) * 100 + Number((fraction + '00').slice(0, 2));

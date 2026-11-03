@@ -16,6 +16,7 @@ import {
   type Knows,
   type ServiceRate,
 } from '@/lib/knows';
+import { money } from '@/lib/util';
 
 type Row = { id: string; text: string; locked?: boolean; note?: string };
 
@@ -278,7 +279,7 @@ export function KnowsEditor({
         <EditableList
           name="Notes on your prices"
           noun="note"
-          placeholder="$150 minimum for any job"
+          placeholder={`${money(15000)} minimum for any job`}
           maxLength={200}
           removed="Removed. Quotes won’t follow it anymore."
           rows={knows.notes.map((note) => ({

@@ -22,6 +22,7 @@ import type { Quote } from '@/lib/quote';
 import { TRADE_DATA_BY_ID } from '@/lib/trades';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { cx, uid } from '@/lib/util';
+import { setCurrency } from '@/lib/currency';
 
 /** The API's limits, so the visitor sees them before the server has to say no. */
 const MAX_TEXT = 300;
@@ -59,6 +60,8 @@ const initialsOf = (name: string) =>
  * photos of the job, the visitor can send those instead.
  */
 export function DemoChat({ demo, className }: { demo: Demo; className?: string }) {
+  // The sample businesses are in the US.
+  setCurrency('USD');
   const services = TRADE_DATA_BY_ID[demo.tradeId]?.services ?? Object.keys(demo.prices);
   const initials = initialsOf(demo.business) || 'Q';
   // The bot check loads only when the visitor first sends something, not for every page view.

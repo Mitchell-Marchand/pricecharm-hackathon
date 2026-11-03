@@ -181,7 +181,10 @@ async function serviceRates(businessId: string) {
       return rule ? [minimumFor(formula, rule) ?? 0] : [];
     });
     const minimum = minimums.sort((a, b) => a - b)[Math.floor(minimums.length / 2)];
-    const { price, sizes } = minimums.length ? rateWords(rate, minimum || null) : rateWords(rate);
+    const { currency } = data.history.business;
+    const { price, sizes } = minimums.length
+      ? rateWords(rate, minimum || null, currency)
+      : rateWords(rate, undefined, currency);
     return {
       service,
       price: price.charAt(0).toUpperCase() + price.slice(1),

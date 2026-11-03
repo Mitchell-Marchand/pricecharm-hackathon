@@ -16,6 +16,7 @@ import { lossReasonPhrase } from '../live/outcomes.js';
 import { describeRate, fitRates, type PricePoint } from './rates.js';
 import { describeSpec, specFromScenario, type JobSpec } from './spec.js';
 import { parseQuantity } from './units.js';
+import { currencyOf, money as formatMoney, type Currency } from '../money.js';
 
 export type HistoryOptions = {
   /** Leave out one practice run, for the AI's guess on it. */
@@ -38,13 +39,6 @@ export type PricingData = {
 const LEARNING_STATUSES = "('sent','accepted','visit_requested','lost','expired','declined')";
 const LIVE_EXAMPLES = 60;
 
-const centsFormat = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2,
-  minimumFractionDigits: 0,
-});
-const money = (cents: number) => centsFormat.format(cents / 100);
 const monthYear = (value: unknown) =>
   value
     ? new Date(String(value)).toLocaleDateString('en-US', {
@@ -56,7 +50,7 @@ const monthYear = (value: unknown) =>
 
 export async function businessContext(businessId: string, connection?: Sql) {
   const [business] = await rows(
-    'SELECT name,trade_id,custom_trade,service_area,travel_radius_miles FROM businesses WHERE id=?',
+    'SELECT name,trade_id,custom_trade,service_area,travel_radius_miles,currency FROM businesses WHERE id=?',
     [businessId],
     connection,
   );
@@ -75,6 +69,8 @@ export async function businessContext(businessId: string, connection?: Sql) {
     services,
     area: String(business.service_area || ''),
     radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
+    /** Every amount the AI reads and writes is in hundredths of it. */
+    currency: currencyOf(business.currency),
   };
 }
 
@@ -86,8 +82,13 @@ export function undiscounted(price: number, discount: Discount | null) {
 }
 
 /** Where the owner changed the AI's draft before sending it, in a line the AI can learn from. */
-export function ownerChange(draft: DraftedQuote | null, sent: Quote): string {
+export function ownerChange(
+  draft: DraftedQuote | null,
+  sent: Quote,
+  currency: Currency = 'USD',
+): string {
   const sentCents = quoteTotal(sent);
+  const money = (cents: number) => formatMoney(cents, currency);
   if (!draft || draft.decision === 'site_visit' || !draft.lines.length)
     return `The AI didn't price it. The owner quoted ${money(sentCents)}.`;
   const draftCents = quoteTotal(draft);
@@ -235,7 +236,7 @@ export async function loadPricingData(
       discount: declined ? null : (sent.discount ?? null),
       ownerChange:
         row.sent_by === 'owner'
-          ? ownerChange(json<DraftedQuote | null>(row.draft_json, null), sent)
+          ? ownerChange(json<DraftedQuote | null>(row.draft_json, null), sent, context.currency)
           : '',
       when: monthYear(row.sent_at ?? row.created_at),
     };
@@ -249,6 +250,7 @@ export async function loadPricingData(
         services: context.services,
         area: context.area,
         radiusMiles: context.radiusMiles,
+        currency: context.currency,
       },
       pastJobs: jobs.map((job) => ({
         service: job.serviceName,
@@ -263,7 +265,7 @@ export async function loadPricingData(
       })),
       practice,
       liveQuotes,
-      rates: fitRates(points).map(describeRate),
+      rates: fitRates(points).map((rate) => describeRate(rate, context.currency)),
       notes,
     },
     points,

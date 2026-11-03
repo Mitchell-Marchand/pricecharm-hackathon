@@ -51,6 +51,7 @@ import {
   type Line,
   type Outbound,
 } from './whatsapp.js';
+import { currencyOf } from '../money.js';
 
 /**
  * Customers' WhatsApp chats with a business's Charm. Each message is kept in the inbox, then the
@@ -554,6 +555,7 @@ async function deliver(chatId: string): Promise<void> {
               sent: { photos: Number(media.photos) > 0, video: Number(media.videos) > 0 },
               acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
               link,
+              currency: currencyOf(business.currency),
             }),
           );
     // The 24 hours ran out between the owner sending it and now.

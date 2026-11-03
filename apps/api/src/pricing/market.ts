@@ -71,7 +71,9 @@ export function combineRates(
   };
 }
 
-const OTHERS = "b.trade_id=? AND b.id<>? AND b.status='active' AND b.deletion_requested_at IS NULL";
+// Only businesses that price in the same currency: rupees and dollars don't make one rate.
+const OTHERS =
+  "b.trade_id=? AND b.id<>? AND b.status='active' AND b.deletion_requested_at IS NULL AND b.currency=(SELECT me.currency FROM businesses me WHERE me.id=?)";
 
 /** The trade's combined rate for a service, from other businesses' jobs, practice and quotes. */
 export async function marketRate(input: {
@@ -81,7 +83,7 @@ export async function marketRate(input: {
   unit?: string;
 }): Promise<MarketRate | null> {
   const service = input.serviceName.trim().toLowerCase();
-  const params = [input.tradeId, input.businessId];
+  const params = [input.tradeId, input.businessId, input.businessId];
   const rates: { businessId: string; unit: string; centsPerUnit: number }[] = [];
   const add = (
     businessId: unknown,

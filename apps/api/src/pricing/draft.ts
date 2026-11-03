@@ -18,6 +18,7 @@ import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
 import { describeJob, type JobSpec } from './spec.js';
 import { formatQuantity, parseQuantity } from './units.js';
+import { roughMoney, type Currency } from '../money.js';
 
 /** Which formula pricing a draft came from, recorded with it like the draft prompt's version. */
 const FORMULA_VERSION = 'formula-2026-11-01';
@@ -25,14 +26,6 @@ const FORMULA_VERSION = 'formula-2026-11-01';
 /** Photos from the owner's own past jobs that go with a draft, next to the customer's. */
 const REFERENCE_PHOTOS = 2;
 const MAX_PHOTOS = 5;
-
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: cents < 1000 ? 2 : 0,
-  }).format(cents / 100);
 
 export type DraftResult = {
   drafted: DraftedQuote;
@@ -77,6 +70,7 @@ async function referencePhotos(
   serviceName: string,
   spec: JobSpec | null,
   count: number,
+  currency: Currency,
 ) {
   if (count <= 0) return [];
   const score = (job: PastJob) => {
@@ -103,7 +97,7 @@ async function referencePhotos(
           mimeType: 'image/jpeg',
           dataBase64: (await getPhoto(String(photo.storage_key))).toString('base64'),
         },
-        label: `${job.description.slice(0, 120)} (${money(job.priceCents)})`,
+        label: `${job.description.slice(0, 120)} (${roughMoney(job.priceCents, currency)})`,
       });
     } catch {
       // A missing photo only means one less example to look at.
@@ -136,6 +130,7 @@ export async function draftForBusiness(input: {
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
+  const { currency } = data.history.business;
   const rates = fitRates(data.points);
   const estimate = estimateFor(rates, serviceName, spec?.quantity ?? null, spec?.unit ?? '');
   const examples = {
@@ -155,7 +150,7 @@ export async function draftForBusiness(input: {
     const drivers = input.drivers && learned ? priceDrivers(learned) : null;
     const [priced, open] = await Promise.all([
       learned
-        ? priceFromFormula(learned, input).catch((error: unknown) => {
+        ? priceFromFormula(learned, { ...input, currency }).catch((error: unknown) => {
             reportError(error, { event: 'formula_draft' });
             return null;
           })
@@ -210,7 +205,7 @@ export async function draftForBusiness(input: {
     });
     if (market)
       startingPoint = {
-        basis: `About ${money(market.upperCentsPerUnit)} per ${market.unit.replace(/s$/, '')}, a little above the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
+        basis: `About ${roughMoney(market.upperCentsPerUnit, currency)} per ${market.unit.replace(/s$/, '')}, a little above the middle rate of ${market.businesses} other ${data.history.business.trade.toLowerCase()} businesses`,
         mainWorkCents:
           spec?.quantity && spec.unit === market.unit
             ? Math.round((market.upperCentsPerUnit * spec.quantity) / 100) * 100
@@ -228,6 +223,7 @@ export async function draftForBusiness(input: {
           serviceName,
           spec,
           Math.min(REFERENCE_PHOTOS, MAX_PHOTOS - customerImages.length),
+          currency,
         );
   const photoGuide = [
     ...customerImages.map((_, index) => `Photo ${index + 1}: from the customer`),
@@ -239,7 +235,7 @@ export async function draftForBusiness(input: {
 
   const history = similarHistory(data.history, serviceName, spec);
   const estimateBasis = estimate
-    ? `${formatQuantity(estimate.quantity, estimate.unit)} at the usual rate comes to ${money(estimate.cents)}. ${describeRate(estimate.rate)}`
+    ? `${formatQuantity(estimate.quantity, estimate.unit)} at the usual rate comes to ${roughMoney(estimate.cents, currency)}. ${describeRate(estimate.rate, currency)}`
     : '';
   let drafted =
     aiMode === 'demo'

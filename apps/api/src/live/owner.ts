@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from '../db.js';
 import { ApiError, ok, rateLimit } from '../http.js';
 import { ownerReplyTo, queueEmail } from '../integrations/email.js';
-import { json, type Row } from '../models.js';
+import { businessById, json, type Row } from '../models.js';
+import { money } from '../money.js';
 import { pricingProfile } from '../profile.js';
 import { quoteDraftSchema, quoteTotal, type DraftEngine, type Quote } from '../practice/types.js';
 import { agentReadiness, businessReadiness, serviceWorkload } from '../pricing/readiness.js';
@@ -36,13 +37,6 @@ import {
 
 /** The owner's side of live quotes: the inbox, approving and editing, and settings. */
 export const ownerQuotesRouter = Router();
-
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-  }).format(cents / 100);
 
 const cardEdits = z.object(quoteDraftSchema.shape);
 
@@ -541,7 +535,10 @@ ownerQuotesRouter.patch('/app/settings', async (req, res) => {
       ...settings,
       // The names older pages read.
       autoSendLimitCents: settings.limitCents,
-      limitText: settings.limitCents === null ? '' : money(settings.limitCents),
+      limitText:
+        settings.limitCents === null
+          ? ''
+          : money(settings.limitCents, (await businessById(owner(req).businessId)).currency),
     }),
   );
 });

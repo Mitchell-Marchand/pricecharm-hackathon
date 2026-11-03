@@ -2,7 +2,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { lossReasonLabel, lossReasons, type LossReason } from '../live/outcomes.js';
 import { discountCents, type Quote } from '../practice/types.js';
-import { money, priceText } from '../pricing/style.js';
+import { money as formatMoney, type Currency } from '../money.js';
+import { priceText } from '../pricing/style.js';
 
 /**
  * WhatsApp's Cloud API: reading what Meta sends us, and shaping and sending the Charm's messages.
@@ -587,8 +588,10 @@ export function quoteMessage(input: {
   sent: Sent;
   acceptLabel: string;
   link: string;
+  currency?: Currency;
 }): Outbound {
   const { quote } = input;
+  const money = (cents: number) => formatMoney(cents, input.currency);
   const range = quote.style === 'range' && quote.range ? quote.range : null;
   const lines = quote.lines.map((line) =>
     range ? `• ${line.label}` : `• ${line.label}: ${money(line.amountCents)}`,
@@ -607,7 +610,7 @@ export function quoteMessage(input: {
       '',
       ...shown,
       '',
-      `*${range ? 'Price range' : 'Total'}: ${priceText(quote, input.totalCents)}*`,
+      `*${range ? 'Price range' : 'Total'}: ${priceText(quote, input.totalCents, input.currency)}*`,
       ...(when ? [when] : []),
       footnote(quote, input.sent),
       '',
