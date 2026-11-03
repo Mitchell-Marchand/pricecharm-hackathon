@@ -26,7 +26,7 @@ import { currencyOf } from './money.js';
 export const jobImportsRouter = Router();
 
 /** Files waiting to be checked at once. Saving or dropping them makes room. */
-const MAX_WAITING = 20;
+export const MAX_WAITING = 20;
 /** Tries at reading one file before it's shown as failed. */
 const READ_ATTEMPTS = 3;
 
@@ -74,7 +74,9 @@ export async function readJobImport(id: string): Promise<void> {
   const [item] = await rows('SELECT * FROM job_imports WHERE id=?', [id]);
   const businessId = String(item.business_id);
   try {
-    const bytes = await getPhoto(String(item.storage_key));
+    // An invoice from QuickBooks arrives as text. Everything else is a stored file.
+    const fromText = item.kind === 'quickbooks';
+    const bytes = fromText ? null : await getPhoto(String(item.storage_key));
     const [business] = await rows(
       'SELECT trade_id,custom_trade,currency FROM businesses WHERE id=?',
       [businessId],
@@ -87,24 +89,32 @@ export async function readJobImport(id: string): Promise<void> {
         trade: tradeName(business?.trade_id, business?.custom_trade),
         services,
         currency: currencyOf(business?.currency),
-        file:
-          item.kind === 'pdf'
+        ...(!bytes
+          ? { invoiceText: String(item.source_text ?? '') }
+          : item.kind === 'pdf'
             ? {
-                document: {
-                  filename: String(item.filename),
-                  mimeType: 'application/pdf',
-                  dataBase64: bytes.toString('base64'),
+                file: {
+                  document: {
+                    filename: String(item.filename),
+                    mimeType: 'application/pdf',
+                    dataBase64: bytes.toString('base64'),
+                  },
                 },
               }
-            : { image: { mimeType: 'image/jpeg', dataBase64: bytes.toString('base64') } },
+            : {
+                file: {
+                  image: { mimeType: 'image/jpeg', dataBase64: bytes.toString('base64') },
+                },
+              }),
       }),
     );
     const done = await mutate(
-      'UPDATE job_imports SET status=?,result_json=?,storage_key=NULL,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?',
+      'UPDATE job_imports SET status=?,result_json=?,storage_key=NULL,source_text=NULL,read_token=NULL,read_until=NULL WHERE id=? AND read_token=?',
       [result.found ? 'ready' : 'empty', JSON.stringify(result), id, token],
     );
     // Once it's read, the file itself isn't kept: it can have customers' names and addresses.
-    if (done.affectedRows) await deletePhoto(String(item.storage_key)).catch(() => {});
+    if (done.affectedRows && item.storage_key)
+      await deletePhoto(String(item.storage_key)).catch(() => {});
     if (done.affectedRows)
       await recordEvent(
         undefined,
@@ -280,14 +290,16 @@ jobImportsRouter.post('/onboarding/imports/save', requireWorkspace, async (req, 
   const ids = jobs.map((item) => item.importId);
   if (new Set(ids).size !== ids.length)
     throw new ApiError(400, 'IMPORT_TWICE', 'Each file can only be saved once.');
+  const kinds = new Map<string, string>();
   await transaction(async (connection) => {
     const found = await rows(
-      `SELECT id FROM job_imports WHERE business_id=? AND id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`,
+      `SELECT id,kind FROM job_imports WHERE business_id=? AND id IN (${ids.map(() => '?').join(',')}) FOR UPDATE`,
       [current.businessId, ...ids],
       connection,
     );
     if (found.length !== ids.length)
       throw new ApiError(404, 'IMPORT_NOT_FOUND', 'One of these files is no longer on your list.');
+    for (const row of found) kinds.set(String(row.id), String(row.kind));
     await insertPastJobs(
       connection,
       current,
@@ -308,7 +320,7 @@ jobImportsRouter.post('/onboarding/imports/save', requireWorkspace, async (req, 
       req,
       current.businessId,
       'import_saved',
-      jobFacts({ ...job, source: 'invoice' }),
+      { ...jobFacts({ ...job, source: 'invoice' }), from: kinds.get(importId) ?? '' },
       { ref: importId },
     );
   res.json(

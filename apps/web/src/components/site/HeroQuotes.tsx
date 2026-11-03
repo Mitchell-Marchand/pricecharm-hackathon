@@ -16,12 +16,20 @@ const ARRIVED = [
   '8:40 pm · from your website',
   '7:05 am · from your link',
 ];
+/** For visitors from the after-hours ads: every request came in once the owner had stopped. */
+const AFTER_HOURS = [
+  '8:40 pm · from your website',
+  'Sunday 2:15 pm · from your link',
+  '9:55 pm · from your website',
+  '6:10 am · from your link',
+];
 
 /**
  * Accepted quotes from different trades, one after another. It holds still while the visitor
  * points at it, and doesn't move at all for people who prefer less motion.
  */
-export function HeroQuotes() {
+export function HeroQuotes({ afterHours = false }: { afterHours?: boolean }) {
+  const arrived = afterHours ? AFTER_HOURS : ARRIVED;
   // The sample quotes are from US businesses.
   setCurrency('USD');
   const [index, setIndex] = useState(0);
@@ -64,7 +72,7 @@ export function HeroQuotes() {
             <p className="text-sm font-semibold">
               {customer.name} · {customer.place}
             </p>
-            <p className="text-xs text-muted">New request · {ARRIVED[index % ARRIVED.length]}</p>
+            <p className="text-xs text-muted">New request · {arrived[index % arrived.length]}</p>
           </div>
         </div>
         <p className="mt-3 text-[15px] leading-[1.55]">{demo.hero.request}</p>

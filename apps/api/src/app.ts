@@ -25,6 +25,7 @@ import { isDeployed, validateRuntimeConfiguration } from './config.js';
 import { requireHuman } from './human-check.js';
 import { onboardingRouter } from './onboarding.js';
 import { jobImportsRouter } from './job-imports.js';
+import { quickbooksRouter } from './quickbooks.js';
 import { approveLinkRouter } from './live/approve-link.js';
 import { pastJobsRouter } from './past-jobs.js';
 import { practiceRouter } from './practice/router.js';
@@ -163,6 +164,7 @@ export function createApp() {
     onboardingRouter,
     pastJobsRouter,
     jobImportsRouter,
+    quickbooksRouter,
     practiceRouter,
     profileRouter,
     charmRouter,

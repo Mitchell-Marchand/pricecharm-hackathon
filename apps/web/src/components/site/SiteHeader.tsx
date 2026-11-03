@@ -5,8 +5,9 @@ import { ButtonLink } from '../ui';
 /** Header for the public pages: landing, pricing, privacy and terms. */
 export function SiteHeader({ howItWorks = false }: { howItWorks?: boolean }) {
   return (
-    <header className="gutter mx-auto flex h-18 max-w-6xl items-center justify-between gap-4">
-      <Logo href="/" />
+    <header className="gutter mx-auto flex h-18 max-w-6xl items-center justify-between gap-3 sm:gap-4">
+      {/* A smaller wordmark on phones leaves room for both buttons. */}
+      <Logo href="/" className="max-sm:[&>span]:text-[17px]" />
       <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
         {howItWorks && (
           <a
@@ -28,8 +29,11 @@ export function SiteHeader({ howItWorks = false }: { howItWorks?: boolean }) {
         >
           Pricing
         </Link>
-        <ButtonLink href="/login" variant="ghost">
+        <ButtonLink href="/login" variant="ghost" className="max-sm:px-2">
           Sign in
+        </ButtonLink>
+        <ButtonLink href="/start" size="sm" className="max-sm:px-2.5">
+          Get started
         </ButtonLink>
       </nav>
     </header>

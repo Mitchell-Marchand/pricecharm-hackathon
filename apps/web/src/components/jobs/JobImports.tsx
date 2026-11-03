@@ -1,17 +1,22 @@
 'use client';
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { FileText, LoaderCircle, Upload } from 'lucide-react';
+import { FileText, LoaderCircle, Receipt, Upload } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { Button, MoneyInput, TextInput } from '@/components/ui';
 import { ApiError, errorMessage } from '@/lib/api';
 import {
+  connectQuickBooks,
+  disconnectQuickBooks,
   listImports,
+  pullQuickBooks,
+  quickbooksStatus,
   removeImport,
   saveImports,
   uploadImport,
   type JobImport,
   type PastJob,
+  type QuickBooks,
   type ReadJob,
 } from '@/lib/jobs';
 import { cx, money, moneyInput, parseMoney } from '@/lib/util';
@@ -307,6 +312,134 @@ export function JobImports({
           event.target.value = '';
         }}
       />
+      <QuickBooksImport onImports={merge} />
+    </div>
+  );
+}
+
+/** What coming back from QuickBooks says, once. */
+const RETURN_NOTES: Record<string, string> = {
+  connected: 'QuickBooks is connected. Your newest invoices are on the list.',
+  cancelled: 'QuickBooks wasn’t connected.',
+  failed: 'We couldn’t connect QuickBooks. Try again.',
+  expired: 'Your setup ran out before QuickBooks finished. Start again to connect it.',
+};
+
+/**
+ * Invoices straight from the owner's QuickBooks. They land on the same list as uploaded files and
+ * are checked the same way. Hidden until PriceCharm's QuickBooks keys are set.
+ */
+function QuickBooksImport({ onImports }: { onImports: (fresh: JobImport[]) => void }) {
+  const notify = useToast();
+  const [status, setStatus] = useState<QuickBooks | null>(null);
+  const [busy, setBusy] = useState<'connect' | 'pull' | 'disconnect' | null>(null);
+
+  useEffect(() => {
+    quickbooksStatus()
+      .then(setStatus)
+      .catch(() => {});
+    // Back from QuickBooks: say how it went, then tidy the address.
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get('quickbooks');
+    if (!outcome) return;
+    if (RETURN_NOTES[outcome]) notify(RETURN_NOTES[outcome]);
+    params.delete('quickbooks');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+  }, []);
+
+  if (!status?.available) return null;
+  const disconnected = () => setStatus({ ...status, connection: null });
+
+  async function connect() {
+    setBusy('connect');
+    try {
+      const { url } = await connectQuickBooks(
+        `${window.location.pathname}${window.location.search}`,
+      );
+      window.location.assign(url);
+    } catch (error) {
+      notify(errorMessage(error));
+      setBusy(null);
+    }
+  }
+
+  async function pull() {
+    setBusy('pull');
+    try {
+      const result = await pullQuickBooks();
+      onImports(result.imports);
+      if (!result.added)
+        notify(
+          result.full
+            ? 'Save or skip the jobs on your list before bringing in more.'
+            : 'There are no more invoices to bring in.',
+        );
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        ['QUICKBOOKS_DISCONNECTED', 'QUICKBOOKS_NOT_CONNECTED'].includes(error.code)
+      )
+        disconnected();
+      notify(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnect() {
+    setBusy('disconnect');
+    try {
+      await disconnectQuickBooks();
+      disconnected();
+      notify('QuickBooks is disconnected.');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!status.connection)
+    return (
+      <button
+        type="button"
+        onClick={() => void connect()}
+        disabled={busy !== null}
+        className="flex w-full items-center gap-3 rounded-md border border-line-strong bg-surface px-4 py-4 text-left transition-colors hover:border-ink/40 disabled:opacity-60"
+      >
+        <Receipt className="size-5 shrink-0 text-accent" aria-hidden />
+        <span>
+          <span className="block font-semibold">
+            {busy === 'connect' ? 'Opening QuickBooks…' : 'Bring in invoices from QuickBooks'}
+          </span>
+          <span className="block text-sm text-muted">
+            Connect once and your newest invoices land on this list to check.
+          </span>
+        </span>
+      </button>
+    );
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-md border border-line-strong bg-surface px-4 py-3">
+      <p className="flex min-w-48 flex-1 items-center gap-3 text-[15px]">
+        <Receipt className="size-5 shrink-0 text-accent" aria-hidden />
+        <span className="min-w-0 truncate">
+          <span className="font-semibold">QuickBooks</span>
+          {status.connection.companyName ? ` · ${status.connection.companyName}` : ' is connected'}
+        </span>
+      </p>
+      <Button variant="secondary" size="sm" onClick={() => void pull()} disabled={busy !== null}>
+        {busy === 'pull' ? 'Bringing them in…' : 'Bring in invoices'}
+      </Button>
+      <button
+        type="button"
+        onClick={() => void disconnect()}
+        disabled={busy !== null}
+        className="text-sm text-muted hover:text-stop"
+      >
+        Disconnect
+      </button>
     </div>
   );
 }

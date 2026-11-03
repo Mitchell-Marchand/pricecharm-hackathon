@@ -88,6 +88,29 @@ export function uploadImport(file: File) {
 
 export const removeImport = (id: string) => api(`/onboarding/imports/${id}`, { method: 'DELETE' });
 
+export interface QuickBooks {
+  /** False until PriceCharm's QuickBooks keys are set, and then it isn't offered. */
+  available: boolean;
+  connection: { companyName: string } | null;
+}
+
+export const quickbooksStatus = () => api<QuickBooks>('/onboarding/quickbooks');
+
+/** Where to send the owner to pick their company. They come back to `returnTo`. */
+export const connectQuickBooks = (returnTo: string) =>
+  api<{ url: string }>('/onboarding/quickbooks/connect', {
+    method: 'POST',
+    ...json({ returnTo }),
+  });
+
+/** Brings the next invoices onto the import list, as many as it has room for. */
+export const pullQuickBooks = () =>
+  api<{ added: number; full: boolean; imports: JobImport[] }>('/onboarding/quickbooks/pull', {
+    method: 'POST',
+  });
+
+export const disconnectQuickBooks = () => api('/onboarding/quickbooks', { method: 'DELETE' });
+
 export const saveImports = (jobs: { importId: string; job: ReadJob }[]) =>
   api<{ jobs: PastJob[]; imports: JobImport[] }>('/onboarding/imports/save', {
     method: 'POST',
