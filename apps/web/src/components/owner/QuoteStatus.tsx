@@ -11,6 +11,7 @@ const LABELS: Record<QuoteStatus, { text: string; tone: 'neutral' | 'accent' | '
     expired: { text: 'No answer', tone: 'neutral' },
     declined: { text: 'Declined', tone: 'neutral' },
     void: { text: 'Closed', tone: 'neutral' },
+    turned_down: { text: 'Turned down', tone: 'neutral' },
   };
 
 export function QuoteStatusTag({ status }: { status: QuoteStatus }) {

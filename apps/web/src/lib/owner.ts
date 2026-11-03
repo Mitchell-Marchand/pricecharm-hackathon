@@ -13,7 +13,16 @@ import type { Quote } from './quote';
 import type { Currency } from './currency';
 
 export type QuoteStatus =
-  'review' | 'sent' | 'accepted' | 'visit_requested' | 'lost' | 'expired' | 'declined' | 'void';
+  | 'review'
+  | 'sent'
+  | 'accepted'
+  | 'visit_requested'
+  | 'lost'
+  | 'expired'
+  | 'declined'
+  | 'void'
+  /** A request one of the owner's rules turned down. The customer never saw a quote. */
+  | 'turned_down';
 
 export interface QuoteListItem {
   id: string;
@@ -107,6 +116,8 @@ export interface QuoteDetail extends QuoteListItem {
   customerEmail: string | null;
   /** Missing from older APIs. */
   customerPhone?: string | null;
+  /** The job's street address, when the customer left it. Missing from older APIs. */
+  jobAddress?: string | null;
   summary: string;
   /** The job as fields: "600 sq ft; heavy moss; wants it next week". */
   details: string;
@@ -162,6 +173,8 @@ export interface QuotePage {
   contactFirst?: boolean;
   /** Quotes show a picture of the job done, made from the customer's photo. Missing from older APIs. */
   afterPreview?: boolean;
+  /** The contact form asks for the job's street address at the yes. Missing from older APIs. */
+  askAddress?: boolean;
 }
 export type QuotePageText = Pick<
   QuotePage,
@@ -169,7 +182,11 @@ export type QuotePageText = Pick<
 >;
 export const loadQuotePage = () => api<QuotePage>('/app/quote-page');
 export const saveQuotePage = (
-  patch: Partial<QuotePageText> & { contactFirst?: boolean; afterPreview?: boolean },
+  patch: Partial<QuotePageText> & {
+    contactFirst?: boolean;
+    afterPreview?: boolean;
+    askAddress?: boolean;
+  },
 ) => api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
 export function uploadLogo(file: File) {
   const body = new FormData();
@@ -295,6 +312,8 @@ export interface ApprovalView {
   totalCents: number;
   card: Quote;
   details: string;
+  /** The job's street address, when the customer left it. Missing from older APIs. */
+  jobAddress?: string | null;
   reasons: string[];
   expiresAt: string;
 }

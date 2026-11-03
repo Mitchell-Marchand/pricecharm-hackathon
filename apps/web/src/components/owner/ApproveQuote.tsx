@@ -136,6 +136,7 @@ export function ApproveQuote({ quoteId }: { quoteId: string }) {
         {view.customer} wants a {service ? `${service} quote` : 'quote'}
       </h1>
       {view.details && <p className="mt-2 text-ink-2">{view.details}</p>}
+      {view.jobAddress && <p className="mt-1 text-ink-2">Job address: {view.jobAddress}</p>}
 
       {view.reasons.length > 0 && (
         <section

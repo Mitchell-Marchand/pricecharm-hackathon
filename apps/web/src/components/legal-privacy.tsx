@@ -93,6 +93,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 conversation.
               </li>
               <li>Your name and a phone number or email address, so the business can reach you.</li>
+              <li>
+                Where the job is: the area you tell the assistant, like a ZIP code or neighborhood,
+                and the job address if you give it when you say yes, ask for a visit or ask a
+                question.
+              </li>
               <li>The quote you receive and whether you accept or decline it.</li>
             </ul>
             <h3>Through WhatsApp, Messenger and Instagram</h3>
@@ -260,10 +265,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               PriceCharm uses AI models from Meta, OpenAI and Anthropic. To reply to a customer,
               read a document or draft a quote, we send the model the parts of the conversation, the
               business’s pricing information and any photos or videos it needs, and use its answer.
-              We also use Meta or OpenAI to create the photos that come with practice requests.
-              Those photos are made up and don’t show anyone’s real property. When a business shows
-              after pictures with its quotes, Meta’s Muse Image makes one from the customer’s photo,
-              to show what the job could look like done.
+              The model may get the area a job is in, but never the job address you give the
+              business. We also use Meta or OpenAI to create the photos that come with practice
+              requests. Those photos are made up and don’t show anyone’s real property. When a
+              business shows after pictures with its quotes, Meta’s Muse Image makes one from the
+              customer’s photo, to show what the job could look like done.
             </p>
             <p>
               We use these providers’ business services. Under their terms, they don’t use what we
@@ -291,8 +297,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
           <>
             <p>
               <strong>The business you contacted.</strong> If you request a quote, your project
-              details, photos, conversation, contact details and your answer to the quote go to that
-              business.
+              details, photos, conversation, contact details, job address and your answer to the
+              quote go to that business. The job address goes only to that business.
             </p>
             <p>
               <strong>Service providers.</strong> These companies run parts of PriceCharm for us.
@@ -446,7 +452,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Until you delete it or close your account',
                 ],
                 [
-                  'Quote requests, including messages, photos, contact details and quotes',
+                  'Quote requests, including messages, photos, contact details, job addresses and quotes',
                   'As long as the business that received them has an account, unless deleted sooner on request',
                 ],
                 [

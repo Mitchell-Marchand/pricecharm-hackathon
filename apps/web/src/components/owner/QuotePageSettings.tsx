@@ -80,7 +80,11 @@ export function QuotePageSettings({ business }: { business: string }) {
   if (!page || !text) return <div className="shimmer h-40 rounded-md" />;
 
   const save = (
-    patch: Partial<QuotePageText> & { contactFirst?: boolean; afterPreview?: boolean },
+    patch: Partial<QuotePageText> & {
+      contactFirst?: boolean;
+      afterPreview?: boolean;
+      askAddress?: boolean;
+    },
     saved: (next: QuotePage) => string,
   ) =>
     saveQuotePage(patch)
@@ -316,6 +320,36 @@ export function QuotePageSettings({ business }: { business: string }) {
           />
         </div>
       </Field>
+
+      {page.askAddress !== undefined && (
+        <Field
+          label="Ask for the job address"
+          htmlFor="page-ask-address"
+          hint={
+            page.askAddress
+              ? 'When customers say yes, ask for a visit or ask a question, the form asks for the job’s street address too. The price still shows first.'
+              : 'Customers leave a name and a phone number or email. You ask for the address yourself.'
+          }
+        >
+          <div id="page-ask-address">
+            <Segmented
+              label="Ask for the job address"
+              value={page.askAddress ? 'on' : 'off'}
+              onChange={(value) =>
+                save({ askAddress: value === 'on' }, (next) =>
+                  next.askAddress
+                    ? 'Saved. Customers add the job address when they say yes.'
+                    : 'Saved. Customers aren’t asked for the address.',
+                )
+              }
+              options={[
+                { value: 'on', label: 'Ask for it' },
+                { value: 'off', label: 'Don’t ask' },
+              ]}
+            />
+          </div>
+        </Field>
+      )}
 
       {page.afterPreview !== undefined && (
         <Field

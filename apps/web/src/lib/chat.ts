@@ -25,6 +25,8 @@ export interface BusinessProfile {
   logo?: Logo | null;
   /** Takes walk-around videos. Missing from older APIs, which don't. */
   videos?: boolean;
+  /** The form at a yes, a visit or a question asks for the job's street address. Missing from older APIs. */
+  asksAddress?: boolean;
 }
 
 export interface ChatMessage {
@@ -184,7 +186,8 @@ export const videoPath = (slug: string, access: ChatAccess, videoId: string) =>
   `/api/v1${base(slug, access)}/videos/${videoId}`;
 
 /** A name and a way to reach them: an email, a phone number, or both. */
-export type Contact = { name: string; email: string; phone: string };
+/** Who the customer is, and the job's street address where the business asks for it. */
+export type Contact = { name: string; email: string; phone: string; address?: string };
 
 /**
  * Where the customer leaves their details: before the price, when the owner asks for that; for a
