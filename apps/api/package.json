@@ -26,7 +26,8 @@
     "ops:production": "node dist/ops.js --http",
     "stripe:setup": "node --import tsx src/stripe-setup.ts",
     "promo": "node --import tsx src/promo.ts",
-    "agent-demo": "node --import tsx src/agent-demo.ts"
+    "agent-demo": "node --import tsx src/agent-demo.ts",
+    "practice-library": "node --import tsx src/practice-library.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",
