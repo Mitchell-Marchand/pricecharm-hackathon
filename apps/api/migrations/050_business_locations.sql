@@ -16,6 +16,6 @@ WHERE service_area <> '' AND NOT EXISTS (
   SELECT 1 FROM business_locations WHERE business_locations.business_id = businesses.id
 );
 
--- Setup asks how far an owner travels no more. New businesses start with no limit; a "too far"
--- turn-down in practice, or Settings, sets one.
+-- Setup starts on the trade now. It no longer asks how far an owner travels: a "too far"
+-- turn-down in practice, or Settings, sets that, and there's no limit until then.
 ALTER TABLE businesses MODIFY COLUMN onboarding_step VARCHAR(20) NOT NULL DEFAULT 'trade';
