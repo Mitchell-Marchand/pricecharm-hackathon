@@ -104,7 +104,8 @@ export function withCustomerAiUsage<T>(
 }
 /** Reserve before calling a provider, including attempts that later fail or time out. */
 export async function reserveAiCall(businessId: string, conversationId: string | undefined) {
-  const tenantLimit = dailyLimit('AI_DAILY_BUSINESS_LIMIT', 100);
+  // Setup trains on practice alone now: 15 customers take about 160 calls.
+  const tenantLimit = dailyLimit('AI_DAILY_BUSINESS_LIMIT', 200);
   const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
   await transaction(async (connection) => {
     await mutate(
@@ -151,7 +152,7 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         [businessId],
         connection,
       );
-      if (Number(used.count) >= dailyLimit('AI_DRAFT_LIFETIME_LIMIT', 150))
+      if (Number(used.count) >= dailyLimit('AI_DRAFT_LIFETIME_LIMIT', 220))
         throw new ApiError(
           429,
           'SETUP_AI_LIMIT',
