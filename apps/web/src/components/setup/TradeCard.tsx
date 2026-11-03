@@ -39,8 +39,9 @@ export function TradeCard({
         className={cx('size-6 shrink-0', selected ? 'text-accent' : 'text-ink-2')}
         aria-hidden
       />
-      {/* Whole words on a phone: "Landscaping" fits a card 360px wide. Narrower ones hyphenate. */}
-      <span className="min-w-0 pr-3 text-[15px] leading-tight font-semibold break-words hyphens-auto max-[379px]:text-[14px]">
+      {/* Whole words on a phone: "Landscaping" fits a card 360px wide. No hyphens either: Safari
+          splits words that would fit on the next line. */}
+      <span className="min-w-0 pr-3 text-[15px] leading-tight font-semibold break-words max-[379px]:text-[14px]">
         {children}
       </span>
       {selected && (
