@@ -1,7 +1,55 @@
 import { api, json } from './api';
+import type { ReadingProgress } from './chat';
 import type { Discount, Quote, QuoteLine } from './quote';
 
 export type Tone = 'canary' | 'pink' | 'blue';
+
+/** How far the job is from the business: miles for US dollar businesses, km otherwise. */
+export interface Distance {
+  value: number;
+  unit: 'mi' | 'km';
+  /** The owner's location it's from, as they typed it. */
+  from?: string;
+}
+
+/**
+ * What the Charm saw in the photos the customer opened with: still looking, what it found, or
+ * that it couldn't read them. What it found is what its guess on this customer reads.
+ */
+export type PhotoReading =
+  | { status: 'reading'; photoIds: string[]; progress: ReadingProgress | null }
+  | { status: 'failed'; photoIds: string[]; failure: string }
+  | {
+      status: 'read';
+      photoIds: string[];
+      summary: string;
+      counts: {
+        label: string;
+        unit: string;
+        count: number;
+        /** What it counted, before any fix. */
+        read: number;
+        atLeast: boolean;
+        kinds: { kind: string; count: number; condition: string }[];
+        fixed: boolean;
+      }[];
+      area: {
+        surface: string;
+        unit: string;
+        low: number;
+        high: number;
+        fixed: boolean;
+      } | null;
+      /** Its material, condition, access and anything else it noticed, in a few words each. */
+      details: string[];
+      /** What the owner added about the photos. */
+      note: string;
+      found: string[];
+      /** The photos with what it counted drawn on. */
+      drawn: { label: string; url: string }[];
+    };
+
+export type PhotoFixes = { counts?: Record<string, number>; area?: number | null; note?: string };
 
 export interface PracticeMessage {
   id: string;
@@ -17,7 +65,15 @@ export interface PracticeRun {
   position: number;
   status: 'preparing' | 'ready' | 'failed' | 'finished';
   failure: string | null;
-  customer: { name: string; firstName: string; initials: string; place: string; tone: Tone } | null;
+  customer: {
+    name: string;
+    firstName: string;
+    initials: string;
+    place: string;
+    /** Missing from older APIs, and null for customers from before distances. */
+    distance?: Distance | null;
+    tone: Tone;
+  } | null;
   serviceName: string | null;
   /** The service the owner asked to practice, if they picked one. */
   focus: string | null;
@@ -40,6 +96,10 @@ export interface PracticeRun {
     centsPerUnit: number;
     ownerCentsPerUnit: number;
   } | null;
+  /** What the Charm saw in the customer's photos. Missing from older APIs. */
+  photoReading?: PhotoReading | null;
+  /** The customer is taking a photo the owner asked for. */
+  takingPhoto?: boolean;
   finished: boolean;
 }
 
@@ -92,6 +152,12 @@ export const fixInsight = (runId: string, insightId: string, text: string) =>
     method: 'PATCH',
     ...json({ text }),
   });
+/** The owner's fix to what their Charm saw: a count, the size, or a note. */
+export const fixPhotoReading = (runId: string, fixes: PhotoFixes) =>
+  api<PracticeRun>(`/onboarding/practice/${runId}/photo-reading`, {
+    method: 'PATCH',
+    ...json(fixes),
+  });
 export const retryPractice = (runId: string) =>
   api<PracticeState>(`/onboarding/practice/${runId}/retry`, { method: 'POST', ...json({}) });
 export const finishPractice = () =>
@@ -105,6 +171,11 @@ export const morePractice = (service?: string | null) =>
     method: 'POST',
     ...json(service ? { service } : {}),
   });
+
+/** "12 mi away", "20 km away", kept on one line. */
+export function distanceText(distance: Distance | null | undefined): string {
+  return distance ? `${distance.value} ${distance.unit} away` : '';
+}
 
 /** The practice runs, with one of them swapped for a newer copy. */
 export function withRun(state: PracticeState, run: PracticeRun): PracticeState {

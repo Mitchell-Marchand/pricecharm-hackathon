@@ -10,12 +10,20 @@ import {
 } from 'react';
 import { ArrowUp, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
+import { PhotoViewer, type ViewerPhoto } from '@/components/PhotoViewer';
+import {
+  PhotoReadingCard,
+  PhotoReadingFailed,
+  PhotoReadingStatus,
+  TakingPhoto,
+} from '@/components/practice/PhotoReading';
 import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
 import { Avatar, Button, Tag, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
+  distanceText,
   fixInsight,
   loadPractice,
   requestGuess,
@@ -256,6 +264,7 @@ export function PracticeSession({
   const [nudge, setNudge] = useState(false);
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [slow, setSlow] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
   const replyBox = useRef<HTMLTextAreaElement>(null);
   const timers = useRef<number[]>([]);
 
@@ -282,6 +291,19 @@ export function PracticeSession({
     };
   }, [run?.status, run?.id, onState]);
 
+  // While the Charm reads the photos or the customer takes one, check back until it's done.
+  const reading = run?.photoReading?.status === 'reading';
+  const waiting = run?.status === 'ready' && (reading || Boolean(run.takingPhoto));
+  useEffect(() => {
+    if (!waiting) return;
+    const poll = window.setInterval(() => {
+      loadPractice()
+        .then(onState)
+        .catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(poll);
+  }, [waiting, run?.id, onState]);
+
   const visibleMessages = run
     ? reveal?.runId === run.id
       ? run.messages.slice(0, reveal.messages)
@@ -291,7 +313,30 @@ export function PracticeSession({
 
   useEffect(() => {
     if (visibleMessages.length > 1 || typing || pending) scrollToBottom();
-  }, [visibleMessages.length, typing, pending, showInsights]);
+  }, [visibleMessages.length, typing, pending, showInsights, run?.takingPhoto]);
+
+  // Every photo in the chat, in order, for the full-screen viewer, then what the Charm counted.
+  const photoReading = run?.photoReading ?? null;
+  const viewerPhotos: ViewerPhoto[] = [
+    ...visibleMessages.flatMap((message) =>
+      message.from === 'customer'
+        ? message.photos.map((photo) => ({
+            src: photo.url,
+            label: `Photo from ${run?.customer?.name ?? 'your customer'}`,
+          }))
+        : [],
+    ),
+    ...(photoReading?.status === 'read'
+      ? photoReading.drawn.map((photo) => ({
+          src: photo.url,
+          label: `What your Charm counted: ${photo.label}`,
+        }))
+      : []),
+  ];
+  const photosBefore = (position: number) =>
+    visibleMessages
+      .slice(0, position)
+      .reduce((sum, message) => sum + (message.from === 'customer' ? message.photos.length : 0), 0);
 
   async function send(event?: FormEvent) {
     event?.preventDefault();
@@ -391,9 +436,30 @@ export function PracticeSession({
     }
   }
 
-  const busy = typing || Boolean(pending) || Boolean(run?.outcome) || run?.status !== 'ready';
+  const busy =
+    typing || Boolean(pending) || Boolean(run?.outcome) || run?.status !== 'ready' || waiting;
   const customer = run?.customer;
   const lastQuoteId = [...(run?.messages ?? [])].reverse().find((message) => message.quote)?.id;
+  const readId = photoReading?.photoIds[0];
+
+  /** Under the photos the customer opened with: the Charm looking, or what it saw. */
+  const renderReading = () => {
+    if (!run || !photoReading) return null;
+    if (photoReading.status === 'reading')
+      return <PhotoReadingStatus key="reading" progress={photoReading.progress} />;
+    if (photoReading.status === 'failed') return <PhotoReadingFailed key="reading" />;
+    const drawnAt = viewerPhotos.length - photoReading.drawn.length;
+    return (
+      <PhotoReadingCard
+        key="reading"
+        run={run}
+        reading={photoReading}
+        canFix={run.status === 'ready' && !run.outcome && !busy}
+        onChange={onRun}
+        onShowDrawn={() => setViewing(drawnAt)}
+      />
+    );
+  };
 
   const renderMessage = (message: PracticeMessage, position: number) => {
     if (!customer) return null;
@@ -413,17 +479,27 @@ export function PracticeSession({
     if (message.from === 'owner')
       return <OwnerMessage key={message.id}>{message.text}</OwnerMessage>;
     const following = visibleMessages[position + 1];
-    return (
+    const read = Boolean(readId) && message.photos.some((photo) => photo.id === readId);
+    const bubble = (
       <CustomerMessage
         key={message.id}
         name={customer.name}
         initials={customer.initials}
         tone={customer.tone}
         photos={message.photos.length ? message.photos.map((photo) => photo.url) : undefined}
-        showAvatar={!following || following.from !== 'customer'}
+        onPhoto={(index) => setViewing(photosBefore(position) + index)}
+        showAvatar={read || !following || following.from !== 'customer'}
       >
         {message.text}
       </CustomerMessage>
+    );
+    return read ? (
+      <div key={message.id} className="flex flex-col gap-2.5">
+        {bubble}
+        {renderReading()}
+      </div>
+    ) : (
+      bubble
     );
   };
 
@@ -450,7 +526,9 @@ export function PracticeSession({
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">
                   {customer
-                    ? `${customer.name} · ${customer.place}`
+                    ? [customer.name, customer.place, distanceText(customer.distance)]
+                        .filter(Boolean)
+                        .join(' · ')
                     : 'Your next practice customer'}
                 </p>
                 <p className="text-sm text-muted">
@@ -463,6 +541,13 @@ export function PracticeSession({
             <div className="mt-6 flex flex-col gap-4" aria-live="polite">
               {visibleMessages.map(renderMessage)}
               {pending && <OwnerMessage>{pending}</OwnerMessage>}
+              {customer && run?.takingPhoto && !typing && (
+                <TakingPhoto
+                  name={customer.firstName}
+                  initials={customer.initials}
+                  tone={customer.tone}
+                />
+              )}
               {(typing || run?.status === 'preparing') && (
                 <Typing
                   name={customer?.firstName ?? 'Your customer'}
@@ -507,7 +592,7 @@ export function PracticeSession({
                     setBuilderOpen(true);
                     if (run) void requestGuess(run.id).catch(() => {});
                   }}
-                  disabled={run?.status !== 'ready' || !run.messages.length}
+                  disabled={run?.status !== 'ready' || !run.messages.length || waiting}
                   className={cx(nudge && 'pulse')}
                 >
                   <Receipt aria-hidden /> I have enough to quote
@@ -523,7 +608,11 @@ export function PracticeSession({
                   rows={1}
                   value={draft}
                   placeholder={
-                    customer ? `Ask ${customer.firstName} a question…` : 'Ask a question…'
+                    reading
+                      ? 'Your Charm is looking at the photos…'
+                      : customer
+                        ? `Ask ${customer.firstName} a question…`
+                        : 'Ask a question…'
                   }
                   onChange={(event) => {
                     setDraft(event.target.value);
@@ -546,6 +635,13 @@ export function PracticeSession({
           )}
         </div>
       </div>
+
+      <PhotoViewer
+        photos={viewerPhotos}
+        index={viewing !== null && viewing < viewerPhotos.length ? viewing : null}
+        onIndex={setViewing}
+        onClose={() => setViewing(null)}
+      />
 
       {run && customer && (
         <QuoteBuilder
