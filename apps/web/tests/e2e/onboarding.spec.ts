@@ -379,6 +379,12 @@ test('practice comes first, then the account, a test, the plans and going live',
     page.getByText('Remembers why: “Heavy moss on half of it, so a second pass.”'),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /Add why you priced it this way/ })).toHaveCount(0);
+  // Coming back before the next customer opens this one again, chat and all.
+  await page.reload();
+  await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.getByText('Remembers why: “Heavy moss on half of it, so a second pass.”'),
+  ).toBeVisible();
   await expect(page.getByText(/Before you sent yours, it guessed \$/)).toBeVisible();
   await page.getByRole('button', { name: 'Fix' }).first().click();
   await page.getByLabel('Correct this').fill('Asks about size and stains');
@@ -402,7 +408,8 @@ test('practice comes first, then the account, a test, the plans and going live',
   await page.getByRole('button', { name: /^(Next customer|Keep training)/ }).click();
   await expect(page.getByText('Priya S. · Old Town')).toBeVisible({ timeout: 15_000 });
   await quote('Flagstone wash, about 350 sq ft', '175');
-  await expect(page.getByText(/It would also have asked to see this one first/)).toBeVisible();
+  // A quote they sent says nothing about wanting to see it first: practice is for pricing online.
+  await expect(page.getByText(/would also have asked to see/)).toHaveCount(0);
   // Demo mode's three customers come round again for the rest of setup.
   for (const [name, label, price] of [
     ['Dana R. · Eastgate', 'Patio wash, about 550 sq ft', '280'],

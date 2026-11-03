@@ -193,8 +193,6 @@ function InsightCard({
             ) : (
               <>It didn&apos;t have enough to go on to guess this one. Now it does.</>
             )}
-            {flagged &&
-              ` It would also have asked to see this one first${reason ? `: ${reason}` : ''}.`}
           </p>
           {market && (
             <p className="text-[15px] text-ink-2">

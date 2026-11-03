@@ -49,7 +49,8 @@ test(
     async function practice() {
       for (let attempt = 0; attempt < 60; attempt++) {
         const state = (await owner.get('/api/v1/onboarding/practice')).body.data;
-        if (state.runs[state.current]?.status === 'ready') return state;
+        const open = state.runs.find((run: { finished: boolean }) => !run.finished);
+        if (open?.status === 'ready') return state;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw new Error('The practice customer never became ready.');
@@ -284,7 +285,8 @@ test(
     assert.equal((await knows(`notes/${ownNote.id}`, 'delete')).status, 404);
 
     state = await practice();
-    assert.equal(state.current, 1);
+    // Coming back opens the customer just answered, until the owner starts on the next.
+    assert.equal(state.current, 0);
     const second = state.runs[1];
     assert.equal(second.customer.name, 'Marcus T.');
     // Wanting to see it is said in the chat. The customer asks once for a rough price instead.
@@ -331,7 +333,7 @@ test(
       .expect(200);
     for (const position of [3, 4, 5]) {
       state = await practice();
-      assert.equal(state.current, position);
+      assert.equal(state.current, position - 1);
       await owner
         .post(`/api/v1/onboarding/practice/${state.runs[position].id}/quote`)
         .set('Origin', origin)

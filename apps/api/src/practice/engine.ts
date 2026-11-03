@@ -686,12 +686,21 @@ export async function practiceState(businessId: string) {
     ),
   );
   const firstOpen = views.findIndex((run) => !run.finished);
+  // Once a customer is answered the next is already waiting. Until the owner starts on it, coming
+  // back opens the one they just answered, with what the Charm picked up. One they asked for since
+  // then, like a customer for one service, opens instead.
+  const stayBack =
+    firstOpen > 0 &&
+    !views[firstOpen].messages.some((message) => message.from === 'owner') &&
+    Boolean(runs[firstOpen - 1].finished_at) &&
+    new Date(runs[firstOpen].created_at) <= new Date(runs[firstOpen - 1].finished_at);
   const closePercent = await closePercentFor(businessId);
   const results = practiceResults(views, closePercent);
   return {
     count: PRACTICE_COUNT,
     runs: views,
-    current: firstOpen === -1 ? Math.max(0, views.length - 1) : firstOpen,
+    current:
+      firstOpen === -1 ? Math.max(0, views.length - 1) : stayBack ? firstOpen - 1 : firstOpen,
     finished: views.filter((run) => run.finished).length,
     results,
     closePercent,
