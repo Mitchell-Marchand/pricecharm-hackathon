@@ -1,4 +1,4 @@
-import { api, json, upload } from './api';
+import { api, json, upload, whileBusy } from './api';
 import type { Quote } from './quote';
 import type { Currency } from './currency';
 
@@ -150,11 +150,13 @@ export const sendMessage = (slug: string, access: ChatAccess, text: string) =>
 export function sendPhoto(slug: string, access: ChatAccess, blob: Blob) {
   const body = new FormData();
   body.append('file', blob, 'photo.jpg');
-  return api<ChatView>(`${base(slug, access)}/photos`, {
-    method: 'POST',
-    headers: auth(access),
-    body,
-  });
+  return whileBusy(() =>
+    api<ChatView>(`${base(slug, access)}/photos`, {
+      method: 'POST',
+      headers: auth(access),
+      body,
+    }),
+  );
 }
 
 /** A walk-around video, with stills taken from it in the browser and where in it each was taken. */

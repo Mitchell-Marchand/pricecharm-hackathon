@@ -1,4 +1,4 @@
-import { api, json } from './api';
+import { api, json, whileBusy } from './api';
 import { readPhoto } from './util';
 
 export interface Discount {
@@ -74,7 +74,7 @@ export async function uploadJobPhoto(file: File): Promise<JobPhoto> {
   const blob = await (await fetch(dataUrl)).blob();
   const body = new FormData();
   body.append('file', blob, file.name.replace(/\.[^.]+$/, '') + '.jpg');
-  return api<JobPhoto>('/onboarding/photos', { method: 'POST', body });
+  return whileBusy(() => api<JobPhoto>('/onboarding/photos', { method: 'POST', body }));
 }
 
 export const listImports = () => api<JobImport[]>('/onboarding/imports');
