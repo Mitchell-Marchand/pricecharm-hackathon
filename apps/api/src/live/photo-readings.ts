@@ -54,40 +54,98 @@ async function unreadPhotos(chat: Row) {
   return same(readIds, photoIds) ? null : photos;
 }
 
-/** Holds the chat's photos for one reading, wherever it runs: the API or the worker. */
-async function claim(chatId: string): Promise<string | null> {
+/**
+ * Where a reading and its lease are kept: a customer's chat, or a practice customer
+ * (src/practice/photos.ts). Both have the same photo_read_* columns.
+ */
+export type ReadingTable = 'lead_chats' | 'practice_runs';
+
+/** Holds the photos for one reading, wherever it runs: the API or the worker. */
+export async function claimReading(
+  table: ReadingTable,
+  id: string,
+  seconds = LEASE_SECONDS,
+): Promise<string | null> {
   const token = randomUUID();
   const claimed = await mutate(
-    `UPDATE lead_chats SET photo_read_token=?,photo_read_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${LEASE_SECONDS} SECOND)
+    `UPDATE ${table} SET photo_read_token=?,photo_read_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${Math.round(seconds)} SECOND)
      WHERE id=? AND (photo_read_until IS NULL OR photo_read_until<UTC_TIMESTAMP(3))`,
-    [token, chatId],
+    [token, id],
   );
   return claimed.affectedRows ? token : null;
 }
+const claim = (chatId: string) => claimReading('lead_chats', chatId);
 
-/** Saves how far the reading holding the chat has got, so the chat can show it. */
-function progressFor(chatId: string, token: string): ReportProgress {
+/** Saves how far the reading holding the photos has got, so the chat can show it. */
+export function readingProgress(table: ReadingTable, id: string, token: string): ReportProgress {
   const shown: ReadingProgress = { step: 'watching' };
   return async (update) => {
     Object.assign(shown, update);
-    await mutate('UPDATE lead_chats SET photo_progress_json=? WHERE id=? AND photo_read_token=?', [
+    await mutate(`UPDATE ${table} SET photo_progress_json=? WHERE id=? AND photo_read_token=?`, [
       JSON.stringify(shown),
-      chatId,
+      id,
       token,
     ]).catch(() => {});
   };
 }
+const progressFor = (chatId: string, token: string) => readingProgress('lead_chats', chatId, token);
 
 /** How far the chat's photo reading has got, while one holds it. */
 export function photoProgress(chat: Row): ReadingProgress | null {
   return json<ReadingProgress | null>(chat.photo_progress_json, null);
 }
 
-async function release(chatId: string, token: string) {
+/** Lets go of the photos once the reading is done, or has failed. */
+export async function releaseReading(table: ReadingTable, id: string, token: string) {
   await mutate(
-    'UPDATE lead_chats SET photo_read_token=NULL,photo_read_until=NULL,photo_progress_json=NULL WHERE id=? AND photo_read_token=?',
-    [chatId, token],
+    `UPDATE ${table} SET photo_read_token=NULL,photo_read_until=NULL,photo_progress_json=NULL WHERE id=? AND photo_read_token=?`,
+    [id, token],
   );
+}
+const release = (chatId: string, token: string) => releaseReading('lead_chats', chatId, token);
+
+/**
+ * Stored photos read for a business's service, the same way a customer's chat has them read.
+ * The photos are attachments rows (id and storage_key), oldest first.
+ */
+export async function measureStoredPhotos(input: {
+  business: Row;
+  serviceName: string;
+  photos: Row[];
+  progress: ReportProgress;
+  /** Keeps a photo with what was counted drawn on, and returns its storage key. */
+  saveOverlay?: (jpeg: Buffer) => Promise<string>;
+}): Promise<Walkaround> {
+  const businessId = String(input.business.id);
+  const services = (
+    await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
+  ).map((row) => String(row.name));
+  return measurePhotos({
+    business: {
+      name: String(input.business.name),
+      trade: tradeName(input.business.trade_id, input.business.custom_trade),
+      services,
+    },
+    serviceName: input.serviceName,
+    priceUnits: await priceUnits(businessId),
+    progress: input.progress,
+    photos: await Promise.all(
+      input.photos.map(async (photo) => ({
+        id: String(photo.id),
+        image: {
+          mimeType: 'image/jpeg',
+          dataBase64: (await getPhoto(String(photo.storage_key))).toString('base64'),
+        },
+      })),
+    ),
+    saveOverlay:
+      input.saveOverlay ??
+      (async (jpeg) => {
+        const key = `${randomUUID()}.jpg`;
+        await putPhoto(key, jpeg);
+        return key;
+      }),
+  });
 }
 
 /** Reads the chat's photos if some aren't read yet. Says whether it read them. */
@@ -104,34 +162,8 @@ async function readOnce(ip: string, chatId: string, progress: ReportProgress): P
   await progress({ step: 'watching', seen: undefined, counting: undefined, found: undefined });
   let stored: Stored;
   try {
-    const services = (
-      await rows('SELECT name FROM offerings WHERE business_id=? ORDER BY position', [businessId])
-    ).map((row) => String(row.name));
-    const task = async () =>
-      measurePhotos({
-        business: {
-          name: String(business.name),
-          trade: tradeName(business.trade_id, business.custom_trade),
-          services,
-        },
-        serviceName: String(chat.service_name),
-        priceUnits: await priceUnits(businessId),
-        progress,
-        photos: await Promise.all(
-          photos.map(async (photo) => ({
-            id: String(photo.id),
-            image: {
-              mimeType: 'image/jpeg',
-              dataBase64: (await getPhoto(String(photo.storage_key))).toString('base64'),
-            },
-          })),
-        ),
-        saveOverlay: async (jpeg) => {
-          const key = `${randomUUID()}.jpg`;
-          await putPhoto(key, jpeg);
-          return key;
-        },
-      });
+    const task = () =>
+      measureStoredPhotos({ business, serviceName: String(chat.service_name), photos, progress });
     const result =
       chat.source === 'test'
         ? await withAiUsage(businessId, chatId, task)
