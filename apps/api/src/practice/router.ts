@@ -9,6 +9,7 @@ import {
   computeShadow,
   editInsight,
   ensurePracticeRuns,
+  fixPhotoReading,
   kickPreparation,
   PRACTICE_COUNT,
   practiceState,
@@ -178,6 +179,42 @@ practiceRouter.patch(
     res.json(
       ok(await editInsight(workspace(req).businessId, runId.parse(req.params.id), insightId, text)),
     );
+  },
+);
+
+/** The owner's fix to what their Charm saw in the customer's photos: a count, the size or a note. */
+practiceRouter.patch(
+  '/onboarding/practice/:id/photo-reading',
+  rateLimit(20, 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    const size = z.number().finite().min(0).max(1_000_000);
+    const fixes = z
+      .object({
+        counts: z.record(z.string().trim().min(1).max(80), size.int()).optional(),
+        area: size.positive().nullable().optional(),
+        note: z.string().trim().max(300).optional(),
+      })
+      .strict()
+      .refine((body) => Object.keys(body.counts ?? {}).length <= 6, {
+        message: 'That’s more counts than it saw.',
+      })
+      .parse(req.body);
+    const { businessId } = workspace(req);
+    const run = await fixPhotoReading(businessId, runId.parse(req.params.id), fixes);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_photo_fixed',
+      {
+        position: run.position,
+        counts: Object.keys(fixes.counts ?? {}).length,
+        area: fixes.area !== undefined,
+        note: Boolean(fixes.note),
+      },
+      { ref: run.id },
+    );
+    res.json(ok(run));
   },
 );
 

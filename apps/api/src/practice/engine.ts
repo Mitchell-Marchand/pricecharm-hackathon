@@ -1,9 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import { aiMode, type AiImage } from '../ai/index.js';
-import { describeRate, replyAsPracticeCustomer, writePracticeScenario } from '../ai/practice.js';
+import { aiMode, aiProvider, type AiImage } from '../ai/index.js';
+import {
+  describeRate,
+  replyAsPracticeCustomer,
+  writePracticeScenario,
+  type CustomerReply,
+} from '../ai/practice.js';
 import { generatePracticePhoto } from '../ai/practice-images.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
+import { photoReadingsAvailable } from '../live/photo-readings.js';
+import { copyLibraryEntry, libraryEntryFor } from './library.js';
+import { distanceOf, drawDistance, reconcileScenario } from './photo-facts.js';
+import {
+  fixPracticeReading,
+  photoReadingView,
+  practicePhotoNotes,
+  READ_SECONDS,
+  readingPhotos,
+  readPracticePhotos,
+  resumePhotoReadings,
+  RUN_COLUMNS,
+  type StoredReading,
+} from './photos.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { json, type Row } from '../models.js';
@@ -18,7 +37,15 @@ import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
 import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
-import { demoDraftQuote, demoPhoto, demoRateLine, demoReply, demoScenario } from './demo.js';
+import {
+  demoDraftQuote,
+  demoMiles,
+  demoPhoto,
+  demoPhotoReading,
+  demoRateLine,
+  demoReply,
+  demoScenario,
+} from './demo.js';
 import { focusSituation, planSituation } from './plan.js';
 import {
   gapPercent,
@@ -35,6 +62,10 @@ import { money as formatMoney } from '../money.js';
 /** Practice quotes to finish before the AI counts as trained. More can follow later. */
 export const PRACTICE_COUNT = 6;
 const MAX_MESSAGES = 40;
+/** Photos one practice customer sends when asked, the prepared one included. */
+export const PHOTO_ASKS = 2;
+/** How long taking one asked-for photo may hold a customer: a made image takes 20 to 30 s. */
+const PHOTO_ASK_SECONDS = 150;
 const TONES = ['canary', 'pink', 'blue'] as const;
 /**
  * Other businesses' combined rate for a practice job's service, next to the owner's own rate on
@@ -117,6 +148,34 @@ export async function kickPreparation(businessId: string) {
     void preparePracticeRun(String(run.id)).catch((error) =>
       reportError(error, { event: 'practice_prepare' }),
     );
+  // Photos a restart left unread, or an asked-for photo it left untaken, are picked up again.
+  await resumePhotoReadings(businessId);
+  const asked = await rows(
+    "SELECT id FROM practice_runs WHERE business_id=? AND status='ready' AND photo_ask_json IS NOT NULL AND (photo_ask_until IS NULL OR photo_ask_until<UTC_TIMESTAMP(3))",
+    [businessId],
+  );
+  for (const run of asked) {
+    const token = await claimPhotoAsk(String(run.id));
+    if (token) void takeAskedPhoto(String(run.id), token);
+  }
+}
+
+/**
+ * Where this customer is: near one of the owner's locations, mostly the main one. The first is
+ * kept in businesses.service_area too, which is all a business from before locations has.
+ */
+async function locationFor(businessId: string, area: string, random = Math.random) {
+  const locations = (
+    await rows('SELECT area FROM business_locations WHERE business_id=? ORDER BY position', [
+      businessId,
+    ])
+  )
+    .map((row) => String(row.area).trim())
+    .filter(Boolean);
+  if (!locations.length) return area.trim();
+  return locations.length > 1 && random() < 0.3
+    ? locations[1 + Math.floor(random() * (locations.length - 1))]
+    : locations[0];
 }
 
 /** What the business has taught so far, for choosing what the next practice customer asks. */
@@ -156,8 +215,15 @@ async function writeScenario(
 ): Promise<PracticeScenario> {
   const context = await businessContext(businessId);
   const situation = await nextSituation(businessId, position, context.services, focus);
-  if (aiMode === 'demo')
-    return { ...demoScenario(position, focus ? [focus] : context.services), situation };
+  const location = await locationFor(businessId, context.area);
+  if (aiMode === 'demo') {
+    const scenario = demoScenario(position, focus ? [focus] : context.services);
+    return {
+      ...scenario,
+      situation,
+      distance: distanceOf(demoMiles(scenario), context.currency, location),
+    };
+  }
   const jobs = (await listPastJobs(businessId)).map((job) => ({
     service: job.serviceName,
     description: job.description,
@@ -177,7 +243,8 @@ async function writeScenario(
       trade: context.trade,
       businessName: context.name,
       services: context.services,
-      area: context.area,
+      location,
+      distanceUnit: context.currency === 'USD' ? 'mi' : 'km',
       radiusMiles: context.radiusMiles,
       jobs,
       situation,
@@ -185,7 +252,38 @@ async function writeScenario(
     }),
   );
   // Practice for one service counts toward that service, whatever the AI called it.
-  return { ...scenario, serviceName: focus ?? scenario.serviceName, situation };
+  return {
+    ...scenario,
+    serviceName: focus ?? scenario.serviceName,
+    situation,
+    distance: scenario.distance
+      ? { ...scenario.distance, ...(location ? { from: location } : {}) }
+      : drawDistance(context.currency, location),
+  };
+}
+
+/** A checked library customer for this slot, copied in as the owner's own, if one fits. */
+async function libraryScenario(
+  businessId: string,
+  runId: string,
+  position: number,
+  focus: string | null,
+) {
+  const found = await libraryEntryFor(businessId, position, focus);
+  if (!found) return null;
+  try {
+    const copied = await copyLibraryEntry(businessId, runId, found);
+    const context = await businessContext(businessId);
+    const location = await locationFor(businessId, context.area);
+    return {
+      scenario: { ...copied.scenario, distance: drawDistance(context.currency, location) },
+      reading: copied.reading,
+    };
+  } catch (error) {
+    // One is written for them instead.
+    reportError(error, { event: 'practice_library' });
+    return null;
+  }
 }
 
 async function createPracticePhoto(
@@ -227,6 +325,88 @@ async function createPracticePhoto(
   return id;
 }
 
+/** Whether a new photo can be made here: demo mode has bundled ones, live needs an image key. */
+function canTakePhotos() {
+  if (aiMode === 'demo') return true;
+  return Boolean(aiProvider === 'meta' ? process.env.META_API_KEY : process.env.OPENAI_API_KEY);
+}
+
+/** Holds an asked-for photo that a restart left untaken, to take it again. */
+async function claimPhotoAsk(runId: string): Promise<string | null> {
+  const token = randomUUID();
+  const claimed = await mutate(
+    `UPDATE practice_runs SET photo_ask_token=?,photo_ask_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${PHOTO_ASK_SECONDS} SECOND)
+     WHERE id=? AND photo_ask_json IS NOT NULL AND (photo_ask_until IS NULL OR photo_ask_until<UTC_TIMESTAMP(3))`,
+    [token, runId],
+  );
+  return claimed.affectedRows ? token : null;
+}
+
+/**
+ * Takes the photo the owner asked for and sends it, with what the customer says about it. If it
+ * can't be made, the prepared photo goes instead, or the customer says that's all they have and
+ * the ask doesn't count. Never throws: the chat always goes on.
+ */
+export function takeAskedPhoto(runId: string, token: string): Promise<void> {
+  return takePhoto(runId, token).catch((error) =>
+    reportError(error, { event: 'practice_asked_photo' }),
+  );
+}
+
+async function takePhoto(runId: string, token: string) {
+  const [run] = await rows('SELECT * FROM practice_runs WHERE id=? AND photo_ask_token=?', [
+    runId,
+    token,
+  ]);
+  if (!run) return;
+  const businessId = String(run.business_id);
+  const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+  const ask = json<{ scene: string; text: string } | null>(run.photo_ask_json, null);
+  let photoId: string | null = null;
+  try {
+    if (ask) photoId = await createPracticePhoto(businessId, runId, scenario, ask.scene);
+  } catch (error) {
+    if (!(error instanceof ApiError)) reportError(error, { event: 'practice_asked_photo' });
+  }
+  const fallback = !photoId && scenario.extraPhoto.photoId && !run.photo_sent;
+  await transaction(async (connection) => {
+    const [current] = await rows(
+      'SELECT photo_ask_token,outcome FROM practice_runs WHERE id=? FOR UPDATE',
+      [runId],
+      connection,
+    );
+    if (current?.photo_ask_token !== token) return;
+    await mutate(
+      `UPDATE practice_runs SET photo_ask_json=NULL,photo_ask_token=NULL,photo_ask_until=NULL,
+       photo_sent=photo_sent OR ?,photo_asks=GREATEST(0,photo_asks-?) WHERE id=?`,
+      [Boolean(fallback), photoId || fallback ? 0 : 1, runId],
+      connection,
+    );
+    if (current.outcome) return;
+    if (photoId)
+      await addMessage(connection, businessId, runId, 'customer', 'text', ask!.text, [photoId]);
+    else if (fallback)
+      await addMessage(
+        connection,
+        businessId,
+        runId,
+        'customer',
+        'text',
+        scenario.extraPhoto.text,
+        [scenario.extraPhoto.photoId!],
+      );
+    else
+      await addMessage(
+        connection,
+        businessId,
+        runId,
+        'customer',
+        'text',
+        'Sorry, I couldn’t get a good one of that. Hope the others help.',
+      );
+  });
+}
+
 /**
  * Writes the customer and their photos. Safe to call from anywhere: a lease keeps two requests
  * from preparing the same customer, and a stale lease is picked up again.
@@ -242,19 +422,19 @@ export async function preparePracticeRun(runId: string): Promise<void> {
   const businessId = String(run.business_id);
   try {
     let scenario = json<PracticeScenario | null>(run.scenario_json, null);
+    let reading = json<StoredReading | null>(run.photo_reading_json, null);
     if (!scenario) {
-      scenario = await writeScenario(
-        businessId,
-        Number(run.position),
-        run.focus_service ? String(run.focus_service) : null,
+      const position = Number(run.position);
+      const focus = run.focus_service ? String(run.focus_service) : null;
+      const library = await libraryScenario(businessId, runId, position, focus);
+      scenario = library?.scenario ?? (await writeScenario(businessId, position, focus));
+      reading = library?.reading ?? null;
+      await mutate(
+        'UPDATE practice_runs SET scenario_json=?,photo_reading_json=? WHERE id=? AND prepare_token=?',
+        [JSON.stringify(scenario), reading && JSON.stringify(reading), runId, token],
       );
-      await mutate('UPDATE practice_runs SET scenario_json=? WHERE id=? AND prepare_token=?', [
-        JSON.stringify(scenario),
-        runId,
-        token,
-      ]);
     }
-    const ready = scenario;
+    let ready = scenario;
     const missing = [...ready.photos, ready.extraPhoto].filter((photo) => !photo.photoId);
     // A photo that fails leaves the request with fewer photos rather than no customer.
     await Promise.all(
@@ -266,22 +446,34 @@ export async function preparePracticeRun(runId: string): Promise<void> {
         }
       }),
     );
-    await transaction(async (connection) => {
+    const photoIds = ready.photos.flatMap((photo) => (photo.photoId ? [photo.photoId] : []));
+    // The photos are read before the chat goes on. Demo mode's stand-in reading is instant, so
+    // it's saved with the customer. A real one is held for now and read once they're ready.
+    const toRead = !reading && photoIds.length > 0 && photoReadingsAvailable();
+    if (toRead && aiMode === 'demo') {
+      reading = { photoIds, result: demoPhotoReading(ready), failure: '' };
+      ready = reconcileScenario(ready, reading.result!).scenario;
+    }
+    const readToken = toRead && aiMode !== 'demo' ? randomUUID() : null;
+    const opened = await transaction(async (connection) => {
       const [current] = await rows(
         'SELECT status,prepare_token FROM practice_runs WHERE id=? FOR UPDATE',
         [runId],
         connection,
       );
-      if (current?.status !== 'preparing' || current.prepare_token !== token) return;
+      if (current?.status !== 'preparing' || current.prepare_token !== token) return false;
       await mutate(
-        "UPDATE practice_runs SET scenario_json=?,status='ready',prepare_token=NULL,prepare_until=NULL,failure=NULL WHERE id=?",
-        [JSON.stringify(ready), runId],
+        `UPDATE practice_runs SET scenario_json=?,photo_reading_json=?,photo_read_token=?,
+         photo_read_until=IF(? IS NULL,NULL,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${READ_SECONDS} SECOND)),
+         status='ready',prepare_token=NULL,prepare_until=NULL,failure=NULL WHERE id=?`,
+        [JSON.stringify(ready), reading && JSON.stringify(reading), readToken, readToken, runId],
         connection,
       );
-      await addMessage(connection, businessId, runId, 'customer', 'text', ready.opener, [
-        ...ready.photos.flatMap((photo) => (photo.photoId ? [photo.photoId] : [])),
-      ]);
+      await addMessage(connection, businessId, runId, 'customer', 'text', ready.opener, photoIds);
+      return true;
     });
+    // Still outside the request: preparation runs on its own.
+    if (opened && readToken) await readPracticePhotos(runId, readToken);
   } catch (error) {
     reportError(error, { event: 'practice_prepare' });
     const failure =
@@ -319,8 +511,18 @@ function customerOf(scenario: PracticeScenario, position: number) {
     firstName: scenario.firstName,
     initials: `${scenario.firstName[0] ?? ''}${scenario.lastInitial}`.toUpperCase(),
     place: scenario.place,
+    /** How far the job is from the owner: miles for US dollar businesses, km otherwise. */
+    distance: scenario.distance ?? null,
     tone: TONES[position % TONES.length],
   };
+}
+
+/** Says why the customer can't take a message or a quote yet, while their photos aren't done. */
+function assertIdle(run: Row, messages: Row[]) {
+  if (readingPhotos(run, messages))
+    throw new ApiError(409, 'PRACTICE_READING', 'Your Charm is still looking at the photos.');
+  if (run.photo_ask_json)
+    throw new ApiError(409, 'PRACTICE_PHOTO', 'They’re still taking that photo.');
 }
 
 function runView(run: Row, messages: Row[]) {
@@ -369,6 +571,10 @@ function runView(run: Row, messages: Row[]) {
       ({ id, text }) => ({ id, text }),
     ),
     market: market && market.ownerCentsPerUnit < market.centsPerUnit * UNDER_MARKET ? market : null,
+    /** What the Charm saw in the photos the customer opened with, or that it's still looking. */
+    photoReading: run.status === 'preparing' ? null : photoReadingView(run, messages),
+    /** The customer is taking a photo the owner asked for. */
+    takingPhoto: run.status === 'ready' && !run.outcome && Boolean(run.photo_ask_json),
     finished: run.status === 'finished',
   };
 }
@@ -419,9 +625,10 @@ export function practiceResults(views: RunView[], closePercent = AGREE_PERCENT):
 }
 
 export async function practiceState(businessId: string) {
-  const runs = await rows('SELECT * FROM practice_runs WHERE business_id=? ORDER BY position', [
-    businessId,
-  ]);
+  const runs = await rows(
+    `SELECT ${RUN_COLUMNS} FROM practice_runs WHERE business_id=? ORDER BY position`,
+    [businessId],
+  );
   const messages = await rows(
     'SELECT * FROM practice_messages WHERE business_id=? ORDER BY created_at,id',
     [businessId],
@@ -447,7 +654,7 @@ export async function practiceState(businessId: string) {
 
 async function loadRun(businessId: string, runId: string, connection?: Sql, lock = false) {
   const [run] = await rows(
-    `SELECT * FROM practice_runs WHERE id=? AND business_id=?${lock ? ' FOR UPDATE' : ''}`,
+    `SELECT ${RUN_COLUMNS} FROM practice_runs WHERE id=? AND business_id=?${lock ? ' FOR UPDATE' : ''}`,
     [runId, businessId],
     connection,
   );
@@ -478,6 +685,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
   openRun(run);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   const before = await runMessages(runId);
+  assertIdle(run, before);
   if (before.length >= MAX_MESSAGES)
     throw new ApiError(
       422,
@@ -486,13 +694,16 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
     );
   const ownerId = await addMessage(undefined, businessId, runId, 'owner', 'text', text);
   const turn = before.filter((message) => message.sender === 'owner').length;
-  const photoAvailable = Boolean(scenario.extraPhoto.photoId) && !run.photo_sent;
+  // Up to two photos when asked: the prepared one straight away, or one taken of what they asked.
+  const preparedPhoto = Boolean(scenario.extraPhoto.photoId) && !run.photo_sent;
+  const photoAvailable =
+    Number(run.photo_asks ?? 0) < PHOTO_ASKS && (preparedPhoto || canTakePhotos());
   const businessName = await businessContextName(businessId);
-  let reply;
+  let reply: CustomerReply;
   try {
     reply =
       aiMode === 'demo'
-        ? demoReply(scenario, text, { photoSent: !photoAvailable, turn })
+        ? demoReply(scenario, text, { photoAvailable, preparedPhoto, turn })
         : await withAiUsage(businessId, `practice:${runId}`, () =>
             replyAsPracticeCustomer({
               businessName,
@@ -503,6 +714,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
               })),
               ownerMessage: text,
               photoAvailable,
+              preparedPhoto,
             }),
           );
   } catch (error) {
@@ -525,7 +737,12 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
       };
   }
   const sendPhoto = reply.sendPhoto && photoAvailable;
+  // A new photo is taken for what they asked, unless the prepared one is what they asked for
+  // or none can be made here. If taking it fails, the prepared one goes instead.
+  const take = sendPhoto && Boolean(reply.photoScene) && canTakePhotos();
+  const prepared = sendPhoto && !take && preparedPhoto;
   const asked = [...new Set([...json<string[]>(run.asked_json, []), ...reply.askedKeys])];
+  const photoToken = take ? randomUUID() : null;
   await transaction(async (connection) => {
     await addMessage(
       connection,
@@ -533,15 +750,32 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
       runId,
       'customer',
       'text',
-      reply.reply,
-      sendPhoto && scenario.extraPhoto.photoId ? [scenario.extraPhoto.photoId] : [],
+      prepared
+        ? scenario.extraPhoto.text
+        : sendPhoto && !take
+          ? 'That’s all the photos I have right now.'
+          : reply.reply,
+      prepared && scenario.extraPhoto.photoId ? [scenario.extraPhoto.photoId] : [],
     );
     await mutate(
-      'UPDATE practice_runs SET asked_json=?,photo_sent=photo_sent OR ? WHERE id=?',
-      [JSON.stringify(asked), sendPhoto, runId],
+      `UPDATE practice_runs SET asked_json=?,photo_sent=photo_sent OR ?,photo_asks=photo_asks+?,
+       photo_ask_json=?,photo_ask_token=?,
+       photo_ask_until=IF(? IS NULL,NULL,DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${PHOTO_ASK_SECONDS} SECOND))
+       WHERE id=?`,
+      [
+        JSON.stringify(asked),
+        prepared,
+        take || prepared ? 1 : 0,
+        take ? JSON.stringify({ scene: reply.photoScene, text: reply.photoText }) : null,
+        photoToken,
+        photoToken,
+        runId,
+      ],
       connection,
     );
   });
+  // Made outside the request: an image takes 20 to 30 seconds. The chat shows it's being taken.
+  if (photoToken) void takeAskedPhoto(runId, photoToken);
   return {
     run: await viewOf(businessId, runId),
     nudge: reply.mentionsPrice || reply.visitAsk,
@@ -584,8 +818,11 @@ export async function computeShadow(businessId: string, runId: string): Promise<
   if (existing) return existing;
   if (run.outcome)
     throw new ApiError(409, 'PRACTICE_CLOSED', 'This practice request is already done.');
+  const all = await runMessages(runId);
+  assertIdle(run, all);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-  const messages = (await runMessages(runId)).filter((message) => message.kind === 'text');
+  const messages = all.filter((message) => message.kind === 'text');
+  const readingAt = JSON.stringify(run.photo_reading_json ?? null);
   // Demo customers keep their fixed pattern, which knows each one's size and add-ons.
   const demo = async () => {
     const prior = await rows(
@@ -620,12 +857,17 @@ export async function computeShadow(businessId: string, runId: string): Promise<
         text: String(message.text),
       })),
       spec: specFromScenario(scenario),
+      // What it saw in the photos, with the owner's fixes: the same notes the card shows.
+      media: practicePhotoNotes(run),
       images: aiMode === 'demo' ? [] : await runImages(businessId, runId, messages),
       history: { excludeRunId: runId },
       demo: aiMode === 'demo' ? await demo() : undefined,
     }),
   );
   const shadow: Shadow = { ...drafted, cents: quoteTotal(drafted), engine };
+  // A fix to the reading while this was drafting makes it again next time, from the fix.
+  const [now] = await rows('SELECT photo_reading_json FROM practice_runs WHERE id=?', [runId]);
+  if (JSON.stringify(now?.photo_reading_json ?? null) !== readingAt) return shadow;
   await mutate('UPDATE practice_runs SET shadow_json=? WHERE id=? AND shadow_json IS NULL', [
     JSON.stringify(shadow),
     runId,
@@ -843,7 +1085,20 @@ async function finishRun(
 }
 
 export async function sendPracticeQuote(businessId: string, runId: string, body: unknown) {
-  return finishRun(businessId, runId, { quote: quoteDraftSchema.parse(body) });
+  const quote = quoteDraftSchema.parse(body);
+  const run = await loadRun(businessId, runId);
+  if (!run.outcome) assertIdle(run, await runMessages(runId));
+  return finishRun(businessId, runId, { quote });
+}
+
+/** The owner's fix to what their Charm saw in this customer's photos. */
+export async function fixPhotoReading(
+  businessId: string,
+  runId: string,
+  fixes: { counts?: Record<string, number>; area?: number | null; note?: string },
+) {
+  await fixPracticeReading(businessId, runId, fixes);
+  return viewOf(businessId, runId);
 }
 
 /** The owner's correction. It goes to the AI as something they taught it. */
