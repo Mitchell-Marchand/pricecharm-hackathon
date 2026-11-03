@@ -789,7 +789,6 @@ async function main() {
                 trade: owner.trade,
                 services: owner.rules.services.map((rule) => rule.name),
                 area: owner.area,
-                radiusMiles: null,
               },
               checklist,
               drivers,

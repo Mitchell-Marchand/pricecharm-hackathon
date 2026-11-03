@@ -27,7 +27,12 @@ export type Milestone =
   | 'plan_chosen';
 /** Things that keep happening: one row each, keyed by the chat or quote. */
 export type Activity =
-  'customer_chat' | 'quote_drafted' | 'quote_sent' | 'quote_seen' | 'quote_outcome';
+  | 'customer_chat'
+  | 'quote_drafted'
+  | 'quote_sent'
+  | 'quote_seen'
+  | 'quote_outcome'
+  | 'request_turned_down';
 
 export async function subjectOf(businessId: string, connection?: Sql): Promise<string | undefined> {
   const [business] = await rows(

@@ -60,6 +60,18 @@ import {
   readPhotos,
 } from './photo-readings.js';
 import { currencyOf, money as formatMoney } from '../money.js';
+import {
+  businessLocations,
+  customerLine,
+  intakeTurnDowns,
+  leadDays,
+  leadStart,
+  priceTurnDown,
+  sizeTurnDown,
+  turnDownRules,
+  turnedDownReason,
+  type TurnDownRule,
+} from '../turn-downs.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -472,6 +484,8 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
             .catch(() => null),
         );
   const contactFirst = Boolean(business.contact_first) && !hasContact(chat);
+  // The jobs the owner turns down, in the words What it knows shows them, and where they work.
+  const { rules, turnDowns, locations } = await intakeTurnDowns(String(business.id));
   const turn = await withChatUsage(req, business, chat, async () =>
     intakeTurn(
       {
@@ -480,8 +494,9 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
           trade: tradeName(business.trade_id, business.custom_trade),
           services: await services(String(business.id)),
           area: String(business.service_area ?? ''),
-          radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
+          locations,
         },
+        turnDowns,
         checklist,
         drivers,
         serviceName: String(chat.service_name),
@@ -510,22 +525,105 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
       ? turn.spec
       : { ...turn.spec, quantity: sized.quantity, unit: sized.unit };
   const serviceName = turn.serviceName || (sized?.serviceName ?? '');
-  const next = !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
+  // A rule the chat says this falls under, or one the job's own size breaks, ends it here.
+  const rule =
+    (turn.turnDown ? rules.find((item) => item.kind === turn.turnDown) : undefined) ??
+    sizeTurnDown(rules, spec);
+  const next = rule ? 'closed' : !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
   await transaction(async (connection) => {
-    await addMessage(connection, {
-      businessId: String(business.id),
-      chatId: String(chat.id),
-      sender: 'assistant',
-      text: turn.reply,
-      chips: turn.chips,
-    });
+    if (!rule)
+      await addMessage(connection, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        sender: 'assistant',
+        text: turn.reply,
+        chips: turn.chips,
+      });
     await mutate(
       'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=? WHERE id=?',
-      [serviceName, turn.ready, turn.summary, turn.outOfScope, JSON.stringify(spec), next, chat.id],
+      [
+        serviceName,
+        turn.ready || Boolean(rule),
+        turn.summary,
+        rule ? '' : turn.outOfScope,
+        JSON.stringify(spec),
+        next,
+        chat.id,
+      ],
       connection,
     );
+    if (rule) await turnDownRequest(connection, business, String(chat.id), rule);
   });
   if (next === 'quoting') await prepareLiveQuote(req, String(business.id), String(chat.id));
+}
+
+/**
+ * Ends a request one of the owner's rules turns down. The customer reads a kind no that says why,
+ * and the owner sees it in their list as turned down, with the rule. No quote shows, so nothing is
+ * billed. A job turned down on its price keeps the draft, so the owner can see what it came to.
+ */
+async function turnDownRequest(
+  connection: Sql,
+  business: Row,
+  chatId: string,
+  rule: TurnDownRule,
+  draft?: { drafted: DraftedQuote; engine: unknown; totalCents: number },
+) {
+  const businessId = String(business.id);
+  await rows('SELECT id FROM lead_chats WHERE id=? FOR UPDATE', [chatId], connection);
+  if (await liveQuoteFor(chatId, connection)) return;
+  const reason = turnedDownReason(
+    rule,
+    currencyOf(business.currency),
+    await businessLocations(businessId, connection),
+  );
+  await addMessage(connection, {
+    businessId,
+    chatId,
+    sender: 'assistant',
+    text: customerLine(rule, String(business.name)),
+    reply: true,
+  });
+  await mutate(
+    "UPDATE lead_chats SET status='closed',ready=TRUE,turned_down=?,turned_down_rule_id=? WHERE id=?",
+    [rule.kind, rule.id, chatId],
+    connection,
+  );
+  const card: Quote = {
+    number: 0,
+    customer: '',
+    place: '',
+    lines: (draft?.drafted.lines ?? []).map((line, index) => ({ id: `l${index}`, ...line })),
+    discount: draft?.drafted.discount ?? null,
+    start: '',
+    duration: '',
+    included: [],
+    excluded: [],
+    validDays: 14,
+    note: '',
+    issuedAt: new Date().toISOString(),
+  };
+  await mutate(
+    'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,engine_json,review_reason,total_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [
+      randomUUID(),
+      businessId,
+      chatId,
+      0,
+      'turned_down',
+      JSON.stringify(card),
+      JSON.stringify(draft?.drafted ?? {}),
+      JSON.stringify([{ id: 'turned_down', passed: false, detail: reason }]),
+      draft?.engine ? JSON.stringify(draft.engine) : null,
+      reason.slice(0, 600),
+      draft?.totalCents ?? 0,
+    ],
+    connection,
+  );
+  await recordActivity(connection, businessId, 'request_turned_down', {
+    ref: chatId,
+    detail: rule.kind,
+  });
 }
 
 export async function customerMessage(req: Request, text: string) {
@@ -843,13 +941,16 @@ async function checkDraft(
   const similar = (await listPastJobs(String(business.id))).filter(
     (job) => job.serviceName === chat.service_name,
   );
+  // A total raised to the owner's own minimum is their price, whatever the size says.
+  const atMinimum =
+    Boolean(business.minimum_cents) && totalCents === Number(business.minimum_cents);
   if (similar.length >= 2) {
     const prices = similar.map((job) => job.priceCents);
     const low = Math.min(...prices),
       high = Math.max(...prices);
     add(
       'range',
-      totalCents >= low * 0.5 && totalCents <= high * 2,
+      atMinimum || (totalCents >= low * 0.5 && totalCents <= high * 2),
       `It’s far from what you charged for similar jobs (${money(low)} to ${money(high)}).`,
     );
   }
@@ -863,7 +964,7 @@ async function checkDraft(
   if (estimate?.solid && drafted.lines.length)
     add(
       'rate',
-      withinEstimate(totalCents, estimate),
+      atMinimum || withinEstimate(totalCents, estimate),
       `It’s far from your usual rate, which comes to about ${money(estimate.cents)} for this size.`,
     );
   add('handoff', !chat.human_handoff, 'The customer asked to talk to you.');
@@ -990,6 +1091,15 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
     if (asked) return;
   }
   const totalCents = quoteTotal(drafted);
+  // A job that comes to less than the owner takes on is turned down, not quoted.
+  const rules = await turnDownRules(businessId);
+  const tooSmall = drafted.decision === 'quote' ? priceTurnDown(rules, totalCents) : null;
+  if (tooSmall) {
+    await transaction((connection) =>
+      turnDownRequest(connection, business, chatId, tooSmall, { drafted, engine, totalCents }),
+    );
+    return;
+  }
   const service = String(chat.service_name || '').toLowerCase();
   const learned = (await businessReadiness(businessId, rates)).find(
     (item) => service && item.service.toLowerCase() === service,
@@ -1032,16 +1142,26 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       [number + 1, businessId],
       connection,
     );
+    const priced = pricedAs(style, totalCents, spread);
+    // A range never starts under the owner's minimum.
+    const minimum = Number(business.minimum_cents ?? 0);
+    if (priced.range && minimum)
+      priced.range = {
+        ...priced.range,
+        lowCents: Math.min(totalCents, Math.max(priced.range.lowCents, minimum)),
+      };
+    const lead = leadDays(rules);
     const card: Quote = {
-      ...pricedAs(style, totalCents, spread),
+      ...priced,
       number,
       customer: cardName(String(chat.customer_name)),
-      // Where the customer is isn't asked for, and the business's own area reads as their name.
-      place: '',
+      // Where the job is, as the customer said it: an area, never a street address.
+      place: spec?.location ?? '',
       lines: drafted.lines.map((line, index) => ({ id: `l${index}`, ...line })),
       discount: drafted.discount,
-      // A formula prices the job but doesn't say when; the owner's usual answer does.
-      start: drafted.start || terms.start,
+      // A formula prices the job but doesn't say when; the owner's usual answer does. An owner who
+      // books some days out never offers sooner.
+      start: lead ? leadStart(lead) : drafted.start || terms.start,
       duration: drafted.duration || terms.duration,
       included: terms.included,
       excluded: terms.excluded,

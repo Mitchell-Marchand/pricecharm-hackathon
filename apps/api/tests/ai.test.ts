@@ -626,7 +626,6 @@ test('the customer chat finds out everything the owner’s price depends on befo
       trade: 'Window cleaning',
       services: ['Windows'],
       area: 'Austin',
-      radiusMiles: null,
     },
     checklist: [],
     serviceName: 'Windows',
