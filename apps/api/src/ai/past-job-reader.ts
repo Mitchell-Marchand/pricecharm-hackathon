@@ -75,14 +75,17 @@ const resultSchema = z.object({
 });
 
 /**
- * Reads one past job from an owner's old quote or invoice (a PDF or a photo of one), into the same
- * fields the owner fills in by hand. The owner checks every field before saving.
+ * Reads one past job from an owner's old quote or invoice (a PDF or a photo of one, or an invoice
+ * from their accounting app as text), into the same fields the owner fills in by hand. The owner
+ * checks every field before saving.
  */
 export async function readPastJob(input: {
   trade: string;
   services: string[];
   currency?: Currency;
-  file: { document?: AiDocument; image?: AiImage };
+  file?: { document?: AiDocument; image?: AiImage };
+  /** An invoice from QuickBooks, written out without the customer's details. */
+  invoiceText?: string;
 }): Promise<{ found: boolean; job: ReadJob; issues: string[] }> {
   if (aiMode === 'demo')
     return {
@@ -102,7 +105,7 @@ export async function readPastJob(input: {
     };
   const result = await requestJson(
     'read_past_job',
-    `Read the attached quote or invoice from a ${input.trade} business and fill in one past job for the owner to check.${amountsIn(input.currency)}
+    `Read the ${input.invoiceText ? 'invoice in the input, from the business’s QuickBooks,' : 'attached quote or invoice'} from a ${input.trade} business and fill in one past job for the owner to check.${amountsIn(input.currency)}
 - found: false when the file isn't a quote or invoice for work this business did. Then leave every field empty or null.
 - Lines for the same visit, like screens cleaned along with the windows, are one job: priceCents is their total and description names each part with its price. Only separate jobs, on different dates or at different places, are more than one; then use the main one and say so in issues.
 - serviceName: exactly one of the business's services listed in the input, or an empty string if none fits.
@@ -113,11 +116,13 @@ export async function readPastJob(input: {
 - discount: discountKind "amount" with discountValue in cents, or "percent" with a whole-number percent, plus the reason if one is given. Otherwise discountKind "none" and discountValue null.
 - notes: anything the document says made the job cost more or less. Otherwise empty.
 - Only use what the document shows. Never guess a value. In issues, briefly name anything the owner should check, in a short plain sentence: a price, service or size that's missing or unclear, or a second job on the same document. Duration, date, materials and discounts are optional, so never say they're missing.`,
-    { services: input.services },
+    input.invoiceText
+      ? { services: input.services, invoice: input.invoiceText }
+      : { services: input.services },
     resultJson,
     resultSchema,
-    input.file.image ? [input.file.image] : [],
-    input.file.document ? [input.file.document] : [],
+    input.file?.image ? [input.file.image] : [],
+    input.file?.document ? [input.file.document] : [],
   );
   const job = result.job;
   const serviceName =
