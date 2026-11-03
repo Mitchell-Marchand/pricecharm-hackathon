@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState, type FormEvent } from 'react';
 import { MessageSquareText, Pencil, Plus, Receipt, X } from 'lucide-react';
+import { TurnDownList } from '@/components/knows/TurnDowns';
 import { useToast } from '@/components/Toast';
 import { Button, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
@@ -291,6 +292,13 @@ export function KnowsEditor({
           onEdit={(id, text) => saved(editNote(id, text))}
           onRemove={(id) => saved(removeNote(id))}
         />
+      </section>
+
+      <section aria-labelledby="turn-downs-title">
+        <h2 id="turn-downs-title" className="t-h2">
+          Jobs you turn down
+        </h2>
+        <TurnDownList />
       </section>
     </div>
   );
