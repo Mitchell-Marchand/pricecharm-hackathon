@@ -33,6 +33,7 @@ import { charmRouter } from './charm.js';
 import { charmNotesRouter } from './charm-notes.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
+import { agentRouter } from './live/agent.js';
 import { logoRouter, quotePageRouter } from './live/quote-page.js';
 import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
@@ -153,6 +154,9 @@ export function createApp() {
       }),
     ),
   );
+  // Agents call from their own servers with a key and no cookies, so the browser origin check
+  // that follows doesn't apply to them.
+  app.use('/api/v1', agentRouter);
   app.use('/api/v1', csrfProtection);
   app.use(
     '/api/v1',

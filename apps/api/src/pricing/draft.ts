@@ -1,3 +1,4 @@
+import { unsettledDrivers } from '../ai/drivers.js';
 import { aiMode, aiProvider, modelFor, type AiImage } from '../ai/index.js';
 import { DRAFT_PROMPT_VERSION, draftQuote, type DraftRequest } from '../ai/quote-engine.js';
 import { rows } from '../db.js';
@@ -5,7 +6,13 @@ import { reportError } from '../error-reporting.js';
 import type { PastJob } from '../past-jobs.js';
 import { subtotal, type DraftEngine, type DraftedQuote } from '../practice/types.js';
 import { getPhoto } from '../storage.js';
-import { currentFormula, priceFromFormula } from './formula-draft.js';
+import {
+  currentFormula,
+  ifPrices,
+  priceDrivers,
+  priceFromFormula,
+  type IfPrice,
+} from './formula-draft.js';
 import { examplesFor, loadPricingData, similarHistory, type HistoryOptions } from './history.js';
 import { marketPricesEnabled, marketRate } from './market.js';
 import { describeRate, estimateFor, fitRates, median, type Estimate, type Rate } from './rates.js';
@@ -33,6 +40,11 @@ export type DraftResult = {
   estimate: Estimate | null;
   /** Every rate it worked out, which the live checks hold the draft to. */
   rates: Rate[];
+  /**
+   * With `drivers`, what the owner's price depends on that the customer hasn't settled, the
+   * question that would settle it, and what each would change the price by.
+   */
+  unsettled?: { open: string[]; question: string; chips: string[]; ifs: IfPrice[] };
 };
 
 /** Demo mode: the owner's usual rate for this size, or else the middle of their similar jobs. */
@@ -119,6 +131,8 @@ export async function draftForBusiness(input: {
   demo?: () => DraftedQuote;
   /** False to leave the owner's formula out, so the benchmark can compare the two. */
   formula?: boolean;
+  /** Also find what the price depends on that the customer hasn't settled. Live quotes only. */
+  drivers?: boolean;
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
@@ -133,15 +147,42 @@ export async function draftForBusiness(input: {
   // The owner's formula prices it when it fits their quotes and covers the job. A replay of an old
   // quote, or another model, goes the usual way, since the formula is today's.
   if (aiMode !== 'demo' && input.formula !== false && !input.model && !input.history?.before) {
-    const priced = await currentFormula(businessId, data)
-      .then((learned) => (learned ? priceFromFormula(learned, input) : null))
-      .catch((error: unknown) => {
-        reportError(error, { event: 'formula_draft' });
-        return null;
-      });
+    const learned = await currentFormula(businessId, data).catch((error: unknown) => {
+      reportError(error, { event: 'formula_draft' });
+      return null;
+    });
+    // Asked alongside the price, so it adds no wait.
+    const drivers = input.drivers && learned ? priceDrivers(learned) : null;
+    const [priced, open] = await Promise.all([
+      learned
+        ? priceFromFormula(learned, input).catch((error: unknown) => {
+            reportError(error, { event: 'formula_draft' });
+            return null;
+          })
+        : null,
+      drivers
+        ? unsettledDrivers({
+            conversation: input.conversation,
+            details: describeJob(spec, input.media) || undefined,
+            conditions: drivers.conditions,
+            extras: drivers.extras.map((extra) => extra.name),
+          }).catch((error: unknown) => {
+            reportError(error, { event: 'unsettled_drivers' });
+            return null;
+          })
+        : null,
+    ]);
     if (priced?.drafted)
       return {
         drafted: priced.drafted,
+        ...(open && priced.use.used
+          ? {
+              unsettled: {
+                ...open,
+                ifs: ifPrices(priced.use.formula, priced.use.parts, open.open),
+              },
+            }
+          : {}),
         estimate,
         rates,
         engine: {

@@ -82,6 +82,13 @@ export type Quote = QuoteDraft & {
   style?: 'range' | 'estimate';
   /** What the customer sees instead of the total, with style 'range'. */
   range?: { lowCents: number; highCents: number };
+  /** What the price is for: the size and the details it was priced on (jobFacts). */
+  assumes?: string[];
+  /**
+   * Conditions and extras the customer couldn't settle, and what each would change the price by
+   * (ifPrices in src/pricing/formula-draft.ts). The total doesn't include them.
+   */
+  ifs?: { when: string; cents: number; each?: boolean }[];
 };
 
 /** The AI's own quote for the same request, made before it sees the owner's. */

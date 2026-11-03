@@ -259,8 +259,10 @@ export async function sendWaitingQuote(
     throw new ApiError(409, 'NO_CONTACT', 'This customer hasn’t said where to send it yet.');
   const drafted = Number(quote.total_cents);
   if (edits || style) {
-    // A range follows the owner's new price; they can also send it firm, or as an estimate.
-    const card = restyle({ ...json<Quote>(quote.quote_json, {} as Quote), ...edits }, style);
+    // A range follows the owner's new price; they can also send it firm, or as an estimate. What
+    // an open condition would add was worked out on the Charm's price, so a new price drops it.
+    const { ifs, ...charms } = json<Quote>(quote.quote_json, {} as Quote);
+    const card = restyle({ ...charms, ...(edits?.lines ? {} : { ifs }), ...edits }, style);
     const total = quoteTotal(card);
     if (total <= 0) throw new ApiError(422, 'QUOTE_EMPTY', 'Add at least one priced line.');
     await mutate(

@@ -240,6 +240,30 @@ export function QuoteForm({
                 )}
               </div>
             )}
+            {/* What the price is for, so it's plain when the job turns out different. */}
+            {quote.assumes && quote.assumes.length > 0 && (
+              <div className={cx('mt-5', pad)}>
+                <p className="t-label text-[10px]! text-paper-muted">Priced for</p>
+                <p className="mt-1.5 text-sm wrap-anywhere">{quote.assumes.join(' · ')}</p>
+              </div>
+            )}
+            {quote.ifs && quote.ifs.length > 0 && (
+              <div className={cx('mt-5', pad)}>
+                <p className="t-label text-[10px]! text-paper-muted">Price changes if</p>
+                <ul className="mt-1.5 flex flex-col gap-1 text-sm">
+                  {quote.ifs.map((item) => (
+                    <li key={item.when} className="flex justify-between gap-4 wrap-anywhere">
+                      <span>{item.when.replace(/^./, (first) => first.toUpperCase())}</span>
+                      <span className="shrink-0 tabular-nums">
+                        {item.cents < 0 ? '−' : '+'}
+                        {money(Math.abs(item.cents))}
+                        {item.each ? ' each' : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         )}
 

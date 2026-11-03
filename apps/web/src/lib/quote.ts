@@ -30,6 +30,10 @@ export interface Quote {
   style?: 'range' | 'estimate';
   /** What the customer sees instead of the total, with style 'range'. */
   range?: { lowCents: number; highCents: number };
+  /** What the price is for: the size and the details it was priced on. Missing on older quotes. */
+  assumes?: string[];
+  /** Conditions and extras the customer couldn't settle, and what each would add. Not in the total. */
+  ifs?: { when: string; cents: number; each?: boolean }[];
 }
 
 export function subtotal(quote: Pick<Quote, 'lines'>): number {

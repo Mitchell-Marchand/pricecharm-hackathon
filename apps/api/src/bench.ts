@@ -5,6 +5,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiMode, aiProvider, modelFor, runWithAiUsage, useSavedAnswers } from './ai/index.js';
+import { unsettledDrivers } from './ai/drivers.js';
 import { intakeTurn, type IntakeTurn } from './ai/intake.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { describeComparison, type SavedRun } from './bench/compare.js';
@@ -51,13 +52,15 @@ import { draftForBusiness } from './pricing/draft.js';
 import {
   formulaExamples,
   holdFailedFormulas,
+  ifPrices,
   priceDrivers,
   learnedFormula,
   priceFromFormula,
+  type IfPrice,
   type Learned,
 } from './pricing/formula-draft.js';
 import { loadPricingData } from './pricing/history.js';
-import { describeSpec } from './pricing/spec.js';
+import { describeJob, describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
 
@@ -347,6 +350,11 @@ type Test = {
     missing: string[];
     said: { from: 'customer' | 'assistant'; text: string }[];
   };
+  /**
+   * With --drivers: whether the chat asked once about what the price depends on that the customer
+   * hadn't settled, what was open before it asked, and what each still-open one would add.
+   */
+  drivers?: { asked: boolean; first: string[]; ifs: IfPrice[] };
   failed?: string;
 };
 
@@ -631,6 +639,8 @@ async function main() {
   const formula = formulaOnly || process.argv.includes('--formula');
   const chat = process.argv.includes('--chat');
   if (chat && !formulaOnly) throw new Error('--chat runs with --formula-only.');
+  const drivers = process.argv.includes('--drivers');
+  if (drivers && !chat) throw new Error('--drivers runs with --chat.');
   if (curve && formulaOnly)
     throw new Error(
       '--curve compares the Charm’s usual drafts, so it can’t run with --formula-only.',
@@ -767,46 +777,61 @@ async function main() {
       await learnedFormula(test.businessId, {}, model).catch(() => null),
     );
     let last = null as IntakeTurn | null;
-    for (let turn = 0; turn < CHAT_TURNS; turn++) {
-      const previous = last;
-      last = await counted(test.businessId, () =>
-        intakeTurn(
-          {
-            business: {
-              name: owner.name,
-              trade: owner.trade,
-              services: owner.rules.services.map((rule) => rule.name),
-              area: owner.area,
-              radiusMiles: null,
+    /** The app's chat asks until it has enough, or has asked `turns` more times. */
+    const talk = async (turns: number) => {
+      for (let turn = 0; turn < turns; turn++) {
+        const previous = last;
+        last = await counted(test.businessId, () =>
+          intakeTurn(
+            {
+              business: {
+                name: owner.name,
+                trade: owner.trade,
+                services: owner.rules.services.map((rule) => rule.name),
+                area: owner.area,
+                radiusMiles: null,
+              },
+              checklist,
+              drivers,
+              serviceName: previous?.serviceName ?? '',
+              conversation: said,
+              photosReceived: 0,
             },
-            checklist,
-            drivers,
-            serviceName: previous?.serviceName ?? '',
-            conversation: said,
-            photosReceived: 0,
-          },
-          [],
-        ),
-      );
-      said.push({ from: 'assistant', text: last.reply });
-      if (last.ready) break;
-      await answer();
-    }
-    test.chat = {
-      questions: said.filter((message) => message.from === 'assistant').length,
-      ready: Boolean(last?.ready),
-      told: [...told],
-      missing: facts.filter((fact) => fact.needed && !told.has(fact.key)).map((fact) => fact.key),
-      said,
+            [],
+          ),
+        );
+        said.push({ from: 'assistant', text: last.reply });
+        if (last.ready) break;
+        await answer();
+      }
+      test.chat = {
+        questions: said.filter((message) => message.from === 'assistant').length,
+        ready: Boolean(last?.ready),
+        told: [...told],
+        missing: facts.filter((fact) => fact.needed && !told.has(fact.key)).map((fact) => fact.key),
+        said,
+      };
     };
+    await talk(CHAT_TURNS);
     return {
-      serviceName: last?.serviceName ?? '',
-      // The owner's side of a live chat is the assistant's, as the live draft reads it.
-      conversation: said.map((message) => ({
-        from: message.from === 'customer' ? ('customer' as const) : ('owner' as const),
-        text: message.text,
-      })),
-      spec: last?.spec ?? null,
+      request: () => ({
+        serviceName: last?.serviceName ?? '',
+        // The owner's side of a live chat is the assistant's, as the live draft reads it.
+        conversation: said.map((message) => ({
+          from: message.from === 'customer' ? ('customer' as const) : ('owner' as const),
+          text: message.text,
+        })),
+        spec: last?.spec ?? null,
+      }),
+      /**
+       * With --drivers: the live chat's one question about what the price depends on that the
+       * customer hasn't settled (prepareLiveQuote), their answer, and the chat carrying on.
+       */
+      followUp: async (question: string) => {
+        said.push({ from: 'assistant', text: question });
+        await answer();
+        await talk(3);
+      },
     };
   };
   /** Each owner's formula from before pricing started, so the report never works one out again. */
@@ -841,31 +866,74 @@ async function main() {
         try {
           // With --chat, the customer says a detail or two and the app's customer chat asks for
           // the rest, as in a live chat, and the job is priced from what it learned.
-          const request = chat
-            ? await chatFor(test, owner)
+          const talked = chat ? await chatFor(test, owner) : null;
+          let request = talked
+            ? talked.request()
             : { serviceName: test.job.service, conversation, spec };
           // Where the formula can't price it, the usual draft does, as in a live quote.
-          const { drafted, use } = await counted(test.businessId, async () => {
-            const input = { businessId: test.businessId, serviceName: request.serviceName };
-            const { conversation, spec } = request;
-            const learned = await learnedFormula(test.businessId, {}, model).catch(() => null);
-            const priced = await priceFromFormula(learned, { ...input, conversation, spec, model });
-            return priced.drafted
-              ? { drafted: priced.drafted, use: priced.use }
-              : {
-                  drafted: (
-                    await draftForBusiness({
-                      ...input,
-                      conversation,
-                      spec,
-                      images: [],
-                      model,
-                      formula: false,
-                    })
-                  ).drafted,
-                  use: priced.use,
-                };
-          });
+          const price = (asked: typeof request) =>
+            counted(test.businessId, async () => {
+              const input = { businessId: test.businessId, serviceName: asked.serviceName };
+              const { conversation, spec } = asked;
+              const learned = await learnedFormula(test.businessId, {}, model).catch(() => null);
+              const priced = await priceFromFormula(learned, {
+                ...input,
+                conversation,
+                spec,
+                model,
+              });
+              return priced.drafted
+                ? { drafted: priced.drafted, use: priced.use }
+                : {
+                    drafted: (
+                      await draftForBusiness({
+                        ...input,
+                        conversation,
+                        spec,
+                        images: [],
+                        model,
+                        formula: false,
+                      })
+                    ).drafted,
+                    use: priced.use,
+                  };
+            });
+          let { drafted, use } = await price(request);
+          if (drivers && talked) {
+            // What the live quote finds open, asks about once, and otherwise shows what it'd add.
+            const list = priceDrivers(
+              await learnedFormula(test.businessId, {}, model).catch(() => null),
+            );
+            const open = async (asked: typeof request, priced: typeof use) => {
+              if (!priced.used) return { ifs: [], question: '' };
+              const found = await counted(test.businessId, () =>
+                unsettledDrivers({
+                  conversation: asked.conversation,
+                  details: describeJob(asked.spec) || undefined,
+                  conditions: list.conditions,
+                  extras: list.extras.map((extra) => extra.name),
+                  model,
+                }),
+              );
+              return {
+                ifs: ifPrices(priced.formula, priced.parts, found.open),
+                question: found.question,
+              };
+            };
+            const first = await open(request, use);
+            let still = first;
+            if (first.ifs.length && first.question) {
+              await talked.followUp(first.question);
+              request = talked.request();
+              ({ drafted, use } = await price(request));
+              still = await open(request, use);
+            }
+            test.drivers = {
+              asked: Boolean(first.ifs.length && first.question),
+              first: first.ifs.map((item) => item.when),
+              ifs: still.ifs,
+            };
+          }
           test.formula = {
             cents: best(drafted),
             used: use.used,
@@ -1079,6 +1147,34 @@ async function main() {
       ...lines('  Learned everything', priced(complete)),
       ...lines('  Missed something', priced(chats.filter((test) => test.chat!.missing.length))),
     );
+    const driven = chats.filter((test) => test.drivers);
+    if (driven.length) {
+      const asked = driven.filter((test) => test.drivers!.asked);
+      const open = driven.filter((test) => test.drivers!.ifs.length && test.formula?.cents);
+      // A quote still open after asking is right if the owner's price is the quote as it stands,
+      // or the quote with one or all of what's open added.
+      const near = (cents: number, owner: number) => (gapPercent(cents, owner) ?? 100) <= 10;
+      const tally = { quote: 0, added: 0, neither: 0 };
+      for (const test of open) {
+        const cents = test.formula!.cents!;
+        const ifs = test.drivers!.ifs.filter((item) => !item.each);
+        const all = cents + ifs.reduce((sum, item) => sum + item.cents, 0);
+        if (near(cents, test.ownerCents)) tally.quote++;
+        else if (
+          [...ifs.map((item) => cents + item.cents), all].some((added) =>
+            near(added, test.ownerCents),
+          )
+        )
+          tally.added++;
+        else tally.neither++;
+      }
+      out.push(
+        `  It asked once about something open in ${share(asked.length, driven.length)} of chats.`,
+        `  Still open after that: ${open.length} quotes. The owner's price was the quote in ${tally.quote}, the quote with what's open added in ${tally.added}, neither in ${tally.neither}.`,
+        ...lines('  Asked', priced(asked)),
+        ...lines('  Not asked', priced(driven.filter((test) => !test.drivers!.asked))),
+      );
+    }
   }
   out.push('', 'By trade:');
   for (const trade of trades) {
