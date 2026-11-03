@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { ApiError, ok, rateLimit } from './http.js';
+import { businessLocations } from './locations.js';
 import { recordRequestEvent } from './metrics.js';
 import { currencyOf, money, type Currency } from './money.js';
 import type { Row } from './models.js';
@@ -88,22 +89,6 @@ export async function turnDownRules(businessId: string, connection?: Sql) {
       connection,
     )
   ).map(ruleFrom);
-}
-
-/** Where the business works from, main one first: the areas the owner typed, up to five. */
-export async function businessLocations(businessId: string, connection?: Sql) {
-  const listed = await rows(
-    'SELECT area FROM business_locations WHERE business_id=? ORDER BY position',
-    [businessId],
-    connection,
-  );
-  if (listed.length) return listed.map((row) => String(row.area));
-  const [business] = await rows(
-    'SELECT service_area FROM businesses WHERE id=?',
-    [businessId],
-    connection,
-  );
-  return business?.service_area ? [String(business.service_area)] : [];
 }
 
 /** "from Austin, TX", or the nearest of several. */

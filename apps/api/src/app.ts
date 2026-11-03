@@ -33,6 +33,7 @@ import { profileRouter } from './profile.js';
 import { charmRouter } from './charm.js';
 import { charmNotesRouter } from './charm-notes.js';
 import { turnDownsRouter } from './turn-downs.js';
+import { locationsRouter } from './locations.js';
 import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { agentRouter } from './live/agent.js';
@@ -206,6 +207,7 @@ export function createApp() {
     shareRouter,
     ownerQuotesRouter,
     quotePageRouter,
+    locationsRouter,
     channelRouter,
   );
   app.use((_req, _res, next) => next(new ApiError(404, 'NOT_FOUND', 'Endpoint not found.')));
