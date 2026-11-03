@@ -53,6 +53,8 @@ export interface AgentReadiness {
   next: ReadinessStep | null;
   /** One step for each service still learning, the biggest first. Missing from older APIs. */
   steps?: ReadinessStep[];
+  /** About how many more practice customers would take it to 85%. Missing from older APIs. */
+  toWellTrained?: number;
 }
 
 /** What goes out while a service is still learning. */

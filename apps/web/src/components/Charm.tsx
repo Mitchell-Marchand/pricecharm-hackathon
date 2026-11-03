@@ -66,7 +66,15 @@ function useGained(score: number | null, businessId: string | undefined) {
   return gained;
 }
 
-function Meter({ score, mark, size = 'md' }: { score: number; mark: number; size?: 'sm' | 'md' }) {
+export function Meter({
+  score,
+  mark,
+  size = 'md',
+}: {
+  score: number;
+  mark: number;
+  size?: 'sm' | 'md';
+}) {
   return (
     <div
       role="meter"

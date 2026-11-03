@@ -15,7 +15,8 @@ import { api, ApiError, errorMessage, json } from './api';
 import { guessCurrency, setCurrency, type Currency } from './currency';
 import { useHumanCheck } from './human-check';
 
-export type Step = 'business' | 'jobs' | 'practice' | 'ready' | 'account' | 'try' | 'live';
+/** Where setup can be picked up again. The fact screens in between aren't saved. */
+export type Step = 'trade' | 'services' | 'about' | 'practice' | 'ready' | 'try' | 'live';
 
 export interface BusinessDraft {
   tradeId: string | null;
@@ -25,6 +26,8 @@ export interface BusinessDraft {
   customServices: string[];
   name: string;
   area: string;
+  /** Where they work from, main one first. An older API leaves it out. */
+  locations?: string[];
   /** What their quotes and their plan are in. An older API leaves it out, for dollars. */
   currency?: Currency;
   radius: string;
@@ -45,8 +48,11 @@ interface OnboardingValue {
   save: SaveState;
   reload: () => Promise<void>;
   updateBusiness: (patch: Partial<BusinessDraft>) => void;
-  /** Saves anything pending, records the step and opens it. */
-  goTo: (step: Step) => Promise<void>;
+  /**
+   * Saves anything pending, records the step and opens it, or opens `path` instead, as for a fact
+   * screen on the way to the step.
+   */
+  goTo: (step: Step, path?: string) => Promise<void>;
   flush: () => Promise<boolean>;
 }
 
@@ -137,7 +143,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   );
 
   const goTo = useCallback(
-    async (step: Step) => {
+    async (step: Step, path = `/start/${step}`) => {
       if (!(await flush())) return;
       try {
         const next = await api<Onboarding>('/onboarding/step', {
@@ -148,7 +154,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       } catch {
         // The step is only a bookmark for coming back later; moving on still works.
       }
-      router.push(`/start/${step}`);
+      router.push(path);
     },
     [flush, router],
   );

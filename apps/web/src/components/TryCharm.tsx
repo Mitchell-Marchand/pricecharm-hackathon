@@ -6,8 +6,9 @@ import type { Size, Variant } from '@/components/button-class';
 import { Button } from '@/components/ui';
 
 /**
- * The owner asks their own Charm for a quote, in the same chat customers get. They're signed in,
- * so it's a test: nothing is emailed or billed, and a quote that would wait shows them why.
+ * The owner asks their own Charm for a quote, in the same chat customers get, filling a phone's
+ * screen as a customer's link does. They're signed in, so it's a test: nothing is emailed or
+ * billed, and a quote that would wait shows them why.
  */
 export function TryCharm({
   slug,
@@ -42,7 +43,7 @@ export function TryCharm({
       </Button>
       <dialog
         ref={dialog}
-        className="sheet"
+        className="sheet is-full"
         aria-label="Try your Charm"
         onCancel={(event) => {
           event.preventDefault();
@@ -53,7 +54,7 @@ export function TryCharm({
         }}
       >
         {open && (
-          <div className="flex h-[calc(var(--vv-height,100dvh)*0.92)] w-full flex-col md:h-full">
+          <div className="flex h-full w-full flex-col">
             <LoadedChat slug={slug} profile={undefined} source="link" onClose={close} owner />
           </div>
         )}

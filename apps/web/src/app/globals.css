@@ -560,6 +560,13 @@ dialog.sheet::backdrop {
   dialog.sheet[open] {
     animation: sheet-up 0.3s var(--ease-out);
   }
+  /* A whole-screen chat on a phone, like the one customers get from a link. */
+  dialog.sheet.is-full {
+    max-height: var(--vv-height, 100dvh);
+    height: var(--vv-height, 100dvh);
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
 }
 @media (min-width: 768px) {
   dialog.sheet {

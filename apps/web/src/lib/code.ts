@@ -6,7 +6,7 @@
 const KEY = 'pricecharm_code';
 const KEEP_DAYS = 30;
 /** Pages an outreach link might open. Elsewhere a "code" in the address is something else. */
-const FROM = ['/', '/pricing', '/demo'];
+const FROM = ['/', '/go', '/pricing', '/demo'];
 
 export function keepCodeFromLink(path: string) {
   if (!FROM.includes(path) && !path.startsWith('/start')) return;
