@@ -141,11 +141,18 @@ test(
     const profile = (await owner.get('/api/v1/app/profile')).body.data;
     assert.equal(profile.live.reviewed, 1);
     assert.equal(profile.live.agreed, 1, '$275 is within 15% of $300');
-    type Readiness = { service: string; ready: boolean; matched: number; reason: string };
+    type Readiness = {
+      service: string;
+      ready: boolean;
+      matched: number;
+      reason: string;
+      progress: number;
+    };
     const driveways = (body: { services: Readiness[] }) =>
       body.services.find((item) => item.service === 'Driveways')!;
     assert.equal(driveways(profile).ready, false, 'One close draft is too few');
-    assert.match(driveways(profile).reason, /within 15% of your price on 1 more Driveways job\./);
+    // The main service wants 8 sized prices: 3 past jobs and this quote are 4.
+    assert.match(driveways(profile).reason, /It needs 4 more Driveways jobs with a size/);
 
     // 3. The customer isn't going ahead, and says why. The owner hears, and the AI learns it.
     const lost = await first.call('post', '/decline', { reason: 'price' });
@@ -170,8 +177,11 @@ test(
       .send({})
       .expect(200);
     const learned = (await owner.get('/api/v1/app/profile')).body.data;
-    assert.equal(driveways(learned).ready, true, 'Two close drafts and Driveways can send alone');
-    assert.equal(learned.autoSendReady, true);
+    assert.ok(
+      driveways(learned).progress >= 60,
+      'Two close drafts and Driveways quotes firm prices',
+    );
+    assert.equal(driveways(learned).ready, false, 'The main service wants more sized jobs still');
     await mutate(
       'UPDATE live_quotes SET sent_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 4 DAY) WHERE id=?',
       [second.quote.id],

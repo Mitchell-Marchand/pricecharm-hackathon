@@ -198,7 +198,7 @@ practiceRouter.post('/onboarding/practice/done', requireWorkspace, async (req, r
   });
   if (state.finished >= state.count)
     await mutate(
-      "UPDATE businesses SET onboarding_step='ready' WHERE id=? AND onboarding_step IN ('business','jobs','practice')",
+      "UPDATE businesses SET onboarding_step='ready' WHERE id=? AND onboarding_step IN ('trade','services','about','practice','business','jobs')",
       [businessId],
     );
   res.json(ok(state));

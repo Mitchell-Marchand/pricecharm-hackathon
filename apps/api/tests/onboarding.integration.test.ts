@@ -24,7 +24,7 @@ test(
     const started = await browser.post('/api/v1/onboarding/start').set('Origin', origin).send({});
     assert.equal(started.status, 201, JSON.stringify(started.body));
     assert.equal(started.body.data.draft, true);
-    assert.equal(started.body.data.step, 'business');
+    assert.equal(started.body.data.step, 'trade');
     assert.match(String(started.headers['set-cookie']), /quotient_draft=.*HttpOnly/);
     const again = await browser.post('/api/v1/onboarding/start').set('Origin', origin).send({});
     assert.equal(again.status, 200, 'Starting again keeps the same draft');
@@ -47,9 +47,19 @@ test(
       customServices: ['Gutter brightening'],
       name: 'Moss & Stone Exterior Care',
       area: 'Portland, OR',
+      locations: ['Portland, OR'],
       currency: 'USD',
       radius: '25',
     });
+    // More places to work from: the first stays the main one.
+    const placed = await browser
+      .patch('/api/v1/onboarding/business')
+      .set('Origin', origin)
+      .send({ locations: ['Portland, OR', 'Vancouver, WA'] });
+    assert.deepEqual(
+      [placed.body.data.business.locations, placed.body.data.business.area],
+      [['Portland, OR', 'Vancouver, WA'], 'Portland, OR'],
+    );
     // Before a card, the currency can change, and back.
     for (const currency of ['INR', 'USD']) {
       const changed = await browser
@@ -67,6 +77,8 @@ test(
       { tradeId: 'not-a-trade' },
       { services: ['Driveways', 'driveways'] },
       { radius: '30' },
+      { locations: ['Portland, OR', 'portland, or'] },
+      { locations: ['a', 'b', 'c', 'd', 'e', 'f'] },
     ]) {
       const rejected = await browser
         .patch('/api/v1/onboarding/business')
@@ -77,8 +89,8 @@ test(
     const stepped = await browser
       .patch('/api/v1/onboarding/step')
       .set('Origin', origin)
-      .send({ step: 'jobs' });
-    assert.equal(stepped.body.data.step, 'jobs');
+      .send({ step: 'practice' });
+    assert.equal(stepped.body.data.step, 'practice');
     const draftId = String(
       (
         await rows(
@@ -86,6 +98,10 @@ test(
         )
       )[0].id,
     );
+    // A setup saved on a step from before practice came first picks up where it now fits.
+    await mutate("UPDATE businesses SET onboarding_step='jobs' WHERE id=?", [draftId]);
+    const picked = await browser.get('/api/v1/onboarding');
+    assert.equal(picked.body.data.step, 'practice');
     const [draft] = await rows('SELECT slug FROM businesses WHERE id=?', [draftId]);
     const hidden = await request(app).get(`/api/v1/chat/${draft.slug}`);
     assert.equal(hidden.status, 404, 'Drafts have no public page');
