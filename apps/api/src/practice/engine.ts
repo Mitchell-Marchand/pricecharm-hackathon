@@ -30,7 +30,13 @@ import { json, type Row } from '../models.js';
 import { listPastJobs, photoUrl } from '../past-jobs.js';
 import { AGREE_PERCENT, closePercentFor } from '../pricing/accuracy.js';
 import { draftForBusiness } from '../pricing/draft.js';
-import { currentFormula, formulaExamples, refreshFormula } from '../pricing/formula-draft.js';
+import {
+  currentFormula,
+  formulaExamples,
+  holdFormula,
+  refreshFormula,
+  releaseFormula,
+} from '../pricing/formula-draft.js';
 import {
   businessContext,
   examplesFor,
@@ -41,6 +47,7 @@ import { marketPricesEnabled, marketRate } from '../pricing/market.js';
 import { chargesLine } from '../pricing/rates.js';
 import { SIZE_FACT, specFromScenario } from '../pricing/spec.js';
 import { knownSpec, saidSpec } from './known.js';
+import { answerNote, answerQuestion, pickQuestion, type OwnerQuestion } from './owner-questions.js';
 import { formatQuantity } from '../pricing/units.js';
 import { getPhoto, putPhoto } from '../storage.js';
 import { withAiUsage } from '../usage.js';
@@ -572,6 +579,19 @@ function assertIdle(run: Row, messages: Row[]) {
     throw new ApiError(409, 'PRACTICE_PHOTO', 'They’re still taking that photo.');
 }
 
+/** The owner's question as the card shows it, their "no" answer last. */
+function questionView(question: OwnerQuestion | null) {
+  if (!question) return null;
+  return {
+    ask: question.ask,
+    answers: [...question.answers, question.no],
+    answer: question.answer ?? null,
+    skipped: Boolean(question.skipped),
+    /** The note it saved, as the formula reads it. */
+    note: question.answer ? answerNote(question, question.answer) : null,
+  };
+}
+
 function runView(run: Row, messages: Row[], known?: TurnDownView) {
   const scenario = json<PracticeScenario | null>(run.scenario_json, null);
   const position = Number(run.position);
@@ -630,6 +650,8 @@ function runView(run: Row, messages: Row[], known?: TurnDownView) {
     photoReading: run.status === 'preparing' ? null : photoReadingView(run, messages),
     /** The customer is taking a photo the owner asked for. */
     takingPhoto: run.status === 'ready' && !run.outcome && Boolean(run.photo_ask_json),
+    /** What the Charm asked the owner about their prices once they'd sent the quote. */
+    question: questionView(json<OwnerQuestion | null>(run.owner_question_json, null)),
     finished: run.status === 'finished',
   };
 }
@@ -752,6 +774,8 @@ async function viewOf(businessId: string, runId: string) {
 export async function sendOwnerMessage(businessId: string, runId: string, text: string) {
   const run = await loadRun(businessId, runId);
   openRun(run);
+  // On to the next customer: the last one's question isn't being answered now.
+  releaseFormula(businessId);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   const before = await runMessages(runId);
   assertIdle(run, before);
@@ -1152,6 +1176,11 @@ async function marketBeside(
 
 /** How long finishing a practice customer in the background holds it before it's tried again. */
 const FINISH_SECONDS = 180;
+/**
+ * How long the formula waits for the owner to answer the question a practice quote asks, before
+ * it's worked out without the answer. Moving on to the next customer ends the wait.
+ */
+const QUESTION_HOLD_MS = 120_000;
 
 /**
  * The owner's answer, in at once with the customer's reply. What the Charm would have charged and
@@ -1163,7 +1192,7 @@ async function finishRun(
   runId: string,
   outcome: { quote: QuoteDraft } | { siteVisit: string },
 ) {
-  await transaction(async (connection) => {
+  const question = await transaction(async (connection) => {
     const run = await loadRun(businessId, runId, connection, true);
     openRun(run);
     const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
@@ -1215,7 +1244,11 @@ async function finishRun(
       [runId],
       connection,
     );
+    // Once they've priced it, one question about how they price, while it's on their mind.
+    return 'quote' in outcome ? pickQuestion(connection, businessId, runId) : null;
   });
+  // Their answer changes their notes, so the formula waits for it and is worked out once for both.
+  if (question) holdFormula(businessId, QUESTION_HOLD_MS);
   void completeRun(businessId, runId).catch((error) =>
     reportError(error, { event: 'practice_finish' }),
   );
@@ -1459,6 +1492,21 @@ export async function explainPracticeQuote(businessId: string, runId: string, te
   });
   // The quote it learns from changed, so the formula is worked out again in the background.
   refreshFormula(businessId);
+  return viewOf(businessId, runId);
+}
+
+/** The owner's answer to the question a practice quote asked, or their skip. */
+export async function answerPracticeQuestion(
+  businessId: string,
+  runId: string,
+  reply: { answer: string } | { skip: true },
+) {
+  await transaction(async (connection) => {
+    await loadRun(businessId, runId, connection, true);
+    await answerQuestion(connection, businessId, runId, reply);
+  });
+  // The formula waited for this, and is worked out now with the answer.
+  if (!releaseFormula(businessId)) refreshFormula(businessId);
   return viewOf(businessId, runId);
 }
 

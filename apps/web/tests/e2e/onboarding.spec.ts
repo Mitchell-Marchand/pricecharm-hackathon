@@ -366,6 +366,10 @@ test('practice comes first, then the account, a test, the plans and going live',
   await quote('Patio wash, about 550 sq ft', '280');
   await expect(meter).not.toHaveAttribute('aria-valuenow', '0');
   await expect(page.getByText(/About \d+ more to reach 85%/)).toBeVisible();
+  // Once the quote is out, the Charm asks one thing about how they price, answered with a tap.
+  const question = page.locator('section').filter({ hasText: 'One question from your Charm' });
+  await question.getByRole('button').first().click();
+  await expect(page.getByText(/Got it\. It follows this on every quote now/)).toBeVisible();
   // After one customer they can stop and pick it up later, from an emailed link.
   await page.getByRole('button', { name: /finish this later/ }).click();
   await expect(page.getByRole('dialog', { name: 'Save your Charm' })).toBeVisible();

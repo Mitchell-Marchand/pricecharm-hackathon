@@ -276,6 +276,31 @@ export function learnedFormula(
 const refreshing = new Set<string>();
 const refreshAgain = new Set<string>();
 const failedAt = new Map<string, number>();
+const held = new Map<string, NodeJS.Timeout>();
+
+/**
+ * Holds off working the formula out again for a while, as when a practice quote has just gone
+ * out and the owner is about to answer a question that changes their notes: one learn then covers
+ * both, instead of one for the quote and another for the answer. It's worked out once the hold is
+ * released, or when it runs out.
+ */
+export function holdFormula(businessId: string, ms: number): void {
+  clearTimeout(held.get(businessId));
+  held.set(businessId, setTimeout(() => releaseFormula(businessId), ms).unref());
+}
+
+/**
+ * Ends a hold, and works the formula out if it needs it. Nothing happens when there's no hold;
+ * false says so.
+ */
+export function releaseFormula(businessId: string): boolean {
+  const hold = held.get(businessId);
+  if (!hold) return false;
+  clearTimeout(hold);
+  held.delete(businessId);
+  refreshFormula(businessId);
+  return true;
+}
 
 /**
  * Works the owner's formula out again, in the background, when their quotes or notes have changed
@@ -284,7 +309,7 @@ const failedAt = new Map<string, number>();
  * worked out runs one more after it.
  */
 export function refreshFormula(businessId: string): void {
-  if (aiMode === 'demo') return;
+  if (aiMode === 'demo' || held.has(businessId)) return;
   if (refreshing.has(businessId)) {
     refreshAgain.add(businessId);
     return;

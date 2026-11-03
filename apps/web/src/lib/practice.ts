@@ -121,6 +121,18 @@ export interface PracticeRun {
   photoReading?: PhotoReading | null;
   /** The customer is taking a photo the owner asked for. */
   takingPhoto?: boolean;
+  /**
+   * What the Charm asked the owner about their prices once they'd sent the quote, with tap
+   * answers, "no" last. Missing from older APIs.
+   */
+  question?: {
+    ask: string;
+    answers: string[];
+    answer: string | null;
+    skipped: boolean;
+    /** The note the answer was saved as. */
+    note: string | null;
+  } | null;
   finished: boolean;
 }
 
@@ -188,6 +200,9 @@ export const explainQuote = (runId: string, text: string) =>
     method: 'PATCH',
     ...json({ text }),
   });
+/** The owner's answer to the question their Charm asked about their prices, or a skip. */
+export const answerQuestion = (runId: string, reply: { answer: string } | { skip: true }) =>
+  api<PracticeRun>(`/onboarding/practice/${runId}/question`, { method: 'POST', ...json(reply) });
 export const fixInsight = (runId: string, insightId: string, text: string) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/insights/${insightId}`, {
     method: 'PATCH',

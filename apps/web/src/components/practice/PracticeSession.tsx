@@ -21,9 +21,10 @@ import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { TurnDownSheet, type TurnDownTarget } from '@/components/practice/TurnDownSheet';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
-import { Avatar, Button, Tag, TextArea, TextInput } from '@/components/ui';
+import { Avatar, Button, Chip, Tag, TextArea, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
+  answerQuestion,
   distanceText,
   explainQuote,
   fixInsight,
@@ -352,6 +353,119 @@ function ExplainPrice({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * The one thing the Charm asks about how the owner prices, once a quote has gone: a tap, a few
+ * words of their own, or a skip. The answer is saved as one of their notes, which every price
+ * follows.
+ */
+function OwnerQuestion({
+  run,
+  onChange,
+}: {
+  run: PracticeRun;
+  onChange: (run: PracticeRun) => void;
+}) {
+  const notify = useToast();
+  const [own, setOwn] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState<string | null>(null);
+  const question = run.question;
+  if (!question || question.skipped) return null;
+  const id = `question-${run.id}`;
+  async function send(reply: { answer: string } | { skip: true }) {
+    if (saving) return;
+    setSaving('answer' in reply ? reply.answer : 'skip');
+    try {
+      onChange(await answerQuestion(run.id, reply));
+    } catch (error) {
+      notify(errorMessage(error));
+      setSaving(null);
+    }
+  }
+  if (question.answer)
+    return (
+      <section className="fade-up rounded-md border border-line bg-surface p-5 sm:p-6">
+        <p className="t-label text-muted">Your Charm asked</p>
+        <p className="mt-2 text-[15px] text-ink-2">{question.ask}</p>
+        <p className="mt-3 flex gap-2 text-[15px]">
+          <Check className="mt-0.5 size-4 shrink-0 text-go" aria-hidden />
+          <span>
+            Got it. It follows this on every quote now:{' '}
+            <span className="font-semibold">{question.note}</span>
+          </span>
+        </p>
+      </section>
+    );
+  return (
+    <section
+      className="fade-up rounded-md border border-line bg-surface p-5 shadow-1 sm:p-6"
+      aria-labelledby={id}
+    >
+      <p className="t-label text-muted">One question from your Charm</p>
+      <h2 id={id} className="t-h2 mt-2">
+        {question.ask}
+      </h2>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {question.answers.map((answer) => (
+          <Chip
+            key={answer}
+            selected={saving === answer}
+            onClick={() => void send({ answer })}
+            className="h-auto min-h-10 py-2 text-left"
+          >
+            {answer}
+          </Chip>
+        ))}
+        <Chip selected={own} onClick={() => setOwn(true)}>
+          Something else
+        </Chip>
+      </div>
+      {own && (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault();
+            if (text.trim()) void send({ answer: text.trim() });
+          }}
+        >
+          <label htmlFor={`${id}-own`} className="sr-only">
+            Your answer
+          </label>
+          <TextInput
+            id={`${id}-own`}
+            autoFocus
+            className="h-10"
+            maxLength={120}
+            placeholder="In a few words"
+            // Clear of the bar at the bottom, and the keyboard on a phone.
+            onFocus={(event) => event.currentTarget.scrollIntoView({ block: 'center' })}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-10"
+            disabled={!text.trim() || Boolean(saving)}
+          >
+            Save
+          </Button>
+        </form>
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">It follows your answer on every quote.</p>
+        <button
+          type="button"
+          onClick={() => void send({ skip: true })}
+          className="shrink-0 text-sm text-muted hover:text-accent"
+        >
+          Skip
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -795,6 +909,11 @@ export function PracticeSession({
                   onTurnDown={setTurnDown}
                 />
               )}
+              {run?.question &&
+                (finishing || showInsights) &&
+                (reveal?.runId !== run.id || reveal?.insights) && (
+                  <OwnerQuestion run={run} onChange={onRun} />
+                )}
             </div>
           </>
         )}

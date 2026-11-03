@@ -991,3 +991,74 @@ export function pastJobRecord(owner: SimOwner, job: SimJob) {
     discount: quote.discount,
   };
 }
+
+/**
+ * How this owner would describe their own prices, if asked: each of their hidden rules in plain
+ * words, with the real amounts. Only the simulated owner reads it, to answer the Charm's questions
+ * about how they price (src/bench/owner-answer.ts); the Charm never sees it.
+ */
+export function rulesInWords(owner: SimOwner): string[] {
+  const { rules } = owner;
+  const words = WORDS[owner.tradeId];
+  const dollars = (cents: number) =>
+    `$${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+  const percent = (share: number) => `${Math.round(share * 100)}%`;
+  const each = (unit: string) => formatQuantity(1, unit).replace(/^1 /, '');
+  const said: string[] = [];
+  for (const rule of rules.services) {
+    if (rule.hourly) {
+      const { who, crews, hours, minimum } = rule.hourly;
+      said.push(
+        `${rule.name}: by the hour. ${crews.map((crew) => `Up to ${formatQuantity(crew.upTo, rule.unit)}: ${crew.people} ${who} at ${dollars(crew.rate)} an hour for the crew`).join('. ')}. It takes ${hours.base} hours plus ${hours.perUnit} an hour per ${each(rule.unit)}, rounded up to the half hour, ${minimum} hours at least.`,
+      );
+    } else if (rule.bands)
+      said.push(
+        `${rule.name}: a set price by size. ${rule.bands.map((band) => `Up to ${formatQuantity(band.upTo, rule.unit)}: ${dollars(band.cents)}`).join('. ')}.`,
+      );
+    else
+      said.push(
+        `${rule.name}: ${dollars(rule.rate)} per ${each(rule.unit)}${rule.volume ? `, and each ${each(rule.unit)} past ${formatQuantity(rule.volume.above, rule.unit)} is ${percent(rule.volume.share)} of that` : ''}.`,
+      );
+    if (rule.base)
+      said.push(`Every ${rule.name} job starts from ${dollars(rule.base)}, plus its size.`);
+    if (rule.extra)
+      said.push(
+        `${rule.name}: ${dollars(rule.extra.rate)} for each of the ${rule.extra.unit} past ${rule.extra.included ?? 0}.`,
+      );
+    if (rule.options)
+      said.push(
+        `${rule.name} comes in kinds the customer picks, each a share of the full price: ${rule.options.map((option) => `${option.label} ${percent(option.share)}`).join(', ')}.`,
+      );
+  }
+  said.push(rules.minimum ? `No job for less than ${dollars(rules.minimum)}.` : 'No minimum.');
+  said.push(
+    rules.heavyFlat
+      ? `A job that's ${words.heavy}: ${dollars(rules.heavyFlat)} more.`
+      : rules.heavy
+        ? `A job that's ${words.heavy}: ${percent(rules.heavy)} more on the main work.`
+        : `A job in bad shape costs the same.`,
+  );
+  const reached = rules.services.filter((rule) => rule.height).map((rule) => rule.name);
+  said.push(
+    reached.length && (rules.heightFlat || rules.height)
+      ? `${words.access}, on ${reached.join(' and ')}: ${rules.heightFlat ? dollars(rules.heightFlat) : percent(rules.height)} more.`
+      : 'Harder access costs the same.',
+  );
+  for (const addOn of rules.addOns)
+    said.push(
+      `${addOn.label}: ${dollars(addOn.cents)} ${addOn.per === 'unit' ? `per ${each(addOn.unit ?? rules.services[0].unit)}` : addOn.per === 'item' ? `for each ${addOn.item?.name ?? 'one'}` : 'per job'}.`,
+    );
+  if (!rules.addOns.length) said.push('No extras on their own line.');
+  if (rules.services.length > 1)
+    said.push(
+      rules.bundle
+        ? `${rules.bundle}% off when a customer books two services together.`
+        : 'Two services together cost the same as apart.',
+    );
+  if (rules.recurring)
+    said.push(
+      `Regular visits, each visit: ${rules.recurring.map((visit) => `${visit.label} ${visit.share > 0 ? `${percent(visit.share)} less` : visit.share < 0 ? `${percent(-visit.share)} more` : 'the same'}`).join(', ')}, against a one-time job.`,
+    );
+  if (rules.fee) said.push(`${rules.fee.label} on every job: ${dollars(rules.fee.cents)}.`);
+  return said;
+}

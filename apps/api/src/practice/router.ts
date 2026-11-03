@@ -6,6 +6,7 @@ import { businessContext } from '../pricing/history.js';
 import { requireWorkspace, workspace } from '../workspace.js';
 import {
   addPracticeRun,
+  answerPracticeQuestion,
   computeShadow,
   declinePracticeRun,
   declinePrefill,
@@ -213,6 +214,27 @@ practiceRouter.patch(
     res.json(
       ok(await explainPracticeQuote(workspace(req).businessId, runId.parse(req.params.id), text)),
     );
+  },
+);
+
+practiceRouter.post(
+  '/onboarding/practice/:id/question',
+  rateLimit(20, 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    const reply = z
+      .union([
+        z.object({ answer: z.string().trim().min(1).max(120) }).strict(),
+        z.object({ skip: z.literal(true) }).strict(),
+      ])
+      .parse(req.body);
+    const { businessId } = workspace(req);
+    const run = await answerPracticeQuestion(businessId, runId.parse(req.params.id), reply);
+    await recordRequestEvent(req, businessId, 'practice_question_answered', {
+      skipped: 'skip' in reply,
+      tapped: 'answer' in reply && Boolean(run.question?.answers.includes(reply.answer)),
+    });
+    res.json(ok(run));
   },
 );
 
