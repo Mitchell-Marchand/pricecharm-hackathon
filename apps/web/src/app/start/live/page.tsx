@@ -149,8 +149,7 @@ export default function LiveStep() {
 }
 
 /**
- * The ask: three plans, each a button straight to adding a card. What it's for is said once,
- * plainly, above them.
+ * The ask: one of three plans, then a card. What it's for is said once, plainly, above them.
  */
 function Plans({
   business,
@@ -185,8 +184,9 @@ function Plans({
         <Check className="size-5" aria-hidden />{' '}
         {charm ? `Your Charm is ${charm.readiness.score}% trained` : 'Your Charm is set up'}
       </p>
-      <h1 className="t-hero mt-4 max-w-3xl">Pick a plan. Then go live.</h1>
+      <h1 className="t-hero mt-4 max-w-3xl">Pick how you pay.</h1>
       <p className="mt-5 max-w-2xl text-lg text-ink-2">
+        One of these three. You can switch any time.{' '}
         {charm && !charm.settings.autoSend
           ? `Customers ask ${business} for a quote any time, and each one waits for your OK, one tap from your email.`
           : `Customers get a quote from ${business} in about 2 minutes, day or night.`}

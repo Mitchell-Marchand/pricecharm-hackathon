@@ -91,7 +91,7 @@ export function QuoteChat({
   const [declining, setDeclining] = useState(false);
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
-  const [contact, setContact] = useState<Contact>({ name: '', email: '', phone: '' });
+  const [contact, setContact] = useState<Contact>({ name: '', email: '', phone: '', address: '' });
   const [form, setForm] = useState<Form | null>(null);
   const [freshQuote, setFreshQuote] = useState(false);
   // The owner trying their own link gets a test chat, which skips the check, and is told it's a
@@ -289,11 +289,16 @@ export function QuoteChat({
     }
   }
 
+  // The job's street address goes with a yes, a visit or a question, where the owner asks for it.
+  // It's optional, and the price has already shown by then.
+  const asksAddress =
+    profile.asksAddress === true && (form === 'yes' || form === 'visit' || form === 'question');
   // Their details, once they're good to send: an email for a copy, otherwise a phone or an email.
   const typed = {
     name: contact.name.trim(),
     email: contact.email.trim(),
     phone: contact.phone.trim(),
+    ...(asksAddress && contact.address?.trim() ? { address: contact.address.trim() } : {}),
   };
   const contactReady =
     !!typed.name &&
@@ -707,6 +712,21 @@ export function QuoteChat({
                 />
               </div>
             </div>
+            {asksAddress && shownForm === form && (
+              <div>
+                <label htmlFor="chat-address" className="sr-only">
+                  The job’s street address
+                </label>
+                <TextInput
+                  id="chat-address"
+                  autoComplete="street-address"
+                  maxLength={200}
+                  placeholder="Job address"
+                  value={contact.address ?? ''}
+                  onChange={(event) => setContact({ ...contact, address: event.target.value })}
+                />
+              </div>
+            )}
             {shownForm !== 'copy' && (
               <p className="text-xs text-muted">A phone number or an email is enough.</p>
             )}
@@ -725,7 +745,9 @@ export function QuoteChat({
               )}
             </div>
             <p className="text-xs text-muted">
-              {profile.name} gets your name, how to reach you and this chat so they can reply.{' '}
+              {asksAddress && shownForm === form
+                ? `${profile.name} gets your name, how to reach you, the job address and this chat so they can reply.`
+                : `${profile.name} gets your name, how to reach you and this chat so they can reply.`}{' '}
               <a
                 href="/privacy"
                 target="_blank"

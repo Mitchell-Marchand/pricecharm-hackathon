@@ -10,21 +10,43 @@ import { ApiError } from './http.js';
 import { putPhoto, getPhoto, deletePhoto } from './storage.js';
 
 const maxImages = 3;
-let inFlightUploads = 0;
-export const uploadSlot: RequestHandler = (_req, res, next) => {
-  if (inFlightUploads >= 2) {
+/**
+ * Uploads being read at once. Each business, chat or address gets its own two, so one owner
+ * picking eight photos never blocks another's one, and the whole server takes a few more than
+ * that before it asks anyone to wait. A busy answer says to try again in 3 seconds, and the pages
+ * do.
+ */
+const PER_SOURCE = 2;
+const OVERALL = 6;
+const inFlight = new Map<string, number>();
+let overall = 0;
+
+/** Whose upload this is: the owner's business, a customer's chat, or else the address. */
+function uploadSource(req: Request): string {
+  if (req.workspace?.businessId) return `business:${req.workspace.businessId}`;
+  if (req.params?.chatId) return `chat:${req.params.chatId}`;
+  return `address:${req.ip || req.socket.remoteAddress || 'unknown'}`;
+}
+
+export const uploadSlot: RequestHandler = (req, res, next) => {
+  const source = uploadSource(req);
+  const mine = inFlight.get(source) ?? 0;
+  if (mine >= PER_SOURCE || overall >= OVERALL) {
     res.setHeader('Retry-After', '3');
     return next(
       new ApiError(503, 'UPLOAD_BUSY', 'Photos are being processed. Please try again in a moment.'),
     );
   }
-  inFlightUploads++;
+  inFlight.set(source, mine + 1);
+  overall++;
   let released = false;
   const release = () => {
-    if (!released) {
-      released = true;
-      inFlightUploads--;
-    }
+    if (released) return;
+    released = true;
+    overall--;
+    const left = (inFlight.get(source) ?? 1) - 1;
+    if (left > 0) inFlight.set(source, left);
+    else inFlight.delete(source);
   };
   res.once('finish', release);
   res.once('close', release);

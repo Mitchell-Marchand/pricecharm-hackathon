@@ -83,10 +83,8 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
   await expect(page.getByLabel('Code from the email')).toBeVisible();
   await goLive.getByRole('link', { name: 'Finish going live' }).click();
   await expect(page).toHaveURL(/\/start\/live$/);
-  await page
-    .getByRole('listitem', { name: 'Pay when you win' })
-    .getByRole('button', { name: 'Start with 1% a job' })
-    .click();
+  await page.getByRole('radio', { name: 'Pay when you win' }).click();
+  await page.getByRole('button', { name: 'Start with 1% a job' }).click();
   await page.getByRole('button', { name: 'Go live', exact: true }).click();
   await expect(page.getByRole('heading', { name: /You.re live\./ })).toBeVisible();
   await visitor.reload();
@@ -141,9 +139,10 @@ test('an owner goes live from the dashboard, turns on automatic quotes and signs
     page.getByRole('list', { name: 'Your Driveways jobs' }).getByRole('listitem'),
     'Three driveway jobs fill its small, usual and big slots',
   ).toHaveCount(3);
+  // The main service wants 8 sized prices before it's fully trained.
   await expect(
     page.getByRole('list', { name: 'Your services' }).getByRole('listitem').first(),
-  ).toContainText('Customers get an estimate for now. Practice 2 Driveways jobs.');
+  ).toContainText('Customers get an estimate for now. Add 5 more Driveways jobs with a size.');
 
   // What it knows has its own page: questions and notes the owner changes, rates from their jobs.
   await page.getByRole('link', { name: 'See and change it' }).click();

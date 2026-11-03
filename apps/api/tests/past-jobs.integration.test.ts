@@ -217,6 +217,64 @@ test(
   },
 );
 
+test(
+  'a setup that is training skips the new-setup pool, and the daily brake emails us before it stops anyone',
+  { skip: !enabled },
+  async () => {
+    const { reserveAiCall } = await import('../src/usage.js');
+    const { randomUUID } = await import('node:crypto');
+    const keys = ['AI_DAILY_DRAFT_APP_LIMIT', 'AI_DAILY_TRAINING_LIMIT', 'SIGNUPS_EMAIL'] as const;
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    const draft = randomUUID();
+    try {
+      await mutate(
+        "INSERT INTO businesses (id,name,slug,description,status,draft_expires_at) VALUES (?,'',?,'','draft',DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1 DAY))",
+        [draft, `draft-${draft}`],
+      );
+      // It has answered a practice customer, which is what someone training does.
+      await mutate(
+        "INSERT INTO practice_runs (id,business_id,position,status) VALUES (?,?,0,'finished')",
+        [randomUUID(), draft],
+      );
+      await mutate(
+        'INSERT INTO ai_daily_budgets (budget_day,total_reserved) VALUES (UTC_DATE(),0) ON DUPLICATE KEY UPDATE total_reserved=total_reserved',
+      );
+      const budget = async () =>
+        (
+          await rows(
+            'SELECT draft_reserved,training_reserved FROM ai_daily_budgets WHERE budget_day=UTC_DATE()',
+          )
+        )[0];
+      const before = await budget();
+      process.env.SIGNUPS_EMAIL = 'ops@example.test';
+      process.env.AI_DAILY_DRAFT_APP_LIMIT = String(Number(before.draft_reserved));
+      process.env.AI_DAILY_TRAINING_LIMIT = String(Number(before.training_reserved) + 2);
+      await reserveAiCall(draft, 'practice');
+      const after = await budget();
+      assert.equal(Number(after.draft_reserved), Number(before.draft_reserved), 'Not a new setup');
+      assert.equal(Number(after.training_reserved), Number(before.training_reserved) + 1);
+      await reserveAiCall(draft, 'practice');
+      const day = new Date().toISOString().slice(0, 10);
+      const [alert] = await rows('SELECT id FROM email_outbox WHERE dedupe_key=?', [
+        `ai-pool:AI_DAILY_TRAINING_LIMIT:${day}:100`,
+      ]);
+      assert.ok(alert, 'Reaching the brake emails us');
+      await assert.rejects(reserveAiCall(draft, 'practice'), { code: 'AI_TRAINING_BUDGET' });
+    } finally {
+      await mutate(
+        'UPDATE ai_daily_budgets SET total_reserved=total_reserved-2,training_reserved=training_reserved-2 WHERE budget_day=UTC_DATE()',
+      );
+      await mutate("DELETE FROM email_outbox WHERE dedupe_key LIKE 'ai-pool:%'");
+      await mutate('DELETE FROM usage_events WHERE business_id=?', [draft]);
+      await mutate('DELETE FROM practice_runs WHERE business_id=?', [draft]);
+      await mutate('DELETE FROM businesses WHERE id=?', [draft]);
+      for (const key of keys)
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+    }
+  },
+);
+
 test('a draft has a smaller daily AI pool and a lifetime cap', { skip: !enabled }, async () => {
   const { reserveAiCall } = await import('../src/usage.js');
   const { randomUUID } = await import('node:crypto');

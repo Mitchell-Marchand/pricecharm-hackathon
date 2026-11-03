@@ -58,7 +58,7 @@ test('the pixel counts the public pages and stays off customers’ pages and the
   await business.context.close();
 });
 
-test('the pixel hears about a new account and a card, and not from a browser that opts out', async ({
+test('the pixel hears about a business, a new account and a card, and not from a browser that opts out', async ({
   browser,
   baseURL,
 }) => {
@@ -79,14 +79,14 @@ test('the pixel hears about a new account and a card, and not from a browser tha
     name: 'Pixel Test Washing',
     area: 'Portland, OR',
   });
-  await send('post', '/api/v1/onboarding/jobs', {
-    serviceName: 'Driveways',
-    description: 'Two-car driveway wash.',
-    priceCents: 27500,
-    size: '600 sq ft',
-  });
+  // A business described is the first sign the campaign gets: setup's account comes later.
+  await page.goto('/start/about');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/training$/);
+  await expect.poll(() => tracked(page)).toContain('Lead');
 
   await page.goto('/start/account');
+  await expect(page).toHaveURL(/\/start\/ready/);
   await page.getByLabel('First name').fill('Maya');
   await page.getByLabel('Last name').fill('Lopez');
   await page.getByLabel('Email').fill(`maya-pixel-${Date.now()}@example.test`);
@@ -98,10 +98,10 @@ test('the pixel hears about a new account and a card, and not from a browser tha
 
   await page.goto('/start/live');
   await page
-    .getByRole('list', { name: 'Plans' })
-    .getByRole('listitem', { name: 'Pay per quote' })
-    .getByRole('button', { name: 'Start with $2 a quote' })
+    .getByRole('radiogroup', { name: 'Plans' })
+    .getByRole('radio', { name: 'Pay per quote' })
     .click();
+  await page.getByRole('button', { name: 'Start with $2 a quote' }).click();
   await expect(page.getByText('$2 per quote, card added')).toBeVisible();
   await expect.poll(() => tracked(page)).toEqual(['PageView', 'AddPaymentInfo']);
   await context.close();

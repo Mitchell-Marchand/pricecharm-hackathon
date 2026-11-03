@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createHmac, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { hashingSecret } from './config.js';
@@ -6,6 +7,8 @@ import { runWithAiUsage, aiMode, type AiFailure, type AiUsage } from './ai/index
 import { ApiError } from './http.js';
 import { consumeAuthRateLimit } from './verification.js';
 import { recordEvent } from './metrics.js';
+import { queueEmail } from './integrations/email.js';
+import { reportError } from './error-reporting.js';
 
 function dailyLimit(key: string, fallback: number) {
   const value = Number(process.env[key]);
@@ -103,9 +106,58 @@ export function withCustomerAiUsage<T>(
   );
 }
 /** Reserve before calling a provider, including attempts that later fail or time out. */
+/** Shares of a pool that email us, so a cap can be raised before it stops anyone. */
+const ALERT_AT = [0.5, 0.8, 1];
+type Crossed = { pool: string; setting: string; used: number; limit: number };
+
+/** The share of ALERT_AT this reservation just reached, if it reached one. */
+function crossing(pool: string, setting: string, used: number, limit: number): Crossed | null {
+  return ALERT_AT.some((share) => used === Math.ceil(limit * share))
+    ? { pool, setting, used, limit }
+    : null;
+}
+
+/** Emails us once per pool and share each day. Never stops the call it's about. */
+async function alertPool(crossed: Crossed) {
+  const to = z.email().safeParse((process.env.SIGNUPS_EMAIL || process.env.SUPPORT_EMAIL)?.trim());
+  if (!to.success) return;
+  const share = Math.round((crossed.used / crossed.limit) * 100);
+  const day = new Date().toISOString().slice(0, 10);
+  try {
+    await queueEmail({
+      to: to.data,
+      dedupeKey: `ai-pool:${crossed.setting}:${day}:${share}`,
+      subject:
+        share >= 100
+          ? `AI cap reached: ${crossed.pool}`
+          : `AI use today: ${share}% of the ${crossed.pool} cap`,
+      text: [
+        `${crossed.used.toLocaleString('en-US')} of today's ${crossed.limit.toLocaleString('en-US')} calls for ${crossed.pool} are used (${crossed.setting}).`,
+        share >= 100
+          ? 'Until midnight UTC, these calls stop with a "try again later" message.'
+          : 'At the cap, these calls stop until midnight UTC.',
+        `If this is real traffic, raise ${crossed.setting} in the API's .env and restart it.`,
+      ].join('\n\n'),
+    });
+  } catch (error) {
+    reportError(error, { event: 'ai_pool_alert', pool: crossed.setting });
+  }
+}
+
+/**
+ * Owner work: setup, training, past jobs and their own test chats. A setup that hasn't answered a
+ * practice customer yet draws on a small pool of its own, so bots and visitors who leave can't run
+ * up a bill. Once it's training, nothing shared stops it but a daily brake set well above a busy
+ * day: each setup has its own caps, and we get an email well before the brake.
+ */
 export async function reserveAiCall(businessId: string, conversationId: string | undefined) {
-  const tenantLimit = dailyLimit('AI_DAILY_BUSINESS_LIMIT', 100);
-  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
+  // Setup trains on practice alone now: 15 customers take about 160 calls.
+  const tenantLimit = dailyLimit('AI_DAILY_BUSINESS_LIMIT', 200);
+  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 5000);
+  // About 10 calls a practice customer: some 25 setups training all the way through in a day.
+  const trainingLimit = Math.min(dailyLimit('AI_DAILY_TRAINING_LIMIT', 3000), appLimit);
+  const newSetupLimit = Math.min(dailyLimit('AI_DAILY_DRAFT_APP_LIMIT', 400), trainingLimit);
+  const crossed: Crossed[] = [];
   await transaction(async (connection) => {
     await mutate(
       'INSERT INTO ai_daily_budgets (budget_day,total_reserved) VALUES (UTC_DATE(),0) ON DUPLICATE KEY UPDATE total_reserved = total_reserved',
@@ -114,7 +166,7 @@ export async function reserveAiCall(businessId: string, conversationId: string |
     );
     // One durable lock serializes reservations across all workers and app replicas.
     const [budget] = await rows(
-      'SELECT total_reserved FROM ai_daily_budgets WHERE budget_day = UTC_DATE() FOR UPDATE',
+      'SELECT total_reserved,training_reserved,draft_reserved FROM ai_daily_budgets WHERE budget_day = UTC_DATE() FOR UPDATE',
       [],
       connection,
     );
@@ -124,34 +176,42 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         'AI_APP_BUDGET',
         'AI conversations are at capacity today. Please try again later.',
       );
-    // A setup that hasn't become an account yet draws on a smaller pool, with a lifetime cap.
+    if (Number(budget.training_reserved) >= trainingLimit)
+      throw new ApiError(
+        429,
+        'AI_TRAINING_BUDGET',
+        'Training is busy right now. Your progress is saved, so please try again in a little while.',
+      );
     const [business] = await rows(
       'SELECT status FROM businesses WHERE id = ?',
       [businessId],
       connection,
     );
     const draft = business?.status === 'draft';
-    if (draft) {
-      const [draftBudget] = await rows(
-        'SELECT draft_reserved FROM ai_daily_budgets WHERE budget_day = UTC_DATE()',
-        [],
-        connection,
+    // Answering a practice customer is what a person does and a bot doesn't bother with.
+    const training =
+      draft &&
+      (
+        await rows(
+          "SELECT 1 FROM practice_runs WHERE business_id = ? AND status = 'finished' LIMIT 1",
+          [businessId],
+          connection,
+        )
+      ).length > 0;
+    const newSetup = draft && !training;
+    if (newSetup && Number(budget.draft_reserved) >= newSetupLimit)
+      throw new ApiError(
+        429,
+        'SETUP_AI_CAPACITY',
+        'Setup is busy right now. Your progress is saved, so please try again in a little while.',
       );
-      if (
-        Number(draftBudget.draft_reserved) >=
-        Math.min(dailyLimit('AI_DAILY_DRAFT_APP_LIMIT', 400), appLimit)
-      )
-        throw new ApiError(
-          429,
-          'SETUP_AI_CAPACITY',
-          'Setup is busy right now. Your progress is saved, so please try again in a little while.',
-        );
+    if (draft) {
       const [used] = await rows(
         "SELECT COUNT(*) AS count FROM usage_events WHERE business_id = ? AND kind = 'ai_reservation'",
         [businessId],
         connection,
       );
-      if (Number(used.count) >= dailyLimit('AI_DRAFT_LIFETIME_LIMIT', 150))
+      if (Number(used.count) >= dailyLimit('AI_DRAFT_LIFETIME_LIMIT', 220))
         throw new ApiError(
           429,
           'SETUP_AI_LIMIT',
@@ -170,7 +230,7 @@ export async function reserveAiCall(businessId: string, conversationId: string |
         'This workspace reached its daily AI conversation allowance. You can still review requests and manage pricing.',
       );
     await mutate(
-      `UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1${draft ? ', draft_reserved = draft_reserved + 1' : ''} WHERE budget_day = UTC_DATE()`,
+      `UPDATE ai_daily_budgets SET total_reserved = total_reserved + 1, training_reserved = training_reserved + 1${newSetup ? ', draft_reserved = draft_reserved + 1' : ''} WHERE budget_day = UTC_DATE()`,
       [],
       connection,
     );
@@ -184,7 +244,26 @@ export async function reserveAiCall(businessId: string, conversationId: string |
       ],
       connection,
     );
+    for (const hit of [
+      crossing('all AI', 'AI_DAILY_APP_LIMIT', Number(budget.total_reserved) + 1, appLimit),
+      crossing(
+        'training',
+        'AI_DAILY_TRAINING_LIMIT',
+        Number(budget.training_reserved) + 1,
+        trainingLimit,
+      ),
+      newSetup
+        ? crossing(
+            'new setups',
+            'AI_DAILY_DRAFT_APP_LIMIT',
+            Number(budget.draft_reserved) + 1,
+            newSetupLimit,
+          )
+        : null,
+    ])
+      if (hit) crossed.push(hit);
   });
+  for (const hit of crossed) await alertPool(hit);
 }
 
 /**
@@ -196,7 +275,7 @@ export async function reserveCustomerAiCall(input: {
   sessionId: string;
   ip: string;
 }) {
-  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
+  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 5000);
   const customerLimit = Math.min(dailyLimit('AI_DAILY_CUSTOMER_APP_LIMIT', 600), appLimit);
   const businessLimit = dailyLimit('AI_DAILY_BUSINESS_CUSTOMER_LIMIT', 200);
   const ipLimit = dailyLimit('AI_DAILY_CUSTOMER_IP_LIMIT', 60);
@@ -275,7 +354,7 @@ export const DEMO_CHAT_CALLS = 12;
  * guard against abuse as much as spending.
  */
 export async function reserveDemoAiCall(input: { sessionId: string; ip: string }) {
-  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 1000);
+  const appLimit = dailyLimit('AI_DAILY_APP_LIMIT', 5000);
   const demoLimit = Math.min(dailyLimit('AI_DAILY_DEMO_LIMIT', 300), appLimit);
   const ipLimit = dailyLimit('AI_DAILY_DEMO_IP_LIMIT', 40);
   await transaction(async (connection) => {

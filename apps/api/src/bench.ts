@@ -10,6 +10,7 @@ import { intakeTurn, type IntakeTurn } from './ai/intake.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { describeComparison, type SavedRun } from './bench/compare.js';
 import { customerTurn, jobFacts, practiceFacts } from './bench/customer.js';
+import { ownerAnswer } from './bench/owner-answer.js';
 import {
   closeness,
   describeCloseness,
@@ -47,7 +48,8 @@ import {
   type SimOwner,
 } from './bench/owners.js';
 import { questionChecklist } from './charm-notes.js';
-import { closeDatabase, mutate } from './db.js';
+import { closeDatabase, mutate, transaction } from './db.js';
+import { answerQuestion, pickQuestion } from './practice/owner-questions.js';
 import { draftForBusiness } from './pricing/draft.js';
 import {
   formulaExamples,
@@ -73,7 +75,8 @@ import { accuracy, closer, share } from './proof.js';
  * practice adds.
  *
  *   bash scripts/bench.sh [--owners 30] [--tests 6] [--seed 1] [--curve] [--formula] [--messy]
- *     [--past 10] [--practice original] [--concurrency 4] [--json <file>] [--formula-only]
+ *     [--past 10] [--practice original] [--practice-count 6] [--concurrency 4] [--json <file>]
+ *     [--formula-only]
  *     [--replay <file>] [--fill] [--compare <file>] [--trades classic|wide|<id,id...>]
  *
  * The sealed test set is seeds 9001–9100 and the held-out trades (painting, pest control and pool
@@ -159,6 +162,20 @@ PLANS.usual = [
   ...PLANS.experiments,
   ...Array.from({ length: 6 }, () => ({ shape: 'any' as const })),
 ];
+// Setup for an owner with no past jobs, as newOwnerSituations in src/practice/plan.ts has it: a
+// usual job, the small end, a big one with an extra, the other service, rough shape, a hard reach,
+// a regular schedule, then everyday customers. Run it with --past 0, and --practice-count to
+// stop after that many customers, so runs at 3, 6, 9, 12 and 15 show how far practice alone goes.
+PLANS.newowner = [
+  { shape: 'plain', extra: 0 },
+  { shape: 'small' },
+  { shape: 'bigger', extra: 1 },
+  { shape: 'other' },
+  { shape: 'heavy' },
+  { shape: 'tall' },
+  { shape: 'plain', aim: 'schedule' },
+  ...Array.from({ length: 8 }, () => ({ shape: 'any' as const })),
+];
 const PLAN = 'experiments';
 /**
  * The most questions a --chat run's customer chat asks before the job is priced anyway. A live
@@ -184,6 +201,11 @@ function fileOption(name: string) {
 
 const number = (name: string, fallback: number, max: number) =>
   Math.min(Math.max(Math.round(Number(option(name) ?? fallback)) || fallback, 1), max);
+/** Like number, but 0 is a real answer, as in --past 0 for an owner with no past jobs. */
+const countOption = (name: string, fallback: number, max: number) => {
+  const given = Number(option(name) ?? fallback);
+  return Number.isFinite(given) ? Math.min(Math.max(Math.round(given), 0), max) : fallback;
+};
 
 /**
  * Saves the owner as a business with its past jobs and finished practice customers, the rows the
@@ -203,6 +225,7 @@ async function seedOwner(
 ) {
   const id = randomUUID();
   const jobs: SimJob[] = [];
+  const runs: { id: string; finished: Date }[] = [];
   await mutate(
     "INSERT INTO businesses (id,name,slug,description,status,trade_id,service_area,metrics_subject) VALUES (?,?,?,'','active',?,?,UUID())",
     [
@@ -252,6 +275,7 @@ async function seedOwner(
     const spec = jobSpec(owner, job);
     const runId = randomUUID();
     const finished = new Date(start.getTime() + (position + 1) * 60_000);
+    runs.push({ id: runId, finished });
     await mutate(
       "INSERT INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,finished_at,asked_json) VALUES (?,?,?,'finished',?,'quote',?,?,?)",
       [
@@ -310,7 +334,7 @@ async function seedOwner(
         ],
       );
   }
-  return { id, jobs };
+  return { id, jobs, runs };
 }
 
 type Test = {
@@ -640,17 +664,26 @@ async function main() {
   const chat = process.argv.includes('--chat');
   if (chat && !formulaOnly) throw new Error('--chat runs with --formula-only.');
   const drivers = process.argv.includes('--drivers');
+  // After each practice customer, the owner answers the Charm's question about how they price.
+  const ask = process.argv.includes('--ask');
   if (drivers && !chat) throw new Error('--drivers runs with --chat.');
   if (curve && formulaOnly)
     throw new Error(
       '--curve compares the Charm’s usual drafts, so it can’t run with --formula-only.',
     );
   const messy = process.argv.includes('--messy');
-  const past = number('past', 10, 50);
+  const past = countOption('past', 10, 50);
   const planName = option('practice') ?? PLAN;
-  const plan = PLANS[planName];
-  if (!plan)
+  const fullPlan = PLANS[planName];
+  if (!fullPlan)
     throw new Error(`No practice plan called ${planName}. Try ${Object.keys(PLANS).join(' or ')}.`);
+  // Fewer customers than the plan has, or more: everyday ones fill in past its end.
+  const practiceCount = countOption('practice-count', fullPlan.length, 40);
+  const plan = Array.from(
+    { length: practiceCount },
+    (_, index) => fullPlan[index] ?? { shape: 'any' as const },
+  );
+  if (!past && !plan.length) throw new Error('With --past 0 an owner needs some practice.');
   const tokens = { input: 0, output: 0, calls: 0 };
   /** Each kind of model call: how many were answered, their tokens, and why any failed. */
   const calls: Record<
@@ -688,9 +721,18 @@ async function main() {
   const offerings = tradeOfferings(owners);
   console.info(`Setting up ${count} simulated owners.`);
   const tests: Test[] = [];
+  const seededRuns: {
+    owner: SimOwner;
+    businessId: string;
+    runs: { id: string; finished: Date }[];
+  }[] = [];
   for (const [index, owner] of owners.entries()) {
     const base = seed * 1000 + index * 10;
-    const { id: businessId, jobs: examples } = await seedOwner(
+    const {
+      id: businessId,
+      jobs: examples,
+      runs,
+    } = await seedOwner(
       owner,
       { past: seeded(base + 1), practice: seeded(base + 2) },
       start,
@@ -699,6 +741,7 @@ async function main() {
       offerings,
       chat,
     );
+    seededRuns.push({ owner, businessId, runs });
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
       const job = drawJob(rng, owner, 'any');
@@ -789,7 +832,6 @@ async function main() {
                 trade: owner.trade,
                 services: owner.rules.services.map((rule) => rule.name),
                 area: owner.area,
-                radiusMiles: null,
               },
               checklist,
               drivers,
@@ -970,6 +1012,36 @@ async function main() {
         }
       });
   }
+  /** With --ask, each owner's questions and answers, in order. */
+  const answered: Record<string, { ask: string; answer: string }[]> = {};
+  if (ask) {
+    // After each practice customer, the question setup would ask then (src/practice/owner-questions.ts),
+    // answered from the owner's own rules a moment after they priced it. Each owner's go in order,
+    // since every question depends on the ones before; a few owners at a time.
+    console.info(`Asking ${owners.length} owners a question after each practice customer.`);
+    await pool(
+      seededRuns.map(({ owner, businessId, runs }) => async () => {
+        for (const run of runs) {
+          const question = await transaction((connection) =>
+            pickQuestion(connection, businessId, run.id),
+          );
+          if (!question) break;
+          const answer = await counted(businessId, () => ownerAnswer({ owner, question, model }));
+          await transaction((connection) =>
+            answerQuestion(
+              connection,
+              businessId,
+              run.id,
+              { answer },
+              new Date(run.finished.getTime() + 10_000),
+            ),
+          );
+          (answered[owner.name] ??= []).push({ ask: question.ask, answer });
+        }
+      }),
+      concurrency,
+    );
+  }
   if (formula) {
     // Each owner's formula is worked out before any job is priced, a few at a time, so the long
     // calls don't all hit the API at once.
@@ -1017,8 +1089,21 @@ async function main() {
   out.push(
     `PriceCharm simulated-owner benchmark, ${new Date().toISOString().slice(0, 10)}, seed ${seed}`,
     '',
-    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: ${tradesOption === 'classic' ? 'rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round' : 'rates, size bands, hourly crews, bedrooms and bathrooms, vehicle sizes, regular-visit prices, minimums, extra for jobs in bad shape or hard to reach, add-ons, set fees, and how they round'}.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan), then priced ${perOwner} jobs it had never seen. ${formulaOnly ? `This run priced with the owner’s formula alone (--formula-only), on ${engine}.` : generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
+    `${count} made-up businesses (${trades.join(', ').toLowerCase()}), each with its own hidden prices: ${tradesOption === 'classic' ? 'rates, minimums, extra for jobs in bad shape and for a second story, add-ons, a discount for two services, and how they round' : 'rates, size bands, hourly crews, bedrooms and bathrooms, vehicle sizes, regular-visit prices, minimums, extra for jobs in bad shape or hard to reach, add-ons, set fees, and how they round'}.${messy ? ' They price by eye a little: each job’s main work strays 2–8% from their own rate.' : ''} Each Charm learned only from ${past} past jobs and ${plan.length} practice quotes (the ${planName} plan)${ask ? ', with the owner answering one question about their prices after each (--ask)' : ''}, then priced ${perOwner} jobs it had never seen. ${formulaOnly ? `This run priced with the owner’s formula alone (--formula-only), on ${engine}.` : generic ? `Both run on ${engine}; the generic AI gets the same job with none of the owner’s prices. Both are held to their best price.` : `This run used ${engine}, so there's no generic AI to compare with.`}`,
     '',
+    ...(ask
+      ? [
+          'What the first owner of each trade said when asked:',
+          ...trades.flatMap((trade) => {
+            const first = owners.find((owner) => owner.trade === trade)!;
+            return [
+              `  ${first.name}`,
+              ...(answered[first.name] ?? []).map((item) => `    ${item.ask} “${item.answer}”`),
+            ];
+          }),
+          '',
+        ]
+      : []),
     `All ${scored.length} jobs:`,
   );
   const all = report(scored);
@@ -1263,6 +1348,8 @@ async function main() {
     engine,
     practice: planName,
     formulaOnly,
+    ask,
+    answered,
     tokens,
     calls,
     spent: byTrade,

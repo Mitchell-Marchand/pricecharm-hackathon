@@ -9,6 +9,7 @@ import { isDisposableEmail } from './email-domains.js';
 import { changeCurrency } from './billing.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { CURRENCIES, currencyOf } from './money.js';
+import { businessLocations, MAX_LOCATIONS } from './locations.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
 import { draftIpBudgetKey } from './usage.js';
@@ -30,16 +31,32 @@ import {
   workspaceFromRequest,
 } from './workspace.js';
 
+/**
+ * Where setup can be picked up again. Practice comes straight after the business, past jobs are an
+ * extra on the try page, and the account is made on the ready page.
+ */
 export const ONBOARDING_STEPS = [
-  'business',
-  'jobs',
+  'trade',
+  'services',
+  'about',
   'practice',
   'ready',
-  'account',
   'try',
   'live',
 ] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+/** Steps saved before setup changed order, and where each picks up now. */
+const OLD_STEPS: Record<string, OnboardingStep> = {
+  business: 'trade',
+  jobs: 'practice',
+  account: 'ready',
+};
+const stepOf = (value: unknown): OnboardingStep => {
+  const step = String(value ?? '');
+  return (ONBOARDING_STEPS as readonly string[]).includes(step)
+    ? (step as OnboardingStep)
+    : (OLD_STEPS[step] ?? 'trade');
+};
 const RADII = ['10', '15', '25', '50'] as const;
 const DRAFTS_PER_ADDRESS_PER_DAY = 10;
 
@@ -56,6 +73,22 @@ function draftsPerAddress(): number {
 
 export const onboardingRouter = Router();
 
+/** Setup's own write of where it works, inside its save. Settings uses saveLocations. */
+async function writeLocations(businessId: string, areas: string[], connection: Sql) {
+  await mutate('DELETE FROM business_locations WHERE business_id=?', [businessId], connection);
+  for (const [position, area] of areas.entries())
+    await mutate(
+      'INSERT INTO business_locations (id,business_id,position,area) VALUES (?,?,?,?)',
+      [randomUUID(), businessId, position, area],
+      connection,
+    );
+  await mutate(
+    'UPDATE businesses SET service_area=? WHERE id=?',
+    [areas[0] ?? '', businessId],
+    connection,
+  );
+}
+
 function appOrigin() {
   return (process.env.APP_ORIGIN || 'http://localhost:3100').split(',')[0].trim();
 }
@@ -68,9 +101,10 @@ export async function onboardingState(businessId: string, draft: boolean, connec
     [businessId],
     connection,
   );
+  const locations = await businessLocations(businessId, connection);
   return {
     draft,
-    step: business.onboarding_step as OnboardingStep,
+    step: stepOf(business.onboarding_step),
     business: {
       tradeId: business.trade_id ?? null,
       customTrade: business.custom_trade ?? '',
@@ -78,6 +112,11 @@ export async function onboardingState(businessId: string, draft: boolean, connec
       customServices: offerings.filter((item) => item.custom).map((item) => String(item.name)),
       name: business.name ?? '',
       area: business.service_area ?? '',
+      locations: locations.length
+        ? locations
+        : business.service_area
+          ? [business.service_area]
+          : [],
       currency: currencyOf(business.currency),
       radius: business.travel_radius_miles ? String(business.travel_radius_miles) : '25',
     },
@@ -149,6 +188,13 @@ const businessPatch = z
       ),
     name: z.string().trim().max(120),
     area: z.string().trim().max(120),
+    locations: z
+      .array(z.string().trim().min(1).max(120))
+      .max(MAX_LOCATIONS)
+      .refine(
+        (areas) => new Set(areas.map((area) => area.toLowerCase())).size === areas.length,
+        'Each location can only be listed once.',
+      ),
     currency: z.enum(CURRENCIES),
     radius: z.enum(RADII),
   })
@@ -177,7 +223,10 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
     if (input.tradeId !== undefined || input.customTrade !== undefined)
       set('industry', tradeName(tradeId, customTrade).slice(0, 160));
     if (input.name !== undefined) set('name', input.name);
-    if (input.area !== undefined) set('service_area', input.area);
+    // An older page sends one area: it becomes their only location.
+    const areas =
+      input.locations ?? (input.area !== undefined ? [input.area].filter(Boolean) : null);
+    if (areas) await writeLocations(current.businessId, areas, connection);
     if (input.radius !== undefined) set('travel_radius_miles', Number(input.radius));
     if (input.currency) await changeCurrency(current.businessId, input.currency, connection);
     if (fields.length)

@@ -22,7 +22,7 @@ const linkInput = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).s
 /** The quote this link was made for. A wrong or old token says so, and nothing more. */
 async function linkedQuote(quoteId: string, token: string, connection?: Sql) {
   const [quote] = await rows(
-    `SELECT q.*,c.customer_name,c.service_name,c.source,c.spec_json,b.name AS business_name,b.currency
+    `SELECT q.*,c.customer_name,c.job_address,c.service_name,c.source,c.spec_json,b.name AS business_name,b.currency
      FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id JOIN businesses b ON b.id=q.business_id
      WHERE q.id=? AND q.approve_token_hash=?${connection ? ' FOR UPDATE' : ''}`,
     [quoteId, hashToken(token)],
@@ -67,6 +67,8 @@ function linkView(quote: Row) {
     totalCents: Number(quote.total_cents),
     card: json<Quote>(quote.quote_json, {} as Quote),
     details: describeSpec(json<JobSpec | null>(quote.spec_json, null)),
+    /** The job's street address, when the customer left it. */
+    jobAddress: quote.job_address ? String(quote.job_address) : null,
     reasons: reasons.length ? reasons : [String(quote.review_reason || '')].filter(Boolean),
     expiresAt: new Date(quote.approve_token_expires_at).toISOString(),
   };

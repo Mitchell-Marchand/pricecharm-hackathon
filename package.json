@@ -17,6 +17,7 @@
     "test": "npm run test --workspace @pricecharm/api",
     "db:start": "docker compose up --detach --wait db",
     "db:stop": "docker compose stop db",
-    "test:db": "bash scripts/test-db.sh"
+    "test:db": "bash scripts/test-db.sh",
+    "practice-library": "npm run practice-library --workspace @pricecharm/api --"
   }
 }

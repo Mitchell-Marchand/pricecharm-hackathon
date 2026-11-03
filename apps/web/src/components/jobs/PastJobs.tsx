@@ -504,18 +504,17 @@ export function JobSheet({
     if (images.length > room) setPhotoError(`You can add up to ${MAX_PHOTOS} photos per job.`);
     const batch = images.slice(0, Math.max(0, room));
     setUploading((value) => value + batch.length);
-    await Promise.all(
-      batch.map(async (file) => {
-        try {
-          const uploaded = await uploadJobPhoto(file);
-          setPhotos((current) => [...current, uploaded].slice(0, MAX_PHOTOS));
-        } catch (error) {
-          setPhotoError(errorMessage(error) || "One of those photos couldn't be opened.");
-        } finally {
-          setUploading((value) => value - 1);
-        }
-      }),
-    );
+    // One at a time: a phone picking eight photos sends them in turn, so none is turned away.
+    for (const file of batch) {
+      try {
+        const uploaded = await uploadJobPhoto(file);
+        setPhotos((current) => [...current, uploaded].slice(0, MAX_PHOTOS));
+      } catch (error) {
+        setPhotoError(errorMessage(error) || "One of those photos couldn't be opened.");
+      } finally {
+        setUploading((value) => value - 1);
+      }
+    }
   }
 
   async function save() {
@@ -654,7 +653,9 @@ export function JobSheet({
             }}
           />
           {(photoError || problems.photoIds) && (
-            <p className="mt-2 text-sm text-stop">{photoError || problems.photoIds}</p>
+            <p className="mt-2 text-sm text-stop" role="alert">
+              {photoError || problems.photoIds}
+            </p>
           )}
         </div>
 

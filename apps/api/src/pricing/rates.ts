@@ -95,9 +95,12 @@ export function estimateFor(
   if (!rate) return null;
   // Charged only the minimum so far: that's the price up to those sizes, and past them it's unknown.
   if (rate.minimumOnly && quantity > rate.largest) return null;
+  // One price is a rate, not a floor: six trees at $1,100 doesn't make one tree $1,100. With two or
+  // more, the cheapest holds small jobs up, as the owner's card shows it.
+  const floor = rate.points > 1 ? rate.floorCents : 0;
   const cents = rate.minimumOnly
     ? rate.floorCents
-    : Math.round(Math.max(rate.floorCents, rate.centsPerUnit * quantity) / 100) * 100;
+    : Math.round(Math.max(floor, rate.centsPerUnit * quantity) / 100) * 100;
   const sizes = sizeRange(rate);
   const solid = rate.points >= SOLID_POINTS && quantity >= sizes.from && quantity <= sizes.to;
   return { cents, quantity, unit, rate, solid };

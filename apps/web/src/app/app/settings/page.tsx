@@ -6,6 +6,8 @@ import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { CodeBox } from '@/components/owner/CodeBox';
+import { LocationsSettings } from '@/components/owner/LocationsSettings';
+import { TurnDownList } from '@/components/knows/TurnDowns';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { QuotePageSettings } from '@/components/owner/QuotePageSettings';
 import { WhatsAppSettings } from '@/components/owner/WhatsAppSettings';
@@ -47,7 +49,7 @@ const learningHint = (style: LearningStyle) =>
 
 /** What holds a quote for the owner whatever the settings say, as the API's checks have it. */
 const CHECKS_WITH_YOU = [
-  'Services you don’t offer, and jobs outside your area',
+  'Services you don’t offer',
   'Jobs it can’t price from what you’ve taught it',
   'Anyone who asks to talk to you',
 ];
@@ -299,6 +301,20 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </Section>
+
+        <Section
+          title="Jobs you turn down"
+          intro="Your Charm says no to these, kindly, without a quote. You’re never billed for them."
+        >
+          <TurnDownList intro={false} />
+        </Section>
+
+        <Section
+          title="Where you work"
+          intro="Up to 5 places. A “too far” turn-down is measured from the nearest one."
+        >
+          <LocationsSettings />
         </Section>
 
         <Section

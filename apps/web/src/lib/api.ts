@@ -23,6 +23,22 @@ export class NetworkError extends Error {
   }
 }
 
+/**
+ * Sends an upload again while the server says it's busy reading others, 3 seconds apart as it
+ * asks, so a photo the owner picked is never quietly dropped.
+ */
+export async function whileBusy<T>(send: () => Promise<T>, tries = 5): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === 'UPLOAD_BUSY') || attempt >= tries)
+        throw error;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+}
+
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `/api/v1${path}`;
   const tracked = trackingAllowed();

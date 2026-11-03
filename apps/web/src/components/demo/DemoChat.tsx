@@ -12,7 +12,7 @@ import { ArrowUp, Camera, Check, RotateCcw } from 'lucide-react';
 import { CustomerMessage, Typing } from '@/components/Chat';
 import { PhotoGrid } from '@/components/Photos';
 import { PaperButton, QuoteForm } from '@/components/QuoteForm';
-import { Avatar, Tag, TextInput } from '@/components/ui';
+import { Avatar, Button, Tag, TextInput } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { greeting } from '@/lib/chat';
 import { requestDemoQuote, requestDemoTurn, startDemoChat, type DemoMessage } from '@/lib/demo-api';
@@ -84,6 +84,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   const [quote, setQuote] = useState<Quote | null>(null);
   const [done, setDone] = useState(false);
   const [accepted, setAccepted] = useState(false);
+  // The details a real customer leaves at a yes or a visit. In the demo they go nowhere.
+  const [asking, setAsking] = useState<'yes' | 'visit' | null>(null);
   // The scripted version's place and answers.
   const [step, setStep] = useState<Step>('service');
   const [answers, setAnswers] = useState<{
@@ -333,6 +335,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     setQuote(null);
     setDone(false);
     setAccepted(false);
+    setAsking(null);
     setStep('service');
     setAnswers({});
   }
@@ -384,11 +387,8 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
                           <PaperButton
                             primary
                             onClick={() => {
-                              setAccepted(true);
-                              decide(
-                                `You’re all set. ${demo.owner} will be in touch to schedule.`,
-                                true,
-                              );
+                              setAsking('yes');
+                              stickToBottom();
                             }}
                           >
                             <Check aria-hidden /> Looks good to me
@@ -406,12 +406,10 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
                             Ask a question
                           </PaperButton>
                           <PaperButton
-                            onClick={() =>
-                              decide(
-                                `Got it. ${demo.owner} will get in touch to set up a visit.`,
-                                true,
-                              )
-                            }
+                            onClick={() => {
+                              setAsking('visit');
+                              stickToBottom();
+                            }}
                           >
                             Request a site visit
                           </PaperButton>
@@ -466,12 +464,67 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
             ))}
           </div>
         )}
+        {asking && !done && (
+          <form
+            className="fade-up flex flex-col gap-2"
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              if (asking === 'yes') setAccepted(true);
+              decide(
+                asking === 'yes'
+                  ? `You’re all set. ${demo.owner} will be in touch to schedule.`
+                  : `Got it. ${demo.owner} will get in touch to set up a visit.`,
+                true,
+              );
+              setAsking(null);
+            }}
+          >
+            <p className="text-sm text-ink-2">
+              {asking === 'yes'
+                ? `Where can ${demo.owner} reach you to book?`
+                : `Where can ${demo.owner} reach you to set up a visit?`}
+            </p>
+            <label htmlFor={`demo-name-${demo.tradeId}`} className="sr-only">
+              Your name
+            </label>
+            <TextInput id={`demo-name-${demo.tradeId}`} placeholder="Your name" />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label htmlFor={`demo-phone-${demo.tradeId}`} className="sr-only">
+                Your phone number
+              </label>
+              <TextInput id={`demo-phone-${demo.tradeId}`} type="tel" placeholder="Phone" />
+              <label htmlFor={`demo-email-${demo.tradeId}`} className="sr-only">
+                Your email
+              </label>
+              <TextInput id={`demo-email-${demo.tradeId}`} type="email" placeholder="Email" />
+            </div>
+            <label htmlFor={`demo-address-${demo.tradeId}`} className="sr-only">
+              The job’s street address
+            </label>
+            <TextInput id={`demo-address-${demo.tradeId}`} placeholder="Job address" />
+            <p className="text-xs text-muted">
+              In the demo, nothing you type here is sent or saved.
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Button type="submit">
+                {asking === 'yes' ? `Let ${demo.owner} know` : 'Ask for a visit'}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setAsking(null)}
+                className="text-sm text-muted underline underline-offset-4 hover:text-ink"
+              >
+                Not now
+              </button>
+            </div>
+          </form>
+        )}
         {full && !done && (
           <p className="text-xs text-muted">
             That’s as far as a demo chat goes. Start over to try again.
           </p>
         )}
-        {!done && !full && !(mode === 'scripted' && !quote) && (
+        {!done && !full && !asking && !(mode === 'scripted' && !quote) && (
           <form
             className="flex items-center gap-2"
             onSubmit={(event: FormEvent) => {

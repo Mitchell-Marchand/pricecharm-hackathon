@@ -55,7 +55,7 @@ export default async function LandingPage({
               </a>
             </div>
             <p className="mt-4 text-sm text-muted">
-              About 5 minutes · Free to set up · No card to start
+              Free to train · Free to start · No card until you go live
             </p>
           </div>
 
@@ -75,30 +75,6 @@ export default async function LandingPage({
                   <p className="mt-2 text-ink-2">
                     Choose what you do and which services you offer. We set up the basics for your
                     trade.
-                  </p>
-                </div>
-              </li>
-              <li className="flex flex-col gap-5">
-                <div className="flex h-44 items-center rounded-md bg-surface-2 p-5" aria-hidden>
-                  <div className="flex w-full items-center gap-3 rounded-sm border border-line bg-surface p-3 shadow-1">
-                    <img
-                      src={PHOTOS['table-stains']}
-                      alt=""
-                      className="size-14 rounded-xs object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">Back patio and walkway</p>
-                      <p className="text-xs text-muted">600 sq ft · 3 hours · June</p>
-                    </div>
-                    <p className="font-mono text-sm font-semibold">$275</p>
-                  </div>
-                </div>
-                <div className="order-first md:order-none">
-                  <p className="font-mono text-sm text-muted">Step 2</p>
-                  <h3 className="t-h2 mt-1">Add jobs you've done</h3>
-                  <p className="mt-2 text-ink-2">
-                    Photos, what you charged, how long it took, any discounts. Or upload an old
-                    invoice and we'll fill it in.
                   </p>
                 </div>
               </li>
@@ -123,11 +99,35 @@ export default async function LandingPage({
                   </span>
                 </div>
                 <div className="order-first md:order-none">
-                  <p className="font-mono text-sm text-muted">Step 3</p>
+                  <p className="font-mono text-sm text-muted">Step 2</p>
                   <h3 className="t-h2 mt-1">Practice quotes</h3>
                   <p className="mt-2 text-ink-2">
-                    A pretend customer sends a request with photos/videos. You ask questions you
-                    want, then send a quote. Train it a few times.
+                    Pretend customers send requests with photos. Ask what you&apos;d ask, then send
+                    a quote. Your Charm guesses first and gets closer each time.
+                  </p>
+                </div>
+              </li>
+              <li className="flex flex-col gap-5">
+                <div className="flex h-44 items-center rounded-md bg-surface-2 p-5" aria-hidden>
+                  <div className="flex w-full items-center gap-3 rounded-sm border border-line bg-surface p-3 shadow-1">
+                    <img
+                      src={PHOTOS['table-stains']}
+                      alt=""
+                      className="size-14 rounded-xs object-cover"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">Back patio and walkway</p>
+                      <p className="text-xs text-muted">600 sq ft · 3 hours · June</p>
+                    </div>
+                    <p className="font-mono text-sm font-semibold">$275</p>
+                  </div>
+                </div>
+                <div className="order-first md:order-none">
+                  <p className="font-mono text-sm text-muted">Step 3</p>
+                  <h3 className="t-h2 mt-1">Go live</h3>
+                  <p className="mt-2 text-ink-2">
+                    Customers get your price on your website or from a link. Add jobs you&apos;ve
+                    done any time, or upload old invoices, and it gets sharper.
                   </p>
                 </div>
               </li>

@@ -364,6 +364,7 @@
 .qf-stamp.is-sent {
   color: var(--paper-ink);
 }
+.qf-stamp.is-free,
 .qf-stamp.is-accepted {
   color: var(--stamp-green);
 }
@@ -560,6 +561,13 @@ dialog.sheet::backdrop {
   dialog.sheet[open] {
     animation: sheet-up 0.3s var(--ease-out);
   }
+  /* A whole-screen chat on a phone, like the one customers get from a link. */
+  dialog.sheet.is-full {
+    max-height: var(--vv-height, 100dvh);
+    height: var(--vv-height, 100dvh);
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
 }
 @media (min-width: 768px) {
   dialog.sheet {
@@ -595,6 +603,26 @@ dialog.panel {
 }
 dialog.panel::backdrop {
   background: var(--scrim);
+}
+/* Photos full screen (src/components/PhotoViewer.tsx). Fixed to the viewport, so it never adds
+   width to the page, and only the photo inside moves. */
+dialog.viewer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+dialog.viewer::backdrop {
+  background: #000;
 }
 
 @media (prefers-reduced-motion: reduce) {

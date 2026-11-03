@@ -21,6 +21,8 @@ export type Currency = (typeof CURRENCIES)[number]['code'];
 
 export const isCurrency = (value: unknown): value is Currency =>
   CURRENCIES.some((item) => item.code === value);
+export const currencyName = (currency: Currency) =>
+  CURRENCIES.find((item) => item.code === currency)?.name ?? currency;
 export const localeOf = (currency: Currency) =>
   CURRENCIES.find((item) => item.code === currency)?.locale ?? 'en-US';
 

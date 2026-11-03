@@ -187,22 +187,33 @@ export default function QuotesHome() {
                       <span className="font-semibold">{quote.customer}</span>
                       <QuoteStatusTag status={quote.status} />
                       {quote.test && <Tag>Test</Tag>}
-                      {quote.reachable === false && !quote.test && <Tag>Only looked</Tag>}
+                      {quote.reachable === false &&
+                        !quote.test &&
+                        quote.status !== 'turned_down' && <Tag>Only looked</Tag>}
                     </p>
                     <p className="mt-1 truncate text-sm text-muted">
-                      {[quote.serviceName, `No. ${quote.number}`, shortDate(quote.createdAt)]
+                      {[
+                        quote.serviceName,
+                        quote.number ? `No. ${quote.number}` : '',
+                        shortDate(quote.createdAt),
+                      ]
                         .filter(Boolean)
                         .join(' · ')}
                     </p>
-                    {quote.status === 'review' && quote.reviewReason && (
-                      <p className="mt-1.5 line-clamp-2 text-sm text-ink-2">{quote.reviewReason}</p>
-                    )}
+                    {(quote.status === 'review' || quote.status === 'turned_down') &&
+                      quote.reviewReason && (
+                        <p className="mt-1.5 line-clamp-2 text-sm text-ink-2">
+                          {quote.reviewReason}
+                        </p>
+                      )}
                   </div>
-                  <p className="tabular font-mono text-lg font-semibold">
-                    {quote.range
-                      ? `${money(quote.range.lowCents)}–${money(quote.range.highCents)}`
-                      : money(quote.totalCents)}
-                  </p>
+                  {(quote.status !== 'turned_down' || quote.totalCents > 0) && (
+                    <p className="tabular font-mono text-lg font-semibold">
+                      {quote.range
+                        ? `${money(quote.range.lowCents)}–${money(quote.range.highCents)}`
+                        : money(quote.totalCents)}
+                    </p>
+                  )}
                   <ChevronRight className="size-5 shrink-0 text-muted" aria-hidden />
                 </Link>
               </li>

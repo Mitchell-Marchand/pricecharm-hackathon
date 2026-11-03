@@ -46,6 +46,7 @@ export function CustomerMessage({
   initials,
   tone,
   photos,
+  onPhoto,
   children,
   showAvatar = true,
 }: {
@@ -53,6 +54,8 @@ export function CustomerMessage({
   initials: string;
   tone: 'canary' | 'pink' | 'blue';
   photos?: string[];
+  /** Opens one of the photos in a viewer of the caller's, instead of the usual lightbox. */
+  onPhoto?: (index: number) => void;
   children?: ReactNode;
   showAvatar?: boolean;
 }) {
@@ -76,7 +79,7 @@ export function CustomerMessage({
             {children}
           </p>
         )}
-        {photos && <PhotoGrid photos={photos} label={name} />}
+        {photos && <PhotoGrid photos={photos} label={name} onOpen={onPhoto} />}
       </div>
     </div>
   );

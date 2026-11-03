@@ -42,6 +42,17 @@ test(
         size: '600 sq ft',
       })
       .expect(201);
+    // Two past jobs: the Charm guesses once three prices are in, so from the third customer on.
+    await owner
+      .post('/api/v1/onboarding/jobs')
+      .set('Origin', origin)
+      .send({
+        serviceName: 'Driveways',
+        description: 'Two-car driveway, light oil stains.',
+        priceCents: 30000,
+        size: '800 sq ft',
+      })
+      .expect(201);
 
     const prepared = await owner.post('/api/v1/onboarding/practice/prepare').set('Origin', origin);
     assert.equal(prepared.status, 200, JSON.stringify(prepared.body));
@@ -49,10 +60,24 @@ test(
     async function practice() {
       for (let attempt = 0; attempt < 60; attempt++) {
         const state = (await owner.get('/api/v1/onboarding/practice')).body.data;
-        if (state.runs[state.current]?.status === 'ready') return state;
+        type Run = { finished: boolean; outcome: string | null; status: string };
+        // An answered customer finishes behind the answer: wait for that first.
+        const settling = state.runs.some((run: Run) => run.outcome && !run.finished);
+        const open = state.runs.find((run: Run) => !run.finished);
+        if (!settling && open?.status === 'ready') return state;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw new Error('The practice customer never became ready.');
+    }
+    /** A customer once the owner's answer is in and the rest has followed it. */
+    async function settled(id: string) {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const state = (await owner.get('/api/v1/onboarding/practice')).body.data;
+        const run = state.runs.find((item: { id: string }) => item.id === id);
+        if (run?.finished) return run;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      throw new Error('The practice customer never finished.');
     }
     let state = await practice();
     const first = state.runs[0];
@@ -80,8 +105,19 @@ test(
       1,
       'Asking gets the extra photo',
     );
+    // After the prepared one, the next photo is taken for what was asked, outside the request.
     const again = await say(first.id, 'Any more pictures?');
     assert.equal(again.body.data.run.messages.at(-1).photos.length, 0);
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const run = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
+      if (!run.takingPhoto) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const taken = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
+    assert.equal(taken.messages.at(-1).photos.length, 1, 'The asked-for photo arrives');
+    const noMore = await say(first.id, 'Can you send another photo?');
+    assert.equal(noMore.body.data.run.messages.at(-1).photos.length, 0, 'Two at most');
+    assert.equal(noMore.body.data.run.takingPhoto, false);
     const priced = await say(first.id, 'I could do it for $280.');
     assert.equal(priced.body.data.nudge, true, 'A price in chat nudges toward the quote builder');
     assert.equal(
@@ -137,11 +173,17 @@ test(
         note: 'Heavy staining by the door needs a second pass.',
       });
     assert.equal(quoted.status, 200, JSON.stringify(quoted.body));
-    const done = quoted.body.data;
+    // The quote and the customer's reply are in at once. The guess and the card follow.
+    assert.equal(quoted.body.data.messages.at(-1).from, 'customer');
+    const done = await settled(first.id);
     assert.equal(done.finished, true);
     assert.equal(done.quote.number, 1001);
     assert.equal(done.quote.customer, 'Dana R.');
-    assert.ok(done.shadow.cents > 0);
+    // Two prices so far: it doesn't guess yet, and says it needs one more.
+    assert.deepEqual(
+      [done.shadow.withheld, done.shadow.toGo, done.shadow.cents],
+      ['learning', 1, 0],
+    );
     assert.deepEqual(
       done.messages
         .slice(-2)
@@ -206,8 +248,8 @@ test(
     assert.match(patios.basis, /^From 1 past job and 1 practice quote, \d+ to 600 sq ft$/);
     assert.equal(
       known.rates.find((item: { service: string }) => item.service === 'Driveways').price,
-      '',
-      'No sized prices, no rate',
+      'About $0.38 per sq ft',
+      'One sized price is a rate, with no floor under it',
     );
     const correction = known.notes[0];
     assert.equal(correction.source, 'practice');
@@ -273,7 +315,8 @@ test(
     assert.equal((await knows(`notes/${ownNote.id}`, 'delete')).status, 404);
 
     state = await practice();
-    assert.equal(state.current, 1);
+    // Coming back opens the customer just answered, until the owner starts on the next.
+    assert.equal(state.current, 0);
     const second = state.runs[1];
     assert.equal(second.customer.name, 'Marcus T.');
     // Wanting to see it is said in the chat. The customer asks once for a rough price instead.
@@ -291,7 +334,7 @@ test(
     assert.equal(visit.body.data.run.outcome, 'site-visit', 'Asking again is the answer');
     assert.match(visit.body.data.run.messages.at(-1).text, /Can you come by this week/);
     assert.ok(
-      visit.body.data.run.insights.some(
+      (await settled(second.id)).insights.some(
         (item: { text: string }) =>
           item.text === 'Wants to see jobs like this before giving a price',
       ),
@@ -320,13 +363,14 @@ test(
       .expect(200);
     for (const position of [3, 4, 5]) {
       state = await practice();
-      assert.equal(state.current, position);
+      assert.equal(state.current, position - 1);
       await owner
         .post(`/api/v1/onboarding/practice/${state.runs[position].id}/quote`)
         .set('Origin', origin)
         .send({ lines: [{ id: 'a', label: 'Patio wash, about 500 sq ft', amountCents: 25000 }] })
         .expect(200);
     }
+    await settled(state.runs[5].id);
     const finished = await owner.post('/api/v1/onboarding/practice/done').set('Origin', origin);
     assert.equal(finished.body.data.finished, 6);
     assert.equal(finished.body.data.results.length, 6);
@@ -353,7 +397,11 @@ test(
       typeof planned.scenario_json === 'string'
         ? JSON.parse(planned.scenario_json)
         : planned.scenario_json;
-    assert.match(scenario.situation, /"Driveways" service.*usual job/, 'No Driveways prices yet');
+    assert.match(
+      scenario.situation,
+      /"Driveways" job a bit bigger than the one they've priced/,
+      'One Driveways price so far: it goes past that size',
+    );
     await owner
       .post(`/api/v1/onboarding/practice/${focusedId}/quote`)
       .set('Origin', origin)
@@ -406,6 +454,7 @@ test(
       .set('Origin', origin)
       .send({ lines: [{ id: 'a', label: 'Patio wash, about 550 sq ft', amountCents: 28000 }] })
       .expect(200);
+    await settled(extraId);
     const extra = (await owner.get('/api/v1/onboarding/practice')).body.data;
     assert.equal(extra.finished, 8);
     assert.equal(extra.results.length, 8, 'Extra practice counts like setup practice');

@@ -17,10 +17,44 @@ export const SITUATIONS = [
   'A bigger job that combines two of their services and adds the first extra again, where the customer asks whether doing both together saves anything.',
 ];
 
+/**
+ * Setup for an owner with no past jobs, where practice is all the Charm has to go on. Each
+ * customer covers one more part of how they price: their rate on a usual job, their minimum, how
+ * the price grows with size and what the trade's usual extra costs, each other service, two done
+ * together, condition and access, then timing. The photos carry the job's size and condition, as
+ * real customers' do.
+ */
+export function newOwnerSituations(services: string[]): string[] {
+  const [main = 'main', ...others] = services;
+  return [
+    `A usual job for their "${main}" service, sized like the ones a business like theirs does most. Clear, easy to reach, no extras. The photos show how big it is.`,
+    `A small "${main}" job, at the low end of what a business like theirs takes on. Nothing unusual.`,
+    `A big "${main}" job, well above a usual one, plus the extra that businesses in their trade most often price separately, like screens with windows or sealing after a wash. Nothing else unusual.`,
+    ...others
+      .slice(0, 3)
+      .map(
+        (service) =>
+          `A usual job for their "${service}" service, sized like the ones a business like theirs does most. Nothing unusual.`,
+      ),
+    ...(others.length
+      ? [
+          `A job that combines their "${main}" and "${others[0]}" services, where the customer asks whether doing both together saves anything.`,
+        ]
+      : []),
+    `A usual-sized "${main}" job in rough shape, like heavy buildup or stains, that's also harder to reach than most, like a second story, if that matters for this work. The photos show both.`,
+    `A usual "${main}" job where timing matters: if businesses in their trade do regular visits, the customer wants it on a regular schedule; otherwise they need it done this week.`,
+  ];
+}
+
 export type PlanInput = {
   position: number;
   /** Customers in setup, which always follow SITUATIONS. */
   setupCount: number;
+  /**
+   * Past jobs the owner added before practice. With none, setup follows newOwnerSituations,
+   * however long that runs for their services, instead of SITUATIONS.
+   */
+  pastJobs?: number;
   services: string[];
   /** How many examples each service has, by lowercase name. */
   examples: Record<string, number>;
@@ -71,7 +105,11 @@ export function focusSituation(service: string, points: PricePoint[]): string {
  * jobs teach less than the ones that come in (aimedJob in src/bench/owners.ts).
  */
 export function planSituation(input: PlanInput): string {
-  if (input.position < input.setupCount) return SITUATIONS[input.position % SITUATIONS.length];
+  if (input.pastJobs === 0) {
+    const plan = newOwnerSituations(input.services);
+    if (input.position < plan.length) return plan[input.position];
+  } else if (input.position < input.setupCount)
+    return SITUATIONS[input.position % SITUATIONS.length];
 
   for (const service of input.services) {
     if (input.examples[service.toLowerCase()]) continue;

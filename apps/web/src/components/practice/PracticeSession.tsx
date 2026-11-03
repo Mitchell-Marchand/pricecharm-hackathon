@@ -8,14 +8,25 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Pencil, Receipt, RotateCw } from 'lucide-react';
+import { ArrowUp, Ban, Check, MessageSquarePlus, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
+import { PhotoViewer, type ViewerPhoto } from '@/components/PhotoViewer';
+import {
+  PhotoReadingCard,
+  PhotoReadingFailed,
+  PhotoReadingStatus,
+  TakingPhoto,
+} from '@/components/practice/PhotoReading';
 import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
+import { TurnDownSheet, type TurnDownTarget } from '@/components/practice/TurnDownSheet';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
-import { Avatar, Button, Tag, TextInput } from '@/components/ui';
+import { Avatar, Button, Chip, Tag, TextArea, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
+  answerQuestion,
+  distanceText,
+  explainQuote,
   fixInsight,
   loadPractice,
   requestGuess,
@@ -29,6 +40,7 @@ import {
   type QuoteDraft,
 } from '@/lib/practice';
 import { total } from '@/lib/quote';
+import { turnsDown } from '@/lib/turn-downs';
 import { cx, money, rate, scrollToBottom } from '@/lib/util';
 
 function gapPercent(guessCents: number, ownerCents: number): number | null {
@@ -60,14 +72,64 @@ function ShadowBar({
   );
 }
 
+/** What turning a customer down saved, as it stands now, with a way to change it. */
+function TurnedDown({
+  run,
+  onTurnDown,
+}: {
+  run: PracticeRun;
+  onTurnDown: (target: TurnDownTarget) => void;
+}) {
+  const saved = run.turnDown;
+  if (!saved) return null;
+  const first = run.customer?.firstName ?? 'them';
+  const line = saved.rule
+    ? turnsDown(saved.rule)
+    : saved.minimumCents
+      ? `Charges at least ${money(saved.minimumCents)} for any job`
+      : null;
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <p className="text-[15px] text-ink-2">
+        You turned {first} down: {saved.reasonText.toLowerCase()}.{' '}
+        {saved.removed
+          ? 'You’ve taken out what it saved since, so live chats don’t follow it.'
+          : saved.minimumCents
+            ? 'Smaller jobs get your minimum from now on.'
+            : 'Your Charm says no to jobs like this from now on, kindly, without a quote.'}
+      </p>
+      {line && !saved.removed && (
+        <div className="flex items-start justify-between gap-3 rounded-sm bg-surface-2 px-3.5 py-3">
+          <p className="text-[15px] font-medium text-ink">{line}</p>
+          <button
+            type="button"
+            onClick={() =>
+              onTurnDown(
+                saved.rule
+                  ? { mode: 'edit', rule: saved.rule }
+                  : { mode: 'minimum', minimumCents: saved.minimumCents },
+              )
+            }
+            className="inline-flex shrink-0 items-center gap-1 text-sm text-muted hover:text-accent"
+          >
+            <Pencil className="size-3.5" aria-hidden /> Change
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InsightCard({
   run,
   closePercent,
   onChange,
+  onTurnDown,
 }: {
   run: PracticeRun;
   closePercent: number;
   onChange: (run: PracticeRun) => void;
+  onTurnDown: (target: TurnDownTarget) => void;
 }) {
   const notify = useToast();
   const [editing, setEditing] = useState<string | null>(null);
@@ -130,10 +192,8 @@ function InsightCard({
                   : "It'll get closer with each practice quote."}
               </>
             ) : (
-              <>It didn&apos;t have enough to go on to guess this one. Now it does.</>
+              <HeldBack run={run} />
             )}
-            {flagged &&
-              ` It would also have asked to see this one first${reason ? `, because of the ${reason}` : ''}.`}
           </p>
           {market && (
             <p className="text-[15px] text-ink-2">
@@ -145,6 +205,7 @@ function InsightCard({
           )}
         </div>
       )}
+      {run.outcome === 'declined' && <TurnedDown run={run} onTurnDown={onTurnDown} />}
       {run.outcome === 'site-visit' && (
         <p className="mt-4 text-[15px] text-ink-2">
           {flagged ? (
@@ -164,7 +225,12 @@ function InsightCard({
         </p>
       )}
 
-      <ul className="mt-5 divide-y divide-line border-y border-line">
+      <ul
+        className={cx(
+          'mt-5 divide-y divide-line border-y border-line',
+          !run.insights.length && 'hidden',
+        )}
+      >
         {run.insights.map((item) => (
           <li key={item.id} className="py-3">
             {editing === item.id ? (
@@ -207,6 +273,281 @@ function InsightCard({
           </li>
         ))}
       </ul>
+      {run.outcome === 'quote' && !run.quote?.note.trim() && (
+        <ExplainPrice run={run} onChange={onChange} />
+      )}
+    </section>
+  );
+}
+
+/**
+ * Why the owner priced it this way, when the quote didn't say. Whatever moved the price, said once
+ * here, goes with this job when the Charm works out how they price.
+ */
+function ExplainPrice({
+  run,
+  onChange,
+}: {
+  run: PracticeRun;
+  onChange: (run: PracticeRun) => void;
+}) {
+  const notify = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const id = `explain-${run.id}`;
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-5 flex w-full items-start gap-3 rounded-md border border-dashed border-line-strong px-4 py-3.5 text-left hover:border-accent hover:bg-accent-soft"
+      >
+        <MessageSquarePlus className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
+        <span>
+          <span className="block font-semibold">Add why you priced it this way</span>
+          <span className="mt-0.5 block text-sm text-muted">
+            What moved the price: the size, a hard reach, the cleanup, a repeat customer. Your Charm
+            learns from it.
+          </span>
+        </span>
+      </button>
+    );
+  async function save() {
+    const reason = text.trim();
+    if (reason.length < 3 || saving) return;
+    setSaving(true);
+    try {
+      onChange(await explainQuote(run.id, reason));
+    } catch (error) {
+      notify(errorMessage(error));
+      setSaving(false);
+    }
+  }
+  return (
+    <form
+      className="mt-5 flex flex-col gap-2"
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <label htmlFor={id} className="text-sm font-semibold">
+        Why this price?
+      </label>
+      <TextArea
+        id={id}
+        autoFocus
+        rows={3}
+        maxLength={600}
+        placeholder="Two big oaks over the roof, so it needs a climber and extra cleanup."
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={text.trim().length < 3 || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * The one thing the Charm asks about how the owner prices, once a quote has gone: a tap, a few
+ * words of their own, or a skip. The answer is saved as one of their notes, which every price
+ * follows.
+ */
+function OwnerQuestion({
+  run,
+  onChange,
+}: {
+  run: PracticeRun;
+  onChange: (run: PracticeRun) => void;
+}) {
+  const notify = useToast();
+  const [own, setOwn] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState<string | null>(null);
+  const question = run.question;
+  if (!question || question.skipped) return null;
+  const id = `question-${run.id}`;
+  async function send(reply: { answer: string } | { skip: true }) {
+    if (saving) return;
+    setSaving('answer' in reply ? reply.answer : 'skip');
+    try {
+      onChange(await answerQuestion(run.id, reply));
+    } catch (error) {
+      notify(errorMessage(error));
+      setSaving(null);
+    }
+  }
+  if (question.answer)
+    return (
+      <section className="fade-up rounded-md border border-line bg-surface p-5 sm:p-6">
+        <p className="t-label text-muted">Your Charm asked</p>
+        <p className="mt-2 text-[15px] text-ink-2">{question.ask}</p>
+        <p className="mt-3 flex gap-2 text-[15px]">
+          <Check className="mt-0.5 size-4 shrink-0 text-go" aria-hidden />
+          <span>
+            Got it. It follows this on every quote now:{' '}
+            <span className="font-semibold">{question.answer}</span>
+          </span>
+        </p>
+      </section>
+    );
+  return (
+    <section
+      className="fade-up rounded-md border border-line bg-surface p-5 shadow-1 sm:p-6"
+      aria-labelledby={id}
+    >
+      <p className="t-label text-muted">One question from your Charm</p>
+      <h2 id={id} className="t-h2 mt-2">
+        {question.ask}
+      </h2>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {question.answers.map((answer) => (
+          <Chip
+            key={answer}
+            selected={saving === answer}
+            onClick={() => void send({ answer })}
+            className="h-auto min-h-10 py-2 text-left"
+          >
+            {answer}
+          </Chip>
+        ))}
+        <Chip selected={own} onClick={() => setOwn(true)}>
+          Something else
+        </Chip>
+      </div>
+      {own && (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event: FormEvent) => {
+            event.preventDefault();
+            if (text.trim()) void send({ answer: text.trim() });
+          }}
+        >
+          <label htmlFor={`${id}-own`} className="sr-only">
+            Your answer
+          </label>
+          <TextInput
+            id={`${id}-own`}
+            autoFocus
+            className="h-10"
+            maxLength={100}
+            placeholder="In a few words"
+            // Clear of the bar at the bottom, and the keyboard on a phone.
+            onFocus={(event) => event.currentTarget.scrollIntoView({ block: 'center' })}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-10"
+            disabled={!text.trim() || Boolean(saving)}
+          >
+            Save
+          </Button>
+        </form>
+      )}
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">It follows your answer on every quote.</p>
+        <button
+          type="button"
+          onClick={() => void send({ skip: true })}
+          className="shrink-0 text-sm text-muted hover:text-accent"
+        >
+          Skip
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** Why the Charm didn't guess this one, and when it will. */
+function HeldBack({ run }: { run: PracticeRun }) {
+  const why = run.shadow?.withheld;
+  // How many it still needed before this one. This one counts now.
+  const left = Math.max(0, (run.shadow?.toGo ?? 1) - 1);
+  if (why === 'learning')
+    return left ? (
+      <>
+        Your Charm doesn&apos;t guess yet. It makes its first guess after{' '}
+        <span className="font-semibold text-ink">
+          {left} more {left === 1 ? 'customer' : 'customers'}
+        </span>
+        , once it has enough of your prices to work from.
+      </>
+    ) : (
+      <>
+        That&apos;s enough to go on.{' '}
+        <span className="font-semibold text-ink">
+          From your next customer, it guesses your price before you send yours.
+        </span>
+      </>
+    );
+  if (why === 'service')
+    return (
+      <>
+        It hadn&apos;t seen a {run.serviceName?.toLowerCase() ?? 'job like this'} priced yet, so it
+        didn&apos;t guess this one. Now it has.
+      </>
+    );
+  if (why === 'working')
+    return (
+      <>
+        It was still working out your prices from your last quote, so it didn&apos;t guess this one.
+      </>
+    );
+  return <>It didn&apos;t have enough to go on to guess this one. Now it does.</>;
+}
+
+/** While its guess and what it picked up come in, after the owner has answered. */
+function LookingAtIt() {
+  const steps = [
+    'Reading the job',
+    'Working out what it would have charged',
+    'Lining it up with yours',
+  ];
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setStep((current) => Math.min(current + 1, steps.length - 1)),
+      2500,
+    );
+    return () => window.clearInterval(timer);
+  }, [steps.length]);
+  return (
+    <section
+      className="fade-up rounded-md border border-line bg-surface p-5 shadow-1 sm:p-6"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <p className="t-label text-muted">Only you see this</p>
+      <h2 className="t-h2 mt-2">Your Charm is looking at how you priced it</h2>
+      <ol className="mt-5 flex flex-col gap-3">
+        {steps.map((label, index) => (
+          <li key={label} className="flex items-center gap-3 text-[15px]">
+            <span
+              className={cx(
+                'inline-flex size-5 shrink-0 items-center justify-center rounded-full',
+                index < step && 'bg-go text-surface',
+                index === step && 'border-2 border-accent border-t-transparent animate-spin',
+                index > step && 'border border-line-strong',
+              )}
+              aria-hidden
+            >
+              {index < step && <Check className="size-3.5" />}
+            </span>
+            <span className={index > step ? 'text-muted' : 'text-ink'}>{label}</span>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }
@@ -250,12 +591,17 @@ export function PracticeSession({
   const [typing, setTyping] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // A reply sent while the Charm reads the photos, which goes once it's done.
+  const [queued, setQueued] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
+  // "We don't do this job", or changing what turning one down saved.
+  const [turnDown, setTurnDown] = useState<TurnDownTarget | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [nudge, setNudge] = useState(false);
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const [slow, setSlow] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
   const replyBox = useRef<HTMLTextAreaElement>(null);
   const timers = useRef<number[]>([]);
 
@@ -282,6 +628,21 @@ export function PracticeSession({
     };
   }, [run?.status, run?.id, onState]);
 
+  // While the Charm reads the photos or the customer takes one, check back until it's done.
+  const reading = run?.photoReading?.status === 'reading';
+  const waiting = run?.status === 'ready' && (reading || Boolean(run.takingPhoto));
+  // Answered, and its guess and what it picked up still coming: check back until they're in.
+  const finishing = Boolean(run?.outcome) && !run?.finished;
+  useEffect(() => {
+    if (!waiting && !finishing) return;
+    const poll = window.setInterval(() => {
+      loadPractice()
+        .then(onState)
+        .catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(poll);
+  }, [waiting, finishing, run?.id, onState]);
+
   const visibleMessages = run
     ? reveal?.runId === run.id
       ? run.messages.slice(0, reveal.messages)
@@ -291,12 +652,42 @@ export function PracticeSession({
 
   useEffect(() => {
     if (visibleMessages.length > 1 || typing || pending) scrollToBottom();
-  }, [visibleMessages.length, typing, pending, showInsights]);
+  }, [visibleMessages.length, typing, pending, showInsights, run?.takingPhoto]);
+
+  // Every photo in the chat, in order, for the full-screen viewer, then what the Charm counted.
+  const photoReading = run?.photoReading ?? null;
+  const viewerPhotos: ViewerPhoto[] = [
+    ...visibleMessages.flatMap((message) =>
+      message.from === 'customer'
+        ? message.photos.map((photo) => ({
+            src: photo.url,
+            label: `Photo from ${run?.customer?.name ?? 'your customer'}`,
+          }))
+        : [],
+    ),
+    ...(photoReading?.status === 'read'
+      ? photoReading.drawn.map((photo) => ({
+          src: photo.url,
+          label: `What your Charm counted: ${photo.label}`,
+        }))
+      : []),
+  ];
+  const photosBefore = (position: number) =>
+    visibleMessages
+      .slice(0, position)
+      .reduce((sum, message) => sum + (message.from === 'customer' ? message.photos.length : 0), 0);
 
   async function send(event?: FormEvent) {
     event?.preventDefault();
     const text = draft.trim();
-    if (!run || !text || busy) return;
+    if (!run || !text) return;
+    // Never a dead tap: while it reads the photos, the reply waits and goes once it's done.
+    if (waiting && !typing && !pending && !run.outcome) {
+      setQueued(true);
+      return;
+    }
+    if (busy) return;
+    setQueued(false);
     setDraft('');
     if (replyBox.current) replyBox.current.style.height = '';
     setPending(text);
@@ -391,9 +782,34 @@ export function PracticeSession({
     }
   }
 
-  const busy = typing || Boolean(pending) || Boolean(run?.outcome) || run?.status !== 'ready';
+  const busy =
+    typing || Boolean(pending) || Boolean(run?.outcome) || run?.status !== 'ready' || waiting;
+  useEffect(() => {
+    // Only when the wait ends; send is this render's own.
+    if (queued && !busy) void send();
+  }, [queued, busy]);
   const customer = run?.customer;
   const lastQuoteId = [...(run?.messages ?? [])].reverse().find((message) => message.quote)?.id;
+  const readId = photoReading?.photoIds[0];
+
+  /** Under the photos the customer opened with: the Charm looking, or what it saw. */
+  const renderReading = () => {
+    if (!run || !photoReading) return null;
+    if (photoReading.status === 'reading')
+      return <PhotoReadingStatus key="reading" progress={photoReading.progress} />;
+    if (photoReading.status === 'failed') return <PhotoReadingFailed key="reading" />;
+    const drawnAt = viewerPhotos.length - photoReading.drawn.length;
+    return (
+      <PhotoReadingCard
+        key="reading"
+        run={run}
+        reading={photoReading}
+        canFix={run.status === 'ready' && !run.outcome && !busy}
+        onChange={onRun}
+        onShowDrawn={() => setViewing(drawnAt)}
+      />
+    );
+  };
 
   const renderMessage = (message: PracticeMessage, position: number) => {
     if (!customer) return null;
@@ -413,17 +829,27 @@ export function PracticeSession({
     if (message.from === 'owner')
       return <OwnerMessage key={message.id}>{message.text}</OwnerMessage>;
     const following = visibleMessages[position + 1];
-    return (
+    const read = Boolean(readId) && message.photos.some((photo) => photo.id === readId);
+    const bubble = (
       <CustomerMessage
         key={message.id}
         name={customer.name}
         initials={customer.initials}
         tone={customer.tone}
         photos={message.photos.length ? message.photos.map((photo) => photo.url) : undefined}
-        showAvatar={!following || following.from !== 'customer'}
+        onPhoto={(index) => setViewing(photosBefore(position) + index)}
+        showAvatar={read || !following || following.from !== 'customer'}
       >
         {message.text}
       </CustomerMessage>
+    );
+    return read ? (
+      <div key={message.id} className="flex flex-col gap-2.5">
+        {bubble}
+        {renderReading()}
+      </div>
+    ) : (
+      bubble
     );
   };
 
@@ -450,7 +876,9 @@ export function PracticeSession({
               <div className="min-w-0 flex-1">
                 <p className="font-semibold">
                   {customer
-                    ? `${customer.name} · ${customer.place}`
+                    ? [customer.name, customer.place, distanceText(customer.distance)]
+                        .filter(Boolean)
+                        .join(' · ')
                     : 'Your next practice customer'}
                 </p>
                 <p className="text-sm text-muted">
@@ -463,6 +891,13 @@ export function PracticeSession({
             <div className="mt-6 flex flex-col gap-4" aria-live="polite">
               {visibleMessages.map(renderMessage)}
               {pending && <OwnerMessage>{pending}</OwnerMessage>}
+              {customer && run?.takingPhoto && !typing && (
+                <TakingPhoto
+                  name={customer.firstName}
+                  initials={customer.initials}
+                  tone={customer.tone}
+                />
+              )}
               {(typing || run?.status === 'preparing') && (
                 <Typing
                   name={customer?.firstName ?? 'Your customer'}
@@ -476,9 +911,22 @@ export function PracticeSession({
                   about half a minute the first time.
                 </p>
               )}
-              {run && showInsights && (
-                <InsightCard run={run} closePercent={closePercent} onChange={onRun} />
+              {run && finishing && (reveal?.runId !== run.id || reveal?.insights) && (
+                <LookingAtIt />
               )}
+              {run && showInsights && (
+                <InsightCard
+                  run={run}
+                  closePercent={closePercent}
+                  onChange={onRun}
+                  onTurnDown={setTurnDown}
+                />
+              )}
+              {run?.question &&
+                (finishing || showInsights) &&
+                (reveal?.runId !== run.id || reveal?.insights) && (
+                  <OwnerQuestion run={run} onChange={onRun} />
+                )}
             </div>
           </>
         )}
@@ -495,7 +943,9 @@ export function PracticeSession({
             <p className="py-3 text-sm text-muted" role="status">
               {run.outcome === 'quote'
                 ? `Quote sent to ${customer?.firstName}.`
-                : `Asked ${customer?.firstName} for a visit.`}
+                : run.outcome === 'declined'
+                  ? `Told ${customer?.firstName} you can’t take it on.`
+                  : `Asked ${customer?.firstName} for a visit.`}
             </p>
           ) : (
             <>
@@ -507,10 +957,17 @@ export function PracticeSession({
                     setBuilderOpen(true);
                     if (run) void requestGuess(run.id).catch(() => {});
                   }}
-                  disabled={run?.status !== 'ready' || !run.messages.length}
+                  disabled={run?.status !== 'ready' || !run.messages.length || waiting}
                   className={cx(nudge && 'pulse')}
                 >
                   <Receipt aria-hidden /> I have enough to quote
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => run && setTurnDown({ mode: 'decline', run })}
+                  disabled={run?.status !== 'ready' || !run.messages.length || busy}
+                >
+                  <Ban aria-hidden /> We don’t do this job
                 </Button>
               </div>
               <form onSubmit={(event) => void send(event)} className="flex items-end gap-2">
@@ -523,10 +980,15 @@ export function PracticeSession({
                   rows={1}
                   value={draft}
                   placeholder={
-                    customer ? `Ask ${customer.firstName} a question…` : 'Ask a question…'
+                    reading
+                      ? 'Your Charm is looking at the photos…'
+                      : customer
+                        ? `Ask ${customer.firstName} a question…`
+                        : 'Ask a question…'
                   }
                   onChange={(event) => {
                     setDraft(event.target.value);
+                    setQueued(false);
                     event.target.style.height = 'auto';
                     event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                   }}
@@ -536,16 +998,44 @@ export function PracticeSession({
                 <Button
                   type="submit"
                   aria-label="Send"
-                  disabled={!draft.trim() || busy}
+                  disabled={!draft.trim() || (busy && !waiting) || queued}
                   className="size-12 px-0"
                 >
                   <ArrowUp aria-hidden />
                 </Button>
               </form>
+              {queued && (
+                <p className="pt-2 text-sm text-muted" role="status">
+                  It goes as soon as your Charm has looked at the photos.
+                </p>
+              )}
             </>
           )}
         </div>
       </div>
+
+      <TurnDownSheet
+        target={turnDown}
+        onClose={() => setTurnDown(null)}
+        onDeclined={(next) => {
+          setTurnDown(null);
+          setNudge(false);
+          stageReveal(next);
+        }}
+        onSaved={() => {
+          setTurnDown(null);
+          notify('Saved. Your Charm follows it from now on.');
+          void loadPractice()
+            .then(onState)
+            .catch(() => {});
+        }}
+      />
+      <PhotoViewer
+        photos={viewerPhotos}
+        index={viewing !== null && viewing < viewerPhotos.length ? viewing : null}
+        onIndex={setViewing}
+        onClose={() => setViewing(null)}
+      />
 
       {run && customer && (
         <QuoteBuilder

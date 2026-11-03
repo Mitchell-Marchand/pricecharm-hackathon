@@ -60,6 +60,18 @@ import {
   readPhotos,
 } from './photo-readings.js';
 import { currencyOf, money as formatMoney } from '../money.js';
+import { businessLocations } from '../locations.js';
+import {
+  customerLine,
+  intakeTurnDowns,
+  leadDays,
+  leadStart,
+  priceTurnDown,
+  sizeTurnDown,
+  turnDownRules,
+  turnedDownReason,
+  type TurnDownRule,
+} from '../turn-downs.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -154,6 +166,8 @@ export async function publicProfile(business: Row) {
     taking: Boolean(business.link_on),
     /** Takes walk-around videos, which need Meta's models to watch and measure. */
     videos: aiProvider === 'meta' || aiMode === 'demo',
+    /** The contact form at a yes, a visit or a question asks for the job's street address. */
+    asksAddress: asksAddress(business),
   };
 }
 
@@ -168,12 +182,16 @@ export async function addMessage(
     photoIds?: string[];
     videoId?: string;
     chips?: string[];
-    /** A reply to a line added a moment before, stamped a millisecond later so it sorts after. */
-    reply?: boolean;
+    /**
+     * A reply to a line added a moment before, stamped a millisecond later so it sorts after. A
+     * number is how many lines after, for a second one in the same moment.
+     */
+    reply?: boolean | number;
   },
 ) {
+  const after = Math.min(5, Number(input.reply ?? 0)) * 1000;
   await mutate(
-    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${input.reply ? 'DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 1000 MICROSECOND)' : 'UTC_TIMESTAMP(3)'})`,
+    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${after ? `DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${after} MICROSECOND)` : 'UTC_TIMESTAMP(3)'})`,
     [
       randomUUID(),
       input.businessId,
@@ -472,6 +490,8 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
             .catch(() => null),
         );
   const contactFirst = Boolean(business.contact_first) && !hasContact(chat);
+  // The jobs the owner turns down, in the words What it knows shows them, and where they work.
+  const { rules, turnDowns, locations } = await intakeTurnDowns(String(business.id));
   const turn = await withChatUsage(req, business, chat, async () =>
     intakeTurn(
       {
@@ -480,8 +500,9 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
           trade: tradeName(business.trade_id, business.custom_trade),
           services: await services(String(business.id)),
           area: String(business.service_area ?? ''),
-          radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
+          locations,
         },
+        turnDowns,
         checklist,
         drivers,
         serviceName: String(chat.service_name),
@@ -510,22 +531,105 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
       ? turn.spec
       : { ...turn.spec, quantity: sized.quantity, unit: sized.unit };
   const serviceName = turn.serviceName || (sized?.serviceName ?? '');
-  const next = !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
+  // A rule the chat says this falls under, or one the job's own size breaks, ends it here.
+  const rule =
+    (turn.turnDown ? rules.find((item) => item.kind === turn.turnDown) : undefined) ??
+    sizeTurnDown(rules, spec);
+  const next = rule ? 'closed' : !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
   await transaction(async (connection) => {
-    await addMessage(connection, {
-      businessId: String(business.id),
-      chatId: String(chat.id),
-      sender: 'assistant',
-      text: turn.reply,
-      chips: turn.chips,
-    });
+    if (!rule)
+      await addMessage(connection, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        sender: 'assistant',
+        text: turn.reply,
+        chips: turn.chips,
+      });
     await mutate(
       'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=? WHERE id=?',
-      [serviceName, turn.ready, turn.summary, turn.outOfScope, JSON.stringify(spec), next, chat.id],
+      [
+        serviceName,
+        turn.ready || Boolean(rule),
+        turn.summary,
+        rule ? '' : turn.outOfScope,
+        JSON.stringify(spec),
+        next,
+        chat.id,
+      ],
       connection,
     );
+    if (rule) await turnDownRequest(connection, business, String(chat.id), rule);
   });
   if (next === 'quoting') await prepareLiveQuote(req, String(business.id), String(chat.id));
+}
+
+/**
+ * Ends a request one of the owner's rules turns down. The customer reads a kind no that says why,
+ * and the owner sees it in their list as turned down, with the rule. No quote shows, so nothing is
+ * billed. A job turned down on its price keeps the draft, so the owner can see what it came to.
+ */
+async function turnDownRequest(
+  connection: Sql,
+  business: Row,
+  chatId: string,
+  rule: TurnDownRule,
+  draft?: { drafted: DraftedQuote; engine: unknown; totalCents: number },
+) {
+  const businessId = String(business.id);
+  await rows('SELECT id FROM lead_chats WHERE id=? FOR UPDATE', [chatId], connection);
+  if (await liveQuoteFor(chatId, connection)) return;
+  const reason = turnedDownReason(
+    rule,
+    currencyOf(business.currency),
+    await businessLocations(businessId, connection),
+  );
+  await addMessage(connection, {
+    businessId,
+    chatId,
+    sender: 'assistant',
+    text: customerLine(rule, String(business.name)),
+    reply: true,
+  });
+  await mutate(
+    "UPDATE lead_chats SET status='closed',ready=TRUE,turned_down=?,turned_down_rule_id=? WHERE id=?",
+    [rule.kind, rule.id, chatId],
+    connection,
+  );
+  const card: Quote = {
+    number: 0,
+    customer: '',
+    place: '',
+    lines: (draft?.drafted.lines ?? []).map((line, index) => ({ id: `l${index}`, ...line })),
+    discount: draft?.drafted.discount ?? null,
+    start: '',
+    duration: '',
+    included: [],
+    excluded: [],
+    validDays: 14,
+    note: '',
+    issuedAt: new Date().toISOString(),
+  };
+  await mutate(
+    'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,engine_json,review_reason,total_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+    [
+      randomUUID(),
+      businessId,
+      chatId,
+      0,
+      'turned_down',
+      JSON.stringify(card),
+      JSON.stringify(draft?.drafted ?? {}),
+      JSON.stringify([{ id: 'turned_down', passed: false, detail: reason }]),
+      draft?.engine ? JSON.stringify(draft.engine) : null,
+      reason.slice(0, 600),
+      draft?.totalCents ?? 0,
+    ],
+    connection,
+  );
+  await recordActivity(connection, businessId, 'request_turned_down', {
+    ref: chatId,
+    detail: rule.kind,
+  });
 }
 
 export async function customerMessage(req: Request, text: string) {
@@ -608,8 +712,22 @@ const emailSchema = z
   .max(254)
   .transform((value) => value.trim().toLowerCase());
 
-export type ContactInput = { name: string; email?: string; phone?: string };
-type Contact = { name: string; email: string | null; phone: string | null };
+export type ContactInput = { name: string; email?: string; phone?: string; address?: string };
+type Contact = { name: string; email: string | null; phone: string | null; address: string | null };
+
+/**
+ * The job's street address as the customer typed it, on one line. It's for the owner alone: it
+ * never goes to the AI, into a URL or a log, and it's deleted with the chat.
+ */
+export function cleanAddress(text: string): string | null {
+  const address = text
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (address.length > 200)
+    throw new ApiError(422, 'ADDRESS_LONG', 'Keep the address to 200 characters or fewer.');
+  return address || null;
+}
 
 /**
  * A customer's name and a way to reach them: an email, a phone number, or both. Nothing is sent
@@ -639,7 +757,12 @@ export function parseContact(input: ContactInput): Contact {
       'CONTACT_REQUIRED',
       'Add a phone number or an email so they can reach you.',
     );
-  return { name: input.name.trim(), email: email?.data ?? null, phone: typedPhone || null };
+  return {
+    name: input.name.trim(),
+    email: email?.data ?? null,
+    phone: typedPhone || null,
+    address: cleanAddress(input.address ?? ''),
+  };
 }
 
 /** A way to reach the customer: an email, a phone number, or the WhatsApp chat they wrote from. */
@@ -673,10 +796,15 @@ function cardName(name: string) {
   return parts.length > 1 ? `${parts[0]} ${parts.at(-1)?.[0]}.` : name.trim();
 }
 
-async function saveContact(connection: Sql, chatId: string, contact: Contact) {
+/** The contact form asks for the job's street address. On unless the owner turned it off. */
+export const asksAddress = (business: Row) => Boolean(business.ask_job_address ?? true);
+
+/** Saves who the customer is. The job's address only when the owner asks for it. */
+async function saveContact(connection: Sql, business: Row, chatId: string, contact: Contact) {
+  const address = asksAddress(business) ? contact.address : null;
   await mutate(
-    'UPDATE lead_chats SET customer_name=?,customer_email=COALESCE(?,customer_email),customer_phone=COALESCE(?,customer_phone) WHERE id=?',
-    [contact.name, contact.email, contact.phone, chatId],
+    'UPDATE lead_chats SET customer_name=?,customer_email=COALESCE(?,customer_email),customer_phone=COALESCE(?,customer_phone),job_address=COALESCE(?,job_address) WHERE id=?',
+    [contact.name, contact.email, contact.phone, address, chatId],
     connection,
   );
   // The quote card says who it's for, once they've said.
@@ -710,16 +838,16 @@ export async function leaveContact(
       businessId = String(business.id);
     const quote = await liveQuoteFor(chatId, connection);
     if (locked.status === 'chatting') {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       return false;
     }
     if (locked.status === 'contact' && !quote) {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       await mutate("UPDATE lead_chats SET status='quoting' WHERE id=?", [chatId], connection);
       return true;
     }
     if (locked.status === 'contact' && quote?.status === 'review') {
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       await mutate("UPDATE lead_chats SET status='review' WHERE id=?", [chatId], connection);
       const owner = (await contactName(business, connection)) || String(business.name);
       await addMessage(connection, {
@@ -737,7 +865,7 @@ export async function leaveContact(
     if (quote && ANSWERABLE.includes(String(quote.status))) {
       if (purpose === 'copy' && !contact.email)
         throw new ApiError(422, 'EMAIL_REQUIRED', 'Add your email so we can send it.');
-      await saveContact(connection, chatId, contact);
+      await saveContact(connection, business, chatId, contact);
       if (purpose === 'copy')
         await addMessage(connection, {
           businessId,
@@ -843,13 +971,16 @@ async function checkDraft(
   const similar = (await listPastJobs(String(business.id))).filter(
     (job) => job.serviceName === chat.service_name,
   );
+  // A total raised to the owner's own minimum is their price, whatever the size says.
+  const atMinimum =
+    Boolean(business.minimum_cents) && totalCents === Number(business.minimum_cents);
   if (similar.length >= 2) {
     const prices = similar.map((job) => job.priceCents);
     const low = Math.min(...prices),
       high = Math.max(...prices);
     add(
       'range',
-      totalCents >= low * 0.5 && totalCents <= high * 2,
+      atMinimum || (totalCents >= low * 0.5 && totalCents <= high * 2),
       `It’s far from what you charged for similar jobs (${money(low)} to ${money(high)}).`,
     );
   }
@@ -863,7 +994,7 @@ async function checkDraft(
   if (estimate?.solid && drafted.lines.length)
     add(
       'rate',
-      withinEstimate(totalCents, estimate),
+      atMinimum || withinEstimate(totalCents, estimate),
       `It’s far from your usual rate, which comes to about ${money(estimate.cents)} for this size.`,
     );
   add('handoff', !chat.human_handoff, 'The customer asked to talk to you.');
@@ -990,6 +1121,15 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
     if (asked) return;
   }
   const totalCents = quoteTotal(drafted);
+  // A job that comes to less than the owner takes on is turned down, not quoted.
+  const rules = await turnDownRules(businessId);
+  const tooSmall = drafted.decision === 'quote' ? priceTurnDown(rules, totalCents) : null;
+  if (tooSmall) {
+    await transaction((connection) =>
+      turnDownRequest(connection, business, chatId, tooSmall, { drafted, engine, totalCents }),
+    );
+    return;
+  }
   const service = String(chat.service_name || '').toLowerCase();
   const learned = (await businessReadiness(businessId, rates)).find(
     (item) => service && item.service.toLowerCase() === service,
@@ -1032,16 +1172,26 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       [number + 1, businessId],
       connection,
     );
+    const priced = pricedAs(style, totalCents, spread);
+    // A range never starts under the owner's minimum.
+    const minimum = Number(business.minimum_cents ?? 0);
+    if (priced.range && minimum)
+      priced.range = {
+        ...priced.range,
+        lowCents: Math.min(totalCents, Math.max(priced.range.lowCents, minimum)),
+      };
+    const lead = leadDays(rules);
     const card: Quote = {
-      ...pricedAs(style, totalCents, spread),
+      ...priced,
       number,
       customer: cardName(String(chat.customer_name)),
-      // Where the customer is isn't asked for, and the business's own area reads as their name.
-      place: '',
+      // Where the job is, as the customer said it: an area, never a street address.
+      place: spec?.location ?? '',
       lines: drafted.lines.map((line, index) => ({ id: `l${index}`, ...line })),
       discount: drafted.discount,
-      // A formula prices the job but doesn't say when; the owner's usual answer does.
-      start: drafted.start || terms.start,
+      // A formula prices the job but doesn't say when; the owner's usual answer does. An owner who
+      // books some days out never offers sooner.
+      start: lead ? leadStart(lead) : drafted.start || terms.start,
       duration: drafted.duration || terms.duration,
       included: terms.included,
       excluded: terms.excluded,
@@ -1234,7 +1384,8 @@ async function notifyCustomerQuote(
   );
 }
 
-type OwnerEvent = 'review' | 'sent' | 'lead' | 'accepted' | 'visit' | 'message' | 'lost';
+type OwnerEvent =
+  'review' | 'sent' | 'lead' | 'accepted' | 'visit' | 'message' | 'lost' | 'address';
 
 /**
  * Owners hear about every request that needs them and every customer who leaves a way to reach
@@ -1252,7 +1403,7 @@ export async function notifyOwner(
     connection,
   );
   const [chat] = await rows(
-    'SELECT customer_name,customer_email,customer_phone,service_name FROM lead_chats WHERE id=?',
+    'SELECT customer_name,customer_email,customer_phone,job_address,service_name FROM lead_chats WHERE id=?',
     [chatId],
     connection,
   );
@@ -1276,6 +1427,7 @@ export async function notifyOwner(
   const reach = [
     chat.customer_phone ? `Phone: ${chat.customer_phone}` : '',
     chat.customer_email ? `Email: ${chat.customer_email}` : '',
+    chat.job_address ? `Job address: ${chat.job_address}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -1305,6 +1457,10 @@ export async function notifyOwner(
     visit: {
       subject: `${first} would like a site visit`,
       text: `${first} would like you to see the job before going ahead.${details}\n\n${link}`,
+    },
+    address: {
+      subject: `${first} sent the job address`,
+      text: `${first} sent the address for the job.${details}\n\n${link}`,
     },
     message: {
       subject: `${first} sent you a message`,
@@ -1370,7 +1526,7 @@ export async function decide(
     if (!quote || !ANSWERABLE.includes(String(quote.status)))
       throw new ApiError(409, 'QUOTE_NOT_OPEN', 'This quote can’t be changed now.');
     if (decision !== 'decline') {
-      if (contact) await saveContact(connection, String(chat.id), contact);
+      if (contact) await saveContact(connection, business, String(chat.id), contact);
       else if (!hasContact(chat))
         throw new ApiError(
           422,
@@ -1453,6 +1609,28 @@ export async function decide(
             ? await visitMessage(business, undefined, owner)
             : `Thanks for letting ${owner} know.`,
     });
+    // WhatsApp has no form, so the address is asked for in the chat once they've said yes. Their
+    // next message that reads like one is kept as the address (takeAddress).
+    if (
+      decision !== 'decline' &&
+      chat.channel_account_id &&
+      asksAddress(business) &&
+      !chat.job_address
+    ) {
+      await addMessage(connection, {
+        businessId: String(business.id),
+        chatId: String(chat.id),
+        sender: 'assistant',
+        kind: 'status',
+        text: `What’s the street address for the job? ${owner} needs it to come out.`,
+        reply: 2,
+      });
+      await mutate(
+        'UPDATE lead_chats SET address_asked_at=UTC_TIMESTAMP(3) WHERE id=?',
+        [chat.id],
+        connection,
+      );
+    }
     if (chat.source !== 'test')
       await notifyOwner(
         String(business.id),
@@ -1461,6 +1639,49 @@ export async function decide(
         connection,
       );
   });
+}
+
+/** Seven or more characters with a number in them, not a question: how a street address reads. */
+export const looksLikeAddress = (text: string) =>
+  /\d/.test(text) && /[a-z]/i.test(text) && !text.trim().endsWith('?') && text.trim().length >= 7;
+
+/**
+ * A WhatsApp customer's answer when asked for the job's address after their yes. It's kept for
+ * the owner, out of the chat's messages, so nothing the AI reads later holds it.
+ */
+export async function takeAddress(chatId: string, text: string, { quiet = false } = {}) {
+  const address = cleanAddress(text.slice(0, 200));
+  if (!address) return false;
+  const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId]);
+  const [business] = await rows('SELECT * FROM businesses WHERE id=?', [chat.business_id]);
+  if (!asksAddress(business)) return false;
+  // Shared before the yes, as a pin, it's only kept. Nobody asked for it yet.
+  if (quiet) {
+    await mutate('UPDATE lead_chats SET job_address=? WHERE id=?', [address, chatId]);
+    return true;
+  }
+  const owner = await contactAt(business);
+  await transaction(async (connection) => {
+    await mutate('UPDATE lead_chats SET job_address=? WHERE id=?', [address, chatId], connection);
+    await addMessage(connection, {
+      businessId: String(business.id),
+      chatId,
+      sender: 'customer',
+      kind: 'status',
+      text: 'Sent the job address.',
+    });
+    await addMessage(connection, {
+      businessId: String(business.id),
+      chatId,
+      sender: 'assistant',
+      kind: 'status',
+      text: `Thanks, ${owner} has it now.`,
+      reply: true,
+    });
+    if (chat.source !== 'test')
+      await notifyOwner(String(business.id), chatId, 'address', connection);
+  });
+  return true;
 }
 
 export async function chatPhoto(req: Request) {

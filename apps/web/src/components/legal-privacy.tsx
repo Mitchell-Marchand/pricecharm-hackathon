@@ -78,6 +78,12 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 you.
               </li>
               <li>
+                <strong>QuickBooks:</strong> if you connect QuickBooks, your recent invoices: their
+                line items, quantities, prices, dates and notes. We don’t use the customer name,
+                email or address fields on them. You check each one before it’s saved as a past job.
+                We keep the access Intuit grants us, encrypted, so you can bring in more later.
+              </li>
+              <li>
                 <strong>Billing:</strong> your usage, fees and spending cap. Stripe collects your
                 card details, and we never see your full card number.
               </li>
@@ -93,6 +99,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 conversation.
               </li>
               <li>Your name and a phone number or email address, so the business can reach you.</li>
+              <li>
+                Where the job is: the area you tell the assistant, like a ZIP code or neighborhood,
+                and the job address if you give it when you say yes, ask for a visit or ask a
+                question.
+              </li>
               <li>The quote you receive and whether you accept or decline it.</li>
             </ul>
             <h3>Through WhatsApp, Messenger and Instagram</h3>
@@ -258,12 +269,13 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
           <>
             <p>
               PriceCharm uses AI models from Meta, OpenAI and Anthropic. To reply to a customer,
-              read a document or draft a quote, we send the model the parts of the conversation, the
-              business’s pricing information and any photos or videos it needs, and use its answer.
-              We also use Meta or OpenAI to create the photos that come with practice requests.
-              Those photos are made up and don’t show anyone’s real property. When a business shows
-              after pictures with its quotes, Meta’s Muse Image makes one from the customer’s photo,
-              to show what the job could look like done.
+              read a document or QuickBooks invoice, or draft a quote, we send the model the parts
+              of the conversation, the business’s pricing information and any photos or videos it
+              needs, and use its answer. The model may get the area a job is in, but never the job
+              address you give the business. We also use Meta or OpenAI to create the photos that
+              come with practice requests. Those photos are made up and don’t show anyone’s real
+              property. When a business shows after pictures with its quotes, Meta’s Muse Image
+              makes one from the customer’s photo, to show what the job could look like done.
             </p>
             <p>
               We use these providers’ business services. Under their terms, they don’t use what we
@@ -291,8 +303,8 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
           <>
             <p>
               <strong>The business you contacted.</strong> If you request a quote, your project
-              details, photos, conversation, contact details and your answer to the quote go to that
-              business.
+              details, photos, conversation, contact details, job address and your answer to the
+              quote go to that business. The job address goes only to that business.
             </p>
             <p>
               <strong>Service providers.</strong> These companies run parts of PriceCharm for us.
@@ -337,6 +349,11 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
               <strong>Meta’s messaging apps.</strong> If a business connects WhatsApp, Messenger or
               Instagram, messages between the business and its customers go through Meta, which
               handles them under its own terms and privacy policy.
+            </p>
+            <p>
+              <strong>Intuit.</strong> If a business connects QuickBooks, we use the access it
+              grants to read its invoices from Intuit. We don’t send Intuit anything about the
+              business or its customers.
             </p>
             <p>
               <strong>Meta’s pixel.</strong> On our public pages and the setup pages, the pixel
@@ -446,12 +463,16 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                   'Until you delete it or close your account',
                 ],
                 [
-                  'Quote requests, including messages, photos, contact details and quotes',
+                  'Quote requests, including messages, photos, contact details, job addresses and quotes',
                   'As long as the business that received them has an account, unless deleted sooner on request',
                 ],
                 [
                   'Connected WhatsApp, Messenger and Instagram accounts',
                   'Until the business disconnects them or closes its account',
+                ],
+                [
+                  'A connected QuickBooks account',
+                  'Until the business disconnects it or closes its account. We delete each invoice’s text once it’s read, and keep only the jobs you save and a list of which invoices we’ve read, so none come in twice',
                 ],
                 [
                   'Information used to improve PriceCharm, with everything that identifies a person or business removed',
@@ -521,7 +542,7 @@ export function privacyPolicy(operator?: Operator): LegalDocument {
                 Close your account from Settings. We then delete your information as described
                 above.
               </li>
-              <li>Disconnect WhatsApp, Messenger or Instagram at any time.</li>
+              <li>Disconnect QuickBooks, WhatsApp, Messenger or Instagram at any time.</li>
               <li>
                 The emails PriceCharm sends are part of the service, so they continue while you have
                 an account. If we ever send product news, every one will have an unsubscribe link.

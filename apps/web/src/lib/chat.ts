@@ -1,4 +1,4 @@
-import { api, json, upload } from './api';
+import { api, json, upload, whileBusy } from './api';
 import type { Quote } from './quote';
 import type { Currency } from './currency';
 
@@ -25,6 +25,8 @@ export interface BusinessProfile {
   logo?: Logo | null;
   /** Takes walk-around videos. Missing from older APIs, which don't. */
   videos?: boolean;
+  /** The form at a yes, a visit or a question asks for the job's street address. Missing from older APIs. */
+  asksAddress?: boolean;
 }
 
 export interface ChatMessage {
@@ -150,11 +152,13 @@ export const sendMessage = (slug: string, access: ChatAccess, text: string) =>
 export function sendPhoto(slug: string, access: ChatAccess, blob: Blob) {
   const body = new FormData();
   body.append('file', blob, 'photo.jpg');
-  return api<ChatView>(`${base(slug, access)}/photos`, {
-    method: 'POST',
-    headers: auth(access),
-    body,
-  });
+  return whileBusy(() =>
+    api<ChatView>(`${base(slug, access)}/photos`, {
+      method: 'POST',
+      headers: auth(access),
+      body,
+    }),
+  );
 }
 
 /** A walk-around video, with stills taken from it in the browser and where in it each was taken. */
@@ -184,7 +188,8 @@ export const videoPath = (slug: string, access: ChatAccess, videoId: string) =>
   `/api/v1${base(slug, access)}/videos/${videoId}`;
 
 /** A name and a way to reach them: an email, a phone number, or both. */
-export type Contact = { name: string; email: string; phone: string };
+/** Who the customer is, and the job's street address where the business asks for it. */
+export type Contact = { name: string; email: string; phone: string; address?: string };
 
 /**
  * Where the customer leaves their details: before the price, when the owner asks for that; for a

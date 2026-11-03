@@ -9,9 +9,19 @@ export type Fact = {
   /** How the owner would ask it, like "How big is the area?" */
   question: string;
   answer: string;
+  /** The customer's photos show it, like the size, the state it's in or a second story. */
+  visible?: boolean;
 };
 
 export type PracticePhoto = { scene: string; photoId: string | null };
+
+/** How far the job is from the business: miles for US dollar businesses, km otherwise. */
+export type Distance = {
+  value: number;
+  unit: 'mi' | 'km';
+  /** The owner's location it's measured from, as they typed it. */
+  from?: string;
+};
 
 /** A fictional customer request, written for this business's trade. */
 export type PracticeScenario = {
@@ -28,6 +38,8 @@ export type PracticeScenario = {
   siteVisitCue: string;
   acceptReply: string;
   siteVisitReply: string;
+  /** What they say when the owner turns the job down. Older customers say DECLINE_REPLY. */
+  declineReply?: string;
   /** Set for the demo customers, which answer from fixed patterns instead of the AI. */
   demoId?: string;
   /** The job's main size as a number, like 550 and "sq ft". Older customers don't have it. */
@@ -35,6 +47,10 @@ export type PracticeScenario = {
   unit?: string;
   /** What kind of request this was written to be, so the next one can be different. */
   situation?: string;
+  /** How far the job is from the owner. Older customers don't have it. */
+  distance?: Distance | null;
+  /** The checked library entry this customer was copied from (src/practice/library.ts). */
+  libraryId?: string;
 };
 
 export const discountSchema = z
@@ -120,7 +136,17 @@ export type DraftEngine = {
   formula?: boolean;
 };
 
-export type Shadow = DraftedQuote & { cents: number; engine?: DraftEngine };
+/**
+ * The Charm's own price for a practice job, before it sees the owner's. `withheld` when it doesn't
+ * guess yet: too few priced customers for a formula (`toGo` more), a service it hasn't seen
+ * priced, or a formula still being worked out. Cents are 0 then.
+ */
+export type Shadow = DraftedQuote & {
+  cents: number;
+  engine?: DraftEngine;
+  withheld?: 'learning' | 'service' | 'working';
+  toGo?: number;
+};
 
 export type Insight = { id: string; text: string };
 

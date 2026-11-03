@@ -14,9 +14,11 @@ import {
 } from '../practice/types.js';
 import { lossReasonPhrase } from '../live/outcomes.js';
 import { describeRate, fitRates, type PricePoint } from './rates.js';
-import { describeSpec, specFromScenario, type JobSpec } from './spec.js';
+import { knownSpec, photoLines } from '../practice/known.js';
+import { describeSpec, type JobSpec } from './spec.js';
 import { parseQuantity } from './units.js';
 import { currencyOf, money as formatMoney, type Currency } from '../money.js';
+import { travelMiles, turnDownRules } from '../turn-downs.js';
 
 export type HistoryOptions = {
   /** Leave out one practice run, for the AI's guess on it. */
@@ -50,7 +52,7 @@ const monthYear = (value: unknown) =>
 
 export async function businessContext(businessId: string, connection?: Sql) {
   const [business] = await rows(
-    'SELECT name,trade_id,custom_trade,service_area,travel_radius_miles,currency FROM businesses WHERE id=?',
+    'SELECT name,trade_id,custom_trade,service_area,currency FROM businesses WHERE id=?',
     [businessId],
     connection,
   );
@@ -68,7 +70,8 @@ export async function businessContext(businessId: string, connection?: Sql) {
     trade: tradeName(business.trade_id, business.custom_trade),
     services,
     area: String(business.service_area || ''),
-    radiusMiles: business.travel_radius_miles ? Number(business.travel_radius_miles) : null,
+    /** How far they travel, from a "too far" turn-down. Null for no limit. */
+    radiusMiles: travelMiles(await turnDownRules(businessId, connection)),
     /** Every amount the AI reads and writes is in hundredths of it. */
     currency: currencyOf(business.currency),
   };
@@ -167,6 +170,12 @@ export async function loadPricingData(
   const practice: PricingHistory['practice'] = [];
   for (const run of runs) {
     if (run.id === options.excludeRunId) continue;
+    // A customer the owner turned down has no price. What it taught is a rule (src/turn-downs.ts).
+    if (run.outcome === 'declined') {
+      for (const insight of json<(Insight & { edited?: boolean })[]>(run.insights_json, []))
+        if (insight.edited) notes.push(insight.text);
+      continue;
+    }
     if (before && run.finished_at && new Date(run.finished_at) >= before) continue;
     const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
     const quote = json<Quote | null>(run.quote_json, null);
@@ -175,9 +184,11 @@ export async function loadPricingData(
       .map((message) => `${message.sender === 'owner' ? 'Owner' : 'Customer'}: ${message.text}`)
       .join('\n')
       .slice(0, 1500);
+    // The job as the owner knew it: the chat, and what the photos showed that it doesn't say.
+    const asked = json<string[]>(run.asked_json, []);
     practice.push({
       service: scenario.serviceName,
-      request: conversation,
+      request: [conversation, ...photoLines(scenario, asked)].join('\n'),
       outcome: run.outcome === 'site_visit' ? 'site_visit' : 'quote',
       lines: quote?.lines.map(({ label, amountCents }) => ({ label, amountCents })) ?? [],
       discount: quote?.discount ?? null,
@@ -186,7 +197,7 @@ export async function loadPricingData(
       note: quote?.note ?? '',
       siteVisitReason: String(run.site_visit_reason ?? ''),
     });
-    const spec = specFromScenario(scenario);
+    const spec = knownSpec(scenario, asked);
     if (quote?.lines[0] && spec.quantity)
       points.push({
         service: scenario.serviceName,

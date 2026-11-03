@@ -27,7 +27,12 @@ export type Milestone =
   | 'plan_chosen';
 /** Things that keep happening: one row each, keyed by the chat or quote. */
 export type Activity =
-  'customer_chat' | 'quote_drafted' | 'quote_sent' | 'quote_seen' | 'quote_outcome';
+  | 'customer_chat'
+  | 'quote_drafted'
+  | 'quote_sent'
+  | 'quote_seen'
+  | 'quote_outcome'
+  | 'request_turned_down';
 
 export async function subjectOf(businessId: string, connection?: Sql): Promise<string | undefined> {
   const [business] = await rows(
@@ -289,10 +294,12 @@ export async function pruneVisits(connection?: Sql): Promise<void> {
   );
 }
 
+// Setup's steps: practice comes straight after the business now. Before November 2026 past jobs
+// came between them, as the 'jobs' step, reached once the trade and name were in.
 const FUNNEL = [
   ['Started setup', "name='setup_started'"],
-  ['Described their business', "name='setup_step' AND detail='jobs'"],
-  ['Added past jobs', "name='setup_step' AND detail='practice'"],
+  ['Picked their trade', "name='setup_step' AND detail IN ('services','jobs')"],
+  ['Described their business', "name='setup_step' AND detail='practice'"],
   ['Finished practice', "name='setup_step' AND detail='ready'"],
   ['Made an account', "name='account_created'"],
   ['Confirmed their email', "name='email_verified'"],

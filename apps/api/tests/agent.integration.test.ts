@@ -169,9 +169,10 @@ test(
     assert.equal(view.status, 'quoted');
     assert.equal(view.next, 'hand_to_person');
     assert.equal(view.job.service, 'Driveways');
-    // Driveways is still learning, so it goes out as a range around the owner's price.
-    assert.deepEqual(view.quote.price, { kind: 'range', lowCents: 24000, highCents: 31000 });
-    assert.equal(view.quote.text, '$240 to $310');
+    // Driveways is still learning, so it goes out as a range around the owner's price. It's the
+    // main service, which wants 8 sized prices, so the range is still wide.
+    assert.deepEqual(view.quote.price, { kind: 'range', lowCents: 21000, highCents: 34000 });
+    assert.equal(view.quote.text, '$210 to $340');
     assert.deepEqual(view.quote.lines, [{ label: view.quote.lines[0].label, cents: 27500 }]);
     assert.match(view.quote.validUntil, /^\d{4}-\d{2}-\d{2}T/);
     assert.deepEqual(view.quote.assumes, ['600 sq ft'], 'What the price is for');

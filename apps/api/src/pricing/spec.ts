@@ -10,6 +10,12 @@ export type JobSpec = {
   access: string;
   extras: string[];
   timing: string;
+  /**
+   * Where the job is: a ZIP or postcode, a town or a neighborhood, as the customer said it. Never
+   * a street address, which stays with the chat for the owner (lead_chats.job_address). Older
+   * specs don't have it.
+   */
+  location?: string;
 };
 
 export const emptySpec = (): JobSpec => ({
@@ -30,6 +36,7 @@ export const specSchema = z.object({
   access: phrase(200),
   extras: z.array(phrase(80)).transform((items) => items.filter(Boolean).slice(0, 8)),
   timing: phrase(80),
+  location: phrase(80).default(''),
 });
 
 /** The intake model's spec, with its unit spelled the one way, and no unit without a size. */
@@ -43,7 +50,23 @@ export function cleanSpec(spec: z.infer<typeof specSchema>): JobSpec {
     access: spec.access,
     extras: spec.extras.map((item) => item.trim()).filter(Boolean),
     timing: spec.timing,
+    ...(spec.location ? { location: spec.location } : {}),
   };
+}
+
+/**
+ * Where a job is, as far as anything shared between businesses keeps it: the town or
+ * neighborhood, or a ZIP's first three digits, a postcode's first part. Nothing finer.
+ */
+export function pooledLocation(location: string | undefined): string {
+  const value = (location ?? '').trim();
+  if (!value) return '';
+  const zip = /\b(\d{3})\d{2}(?:-\d{4})?\b/.exec(value);
+  if (zip) return `${zip[1]}xx`;
+  const postcode = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/i.exec(value);
+  if (postcode) return postcode[1].toUpperCase();
+  // A street number means more than an area was given: keep nothing.
+  return /\d/.test(value) ? '' : value.slice(0, 60);
 }
 
 /** Just the size, read from what someone wrote. */
@@ -102,6 +125,7 @@ export function describeSpec(spec: JobSpec | null): string {
     spec.access,
     spec.extras.length ? `adds: ${spec.extras.join(', ')}` : '',
     spec.timing ? `wants it ${spec.timing.replace(/^wants it\s+/i, '')}` : '',
+    spec.location ? `in ${spec.location.replace(/^in\s+/i, '')}` : '',
   ]
     .filter(Boolean)
     .join('; ');

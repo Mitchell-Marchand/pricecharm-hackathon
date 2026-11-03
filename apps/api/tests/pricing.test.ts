@@ -212,6 +212,22 @@ test('after setup, practice goes to a service never priced, then everyday custom
   };
   assert.equal(planSituation({ ...base, position: 1 }), SITUATIONS[1], 'Setup keeps its mix');
   assert.match(planSituation(base), /"House wash" service.*haven't priced/);
+
+  // With no past jobs, setup walks through how they price: a usual job, the small end, a big one
+  // with an extra, each other service, the two together, rough shape, then timing.
+  const fresh = { ...base, pastJobs: 0, examples: {} };
+  const plan = [0, 1, 2, 3, 4, 5, 6].map((position) => planSituation({ ...fresh, position }));
+  assert.match(plan[0], /usual job for their "Driveways".*Clear/);
+  assert.match(plan[1], /small "Driveways" job/);
+  assert.match(plan[2], /big "Driveways" job.*extra/);
+  assert.match(plan[3], /usual job for their "House wash"/);
+  assert.match(plan[4], /"Driveways" and "House wash".*together/);
+  assert.match(plan[5], /rough shape.*harder to reach/);
+  assert.match(plan[6], /timing matters/);
+  assert.match(
+    planSituation({ ...fresh, position: 7, examples: { driveways: 2 } }),
+    /"House wash" service.*haven't priced/,
+  );
   const covered = { ...base, examples: { driveways: 2, 'house wash': 1 } };
   // Each draw below 0.3 says yes: the other service, an extra or two, bad shape, and so on.
   const draws =
@@ -319,8 +335,9 @@ test('each service is trained once it has learned the owner’s prices for it', 
       agree,
       at: new Date(Date.UTC(2026, 9, 1 + index)).toISOString(),
     }));
+  // Every service here needs SOLID_POINTS; the main service's larger need is checked below.
   const check = (comparisons: Comparison[]) =>
-    serviceReadiness(['Driveways', 'House wash', 'Patios'], rates, comparisons);
+    serviceReadiness(['Driveways', 'House wash', 'Patios'], rates, comparisons, undefined, null);
 
   let [driveways, house, patios] = check([]);
   assert.equal(driveways.ready, false, 'Prices alone aren’t enough');
@@ -365,7 +382,8 @@ test('each service is trained once it has learned the owner’s prices for it', 
   ]);
   assert.equal(driveways.ready, true, 'Another service’s misses don’t count against it');
 
-  // Readiness as a score: each service half sized jobs, half close guesses, weighted by workload.
+  // Readiness as a score: each service half sized jobs, half close guesses, weighted by workload,
+  // with a little more for the main service.
   [driveways, house, patios] = check([]);
   assert.deepEqual(
     [driveways.progress, house.progress, patios.progress],
@@ -373,15 +391,16 @@ test('each service is trained once it has learned the owner’s prices for it', 
     'Three sized jobs and no guesses yet is halfway',
   );
   const busy = { driveways: 10 };
-  const practiceDriveways = { service: 'Driveways', action: 'practice', count: 2, gain: 21 };
+  const practiceDriveways = { service: 'Driveways', action: 'practice', count: 2, gain: 22 };
   assert.deepEqual(agentReadiness([driveways, house, patios], busy), {
-    score: 43,
+    score: 44,
     next: practiceDriveways,
     steps: [
       practiceDriveways,
       { service: 'House wash', action: 'job', count: 2, gain: 1 },
       { service: 'Patios', action: 'job', count: 3, gain: 1 },
     ],
+    toWellTrained: 2,
   });
   [driveways, house, patios] = check(drafts('Driveways', [true, true]));
   assert.equal(driveways.progress, 100);
@@ -389,22 +408,35 @@ test('each service is trained once it has learned the owner’s prices for it', 
   assert.deepEqual(
     agentReadiness([driveways, house, patios], busy),
     {
-      score: 85,
+      score: 87,
       next: houseJobs,
       steps: [houseJobs, { service: 'Patios', action: 'job', count: 3, gain: 1 }],
+      toWellTrained: 0,
     },
     'Services they rarely do barely move it',
   );
   assert.equal(
     agentReadiness([house, patios], {}).score,
-    8,
-    'With no work yet, each counts the same',
+    12,
+    'With no work yet, the first one listed leads',
   );
   assert.deepEqual(
     agentReadiness([driveways], busy),
-    { score: 100, next: null, steps: [] },
+    { score: 100, next: null, steps: [], toWellTrained: 0 },
     '100 only once every service is fully trained',
   );
+
+  // The main service needs more sized prices before it's fully trained.
+  [driveways] = serviceReadiness(
+    ['Driveways', 'House wash'],
+    rates,
+    drafts('Driveways', [true, true]),
+  );
+  assert.deepEqual(
+    [driveways.ready, driveways.jobsToGo, driveways.sizedNeeded, driveways.progress],
+    [false, 5, 8, 69],
+  );
+  assert.equal(driveways.covers, '150 to 1,500 sq ft', 'It still knows the sizes it has seen');
 });
 
 test('a service still learning gets the price style the owner chose, then firm prices', () => {
@@ -495,4 +527,19 @@ test('a long history keeps the examples most like the request', () => {
       .length,
     10,
   );
+});
+
+test('one price is a rate, not a floor: six trees at $1,100 makes two trees about $367', () => {
+  const tree = (quantity: number, cents: number) => ({
+    service: 'Trimming',
+    quantity,
+    unit: 'trees',
+    cents,
+    source: 'practice' as const,
+  });
+  const once = fitRates([tree(6, 110000)]);
+  assert.equal(estimateFor(once, 'Trimming', 2, 'trees')!.cents, 36700);
+  // Two prices: the cheapest holds small jobs up, as the owner's card shows it.
+  const twice = fitRates([tree(6, 110000), tree(2, 50000)]);
+  assert.equal(estimateFor(twice, 'Trimming', 1, 'trees')!.cents, 50000);
 });
