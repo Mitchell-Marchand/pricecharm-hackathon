@@ -227,8 +227,12 @@ test('while the Charm reads the photos, the chat shows it and waits, then goes o
   await expect(page.getByRole('button', { name: 'I have enough to quote' })).toBeDisabled();
   const reply = page.getByLabel('Reply to Dana');
   await expect(reply).toHaveAttribute('placeholder', 'Your Charm is looking at the photos…');
+  // Sending while it looks is never a dead tap: the reply waits, and goes once it's done.
   await reply.fill('How big is it?');
-  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(
+    page.getByText('It goes as soon as your Charm has looked at the photos.'),
+  ).toBeVisible();
   await status.scrollIntoViewIfNeeded();
   await page.screenshot({ path: test.info().outputPath('reading.png') });
 
@@ -243,6 +247,5 @@ test('while the Charm reads the photos, the chat shows it and waits, then goes o
     timeout: 15_000,
   });
   await expect(status).toHaveCount(0);
-  await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible();
 });

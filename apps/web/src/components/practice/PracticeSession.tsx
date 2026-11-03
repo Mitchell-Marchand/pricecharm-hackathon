@@ -591,6 +591,8 @@ export function PracticeSession({
   const [typing, setTyping] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // A reply sent while the Charm reads the photos, which goes once it's done.
+  const [queued, setQueued] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   // "We don't do this job", or changing what turning one down saved.
   const [turnDown, setTurnDown] = useState<TurnDownTarget | null>(null);
@@ -678,7 +680,14 @@ export function PracticeSession({
   async function send(event?: FormEvent) {
     event?.preventDefault();
     const text = draft.trim();
-    if (!run || !text || busy) return;
+    if (!run || !text) return;
+    // Never a dead tap: while it reads the photos, the reply waits and goes once it's done.
+    if (waiting && !typing && !pending && !run.outcome) {
+      setQueued(true);
+      return;
+    }
+    if (busy) return;
+    setQueued(false);
     setDraft('');
     if (replyBox.current) replyBox.current.style.height = '';
     setPending(text);
@@ -775,6 +784,10 @@ export function PracticeSession({
 
   const busy =
     typing || Boolean(pending) || Boolean(run?.outcome) || run?.status !== 'ready' || waiting;
+  useEffect(() => {
+    // Only when the wait ends; send is this render's own.
+    if (queued && !busy) void send();
+  }, [queued, busy]);
   const customer = run?.customer;
   const lastQuoteId = [...(run?.messages ?? [])].reverse().find((message) => message.quote)?.id;
   const readId = photoReading?.photoIds[0];
@@ -975,6 +988,7 @@ export function PracticeSession({
                   }
                   onChange={(event) => {
                     setDraft(event.target.value);
+                    setQueued(false);
                     event.target.style.height = 'auto';
                     event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                   }}
@@ -984,12 +998,17 @@ export function PracticeSession({
                 <Button
                   type="submit"
                   aria-label="Send"
-                  disabled={!draft.trim() || busy}
+                  disabled={!draft.trim() || (busy && !waiting) || queued}
                   className="size-12 px-0"
                 >
                   <ArrowUp aria-hidden />
                 </Button>
               </form>
+              {queued && (
+                <p className="pt-2 text-sm text-muted" role="status">
+                  It goes as soon as your Charm has looked at the photos.
+                </p>
+              )}
             </>
           )}
         </div>
