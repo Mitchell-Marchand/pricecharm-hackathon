@@ -1266,6 +1266,32 @@ export async function editInsight(
   return viewOf(businessId, runId);
 }
 
+/**
+ * Why the owner priced a practice quote the way they did, added after they sent it: a tree that
+ * needed a climber, a repeat customer, a long drive. It's saved on the quote, where the formula and
+ * the drafts read it with that job, and shows on the card as what the Charm remembers.
+ */
+export async function explainPracticeQuote(businessId: string, runId: string, text: string) {
+  await transaction(async (connection) => {
+    const run = await loadRun(businessId, runId, connection, true);
+    const quote = json<Quote | null>(run.quote_json, null);
+    if (run.outcome !== 'quote' || !quote)
+      throw new ApiError(409, 'PRACTICE_NOT_QUOTED', 'Only a quote you sent can have a reason.');
+    const insights = json<(Insight & { edited?: boolean })[]>(run.insights_json, []).filter(
+      (item) => item.id !== 'why',
+    );
+    insights.push({ id: 'why', text: `Remembers why: “${text}”` });
+    await mutate(
+      'UPDATE practice_runs SET quote_json=?,insights_json=? WHERE id=?',
+      [JSON.stringify({ ...quote, note: text }), JSON.stringify(insights), runId],
+      connection,
+    );
+  });
+  // The quote it learns from changed, so the formula is worked out again in the background.
+  refreshFormula(businessId);
+  return viewOf(businessId, runId);
+}
+
 /** Takes back a correction: the line stays on the practice result but stops teaching the AI. */
 export async function forgetInsight(businessId: string, runId: string, insightId: string) {
   await transaction(async (connection) => {

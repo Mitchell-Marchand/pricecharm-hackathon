@@ -8,7 +8,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Ban, Pencil, Receipt, RotateCw } from 'lucide-react';
+import { ArrowUp, Ban, MessageSquarePlus, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
 import { PhotoViewer, type ViewerPhoto } from '@/components/PhotoViewer';
 import {
@@ -21,10 +21,11 @@ import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { TurnDownSheet, type TurnDownTarget } from '@/components/practice/TurnDownSheet';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
-import { Avatar, Button, Tag, TextInput } from '@/components/ui';
+import { Avatar, Button, Tag, TextArea, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
 import {
   distanceText,
+  explainQuote,
   fixInsight,
   loadPractice,
   requestGuess,
@@ -193,7 +194,7 @@ function InsightCard({
               <>It didn&apos;t have enough to go on to guess this one. Now it does.</>
             )}
             {flagged &&
-              ` It would also have asked to see this one first${reason ? `, because of the ${reason}` : ''}.`}
+              ` It would also have asked to see this one first${reason ? `: ${reason}` : ''}.`}
           </p>
           {market && (
             <p className="text-[15px] text-ink-2">
@@ -273,7 +274,86 @@ function InsightCard({
           </li>
         ))}
       </ul>
+      {run.outcome === 'quote' && !run.quote?.note.trim() && (
+        <ExplainPrice run={run} onChange={onChange} />
+      )}
     </section>
+  );
+}
+
+/**
+ * Why the owner priced it this way, when the quote didn't say. Whatever moved the price, said once
+ * here, goes with this job when the Charm works out how they price.
+ */
+function ExplainPrice({
+  run,
+  onChange,
+}: {
+  run: PracticeRun;
+  onChange: (run: PracticeRun) => void;
+}) {
+  const notify = useToast();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const id = `explain-${run.id}`;
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-5 flex w-full items-start gap-3 rounded-md border border-dashed border-line-strong px-4 py-3.5 text-left hover:border-accent hover:bg-accent-soft"
+      >
+        <MessageSquarePlus className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden />
+        <span>
+          <span className="block font-semibold">Add why you priced it this way</span>
+          <span className="mt-0.5 block text-sm text-muted">
+            What moved the price: the size, a hard reach, the cleanup, a repeat customer. Your Charm
+            learns from it.
+          </span>
+        </span>
+      </button>
+    );
+  async function save() {
+    const reason = text.trim();
+    if (reason.length < 3 || saving) return;
+    setSaving(true);
+    try {
+      onChange(await explainQuote(run.id, reason));
+    } catch (error) {
+      notify(errorMessage(error));
+      setSaving(false);
+    }
+  }
+  return (
+    <form
+      className="mt-5 flex flex-col gap-2"
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault();
+        void save();
+      }}
+    >
+      <label htmlFor={id} className="text-sm font-semibold">
+        Why this price?
+      </label>
+      <TextArea
+        id={id}
+        autoFocus
+        rows={3}
+        maxLength={600}
+        placeholder="Two big oaks over the roof, so it needs a climber and extra cleanup."
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+      />
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={text.trim().length < 3 || saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </form>
   );
 }
 

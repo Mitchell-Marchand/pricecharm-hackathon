@@ -171,6 +171,12 @@ export const declinePrefill = (runId: string) =>
 /** Turns the customer down and saves why, as a rule or the owner's minimum. */
 export const declinePractice = (runId: string, input: DeclineInput) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/decline`, { method: 'POST', ...json(input) });
+/** Why the owner priced a practice quote as they did, added after it went. */
+export const explainQuote = (runId: string, text: string) =>
+  api<PracticeRun>(`/onboarding/practice/${runId}/explanation`, {
+    method: 'PATCH',
+    ...json({ text }),
+  });
 export const fixInsight = (runId: string, insightId: string, text: string) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/insights/${insightId}`, {
     method: 'PATCH',

@@ -10,6 +10,7 @@ import {
   declinePracticeRun,
   declinePrefill,
   editInsight,
+  explainPracticeQuote,
   ensurePracticeRuns,
   fixPhotoReading,
   kickPreparation,
@@ -193,6 +194,24 @@ practiceRouter.post(
       { ref: run.id },
     );
     res.json(ok(run));
+  },
+);
+
+practiceRouter.patch(
+  '/onboarding/practice/:id/explanation',
+  rateLimit(20, 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    const { text } = z
+      .object({ text: z.string().trim().min(3).max(600) })
+      .strict()
+      .parse(req.body);
+    await recordRequestEvent(req, workspace(req).businessId, 'practice_quote_explained', {
+      chars: text.length,
+    });
+    res.json(
+      ok(await explainPracticeQuote(workspace(req).businessId, runId.parse(req.params.id), text)),
+    );
   },
 );
 

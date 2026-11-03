@@ -371,6 +371,14 @@ test('practice comes first, then the account, a test, the plans and going live',
   await expect(page.getByRole('dialog', { name: 'Save your Charm' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByText('Asks about size')).toBeVisible();
+  // A quote sent without a reason can get one here, and the Charm keeps it with this job.
+  await page.getByRole('button', { name: /Add why you priced it this way/ }).click();
+  await page.getByLabel('Why this price?').fill('Heavy moss on half of it, so a second pass.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(
+    page.getByText('Remembers why: “Heavy moss on half of it, so a second pass.”'),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: /Add why you priced it this way/ })).toHaveCount(0);
   await expect(page.getByText(/Before you sent yours, it guessed \$/)).toBeVisible();
   await page.getByRole('button', { name: 'Fix' }).first().click();
   await page.getByLabel('Correct this').fill('Asks about size and stains');

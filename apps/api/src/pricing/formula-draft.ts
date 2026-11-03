@@ -63,7 +63,10 @@ export function formulaExamples(history: PricingHistory): FormulaExample[] {
       .map((run) => ({
         kind: 'practice' as const,
         service: run.service,
-        request: run.request,
+        // Why they priced it so, when they said: as a past job's notes are, it goes with the job.
+        request: run.note.trim()
+          ? `${run.request}\nOwner's reason for this price: ${run.note.trim()}`
+          : run.request,
         lines: run.lines,
         discount: run.discount,
         totalCents: totalOf(run),
