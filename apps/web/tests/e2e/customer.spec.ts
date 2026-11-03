@@ -149,7 +149,9 @@ test('a quote that needs the owner’s OK appears once they send it', async ({
   const owner = await shop.context.newPage();
   await owner.goto(`/app/quotes/${filmed.id}`);
   await expect(owner.getByRole('heading', { name: 'Measured from their video' })).toBeVisible();
-  await expect(owner.getByText('12 windows', { exact: true })).toBeVisible();
+  await expect(owner.getByRole('listitem').getByText('12 windows', { exact: true })).toBeVisible();
+  // The quote says what it's priced for: the count from the video.
+  await expect(owner.getByRole('article').getByText('12 windows', { exact: true })).toBeVisible();
   await expect(
     owner.getByText(/each one followed through the video and counted once/),
   ).toBeVisible();
