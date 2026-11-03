@@ -1,5 +1,6 @@
 import { api, json } from './api';
 import type { Discount, Quote, QuoteLine } from './quote';
+import type { RuleInput, TurnDownKind, TurnDownRule } from './turn-downs';
 
 export type Tone = 'canary' | 'pink' | 'blue';
 
@@ -17,13 +18,21 @@ export interface PracticeRun {
   position: number;
   status: 'preparing' | 'ready' | 'failed' | 'finished';
   failure: string | null;
-  customer: { name: string; firstName: string; initials: string; place: string; tone: Tone } | null;
+  customer: {
+    name: string;
+    firstName: string;
+    initials: string;
+    place: string;
+    tone: Tone;
+    /** How far the job is from one of the owner's locations. Missing from older customers. */
+    distance?: { value: number; unit: 'mi' | 'km' } | null;
+  } | null;
   serviceName: string | null;
   /** The service the owner asked to practice, if they picked one. */
   focus: string | null;
   suggestions: string[];
   messages: PracticeMessage[];
-  outcome: 'quote' | 'site-visit' | null;
+  outcome: 'quote' | 'site-visit' | 'declined' | null;
   quote: Quote | null;
   siteVisitReason: string | null;
   /** The AI's private guess. Shown only after the owner answers. */
@@ -40,8 +49,26 @@ export interface PracticeRun {
     centsPerUnit: number;
     ownerCentsPerUnit: number;
   } | null;
+  /** Set once the owner turned this one down: why, and the rule or minimum it saved. */
+  turnDown?: {
+    reason: TurnDownKind;
+    reasonText: string;
+    /** The rule as it stands now. Null for a minimum, or once it's been taken out. */
+    rule: TurnDownRule | null;
+    minimumCents: number | null;
+    removed: boolean;
+  } | null;
   finished: boolean;
 }
+
+/** What the "Why not?" sheet fills in from the practice customer. */
+export interface DeclinePrefill {
+  size: { quantity: number; unit: string } | null;
+  service: string;
+  extras: string[];
+  distance: { value: number; unit: 'mi' | 'km' } | null;
+}
+export type DeclineInput = RuleInput | { kind: 'minimum'; minimumCents: number };
 
 export interface PracticeResult {
   runId: string;
@@ -87,6 +114,11 @@ export const requestGuess = (runId: string) =>
   api(`/onboarding/practice/${runId}/guess`, { method: 'POST', ...json({}) });
 export const sendPracticeQuote = (runId: string, quote: QuoteDraft) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/quote`, { method: 'POST', ...json(quote) });
+export const declinePrefill = (runId: string) =>
+  api<DeclinePrefill>(`/onboarding/practice/${runId}/decline`);
+/** Turns the customer down and saves why, as a rule or the owner's minimum. */
+export const declinePractice = (runId: string, input: DeclineInput) =>
+  api<PracticeRun>(`/onboarding/practice/${runId}/decline`, { method: 'POST', ...json(input) });
 export const fixInsight = (runId: string, insightId: string, text: string) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/insights/${insightId}`, {
     method: 'PATCH',

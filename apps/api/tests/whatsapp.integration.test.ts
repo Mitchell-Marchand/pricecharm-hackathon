@@ -390,9 +390,25 @@ test(
     replies = await says(sam, tap(QUOTE.accept, String(quote.accept_label)));
     const [accepted] = await rows('SELECT status FROM live_quotes WHERE id=?', [quote.id]);
     assert.equal(accepted.status, 'accepted');
-    assert.equal(replies.length, 1);
+    assert.equal(replies.length, 2);
     assert.match(replies[0].text.body, /Maya at Moss & Stone Exterior Care will be in touch/);
+    assert.match(replies[1].text.body, /What’s the street address for the job\?/);
     assert.ok((await keys()).includes(`owner-accepted:${chat.id}:once`));
+    // There's no form on WhatsApp, so the address comes as their next message. It's kept for the
+    // owner and stays out of the chat, where the AI could read it.
+    replies = await says(sam, text('Can you come in the morning?'));
+    assert.equal(
+      (await rows('SELECT job_address FROM lead_chats WHERE id=?', [chat.id]))[0].job_address,
+      null,
+      'A question isn’t an address',
+    );
+    replies = await says(sam, text('41 Linden Avenue, Portland'));
+    const [addressed] = await rows('SELECT job_address FROM lead_chats WHERE id=?', [chat.id]);
+    assert.equal(addressed.job_address, '41 Linden Avenue, Portland');
+    assert.match(replies[0].text.body, /has it now/);
+    const kept = await rows('SELECT text FROM lead_messages WHERE chat_id=?', [chat.id]);
+    assert.ok(!kept.some((message) => String(message.text).includes('Linden')));
+    assert.ok((await keys()).includes(`owner-address:${chat.id}:once`));
 
     // A day after the customer last wrote, WhatsApp won't deliver, so the owner hears that now
     // instead of the message quietly never arriving.

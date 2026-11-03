@@ -222,10 +222,11 @@ demoRouter.post('/demo/turn', async (req, res) => {
     demo.size.ask,
     ...(demo.extra && !photoAnswer(demo, chat.photosSent) ? [demo.extra.ask] : []),
   ];
+  const business = sampleHistory(demo).business;
   const turn = await withDemoAiUsage(chat.usage, () =>
     intakeTurn(
       {
-        business: sampleHistory(demo).business,
+        business: { ...business, locations: [business.area] },
         checklist,
         serviceName: chat.serviceName,
         conversation: chat.messages,
@@ -252,9 +253,10 @@ demoRouter.post('/demo/turn', async (req, res) => {
     !chat.photosSent &&
     /photo|picture|pic\b/i.test(turn.reply);
   const customerCount = chat.messages.filter((item) => item.from === 'customer').length;
-  // A demo chat stays short: once there's been a message for the service, the photos and each
-  // question, plus one to spare, it quotes what it has rather than think up more questions.
-  const enough = 1 + Number(chat.photosAllowed) + checklist.length + 1;
+  // A demo chat stays short: once there's been a message for the service, the photos, each
+  // question and where the job is, plus one to spare, it quotes what it has rather than think up
+  // more questions.
+  const enough = 1 + Number(chat.photosAllowed) + checklist.length + 2;
   const ready = turn.ready || customerCount >= Math.min(enough, MAX_CUSTOMER_MESSAGES - 2);
   // Once it has enough, the last word says the quote is on its way, not another question.
   const reply = ready

@@ -68,6 +68,7 @@ export default function QuotePage() {
 
   const first = quote.customer.split(' ')[0];
   const waiting = quote.status === 'review';
+  const turnedDown = quote.status === 'turned_down';
   const drafted: LearningStyle = quote.card.style ?? 'firm';
   const chosen = style ?? drafted;
   const shown = waiting && chosen !== drafted ? restyle(quote.card, chosen) : quote.card;
@@ -101,12 +102,12 @@ export default function QuotePage() {
         <h1 className="t-h1">{quote.customer}</h1>
         <QuoteStatusTag status={quote.status} />
         {quote.test && <Tag>Test</Tag>}
-        {quote.reachable === false && !quote.test && <Tag>Only looked</Tag>}
+        {quote.reachable === false && !quote.test && !turnedDown && <Tag>Only looked</Tag>}
       </div>
       <p className="mt-2 text-ink-2" data-private>
         {[
           quote.serviceName,
-          `No. ${quote.number}`,
+          quote.number ? `No. ${quote.number}` : '',
           shortDate(quote.createdAt),
           quote.customerPhone,
           quote.customerEmail,
@@ -114,7 +115,22 @@ export default function QuotePage() {
           .filter(Boolean)
           .join(' · ')}
       </p>
-      {quote.reachable === false && !quote.test && (
+      {quote.jobAddress && (
+        <p className="mt-1 text-ink-2" data-private>
+          Job address: {quote.jobAddress}
+        </p>
+      )}
+      {turnedDown && (
+        <p className="mt-3 text-sm text-muted">
+          They never saw a quote, so it wasn&apos;t billed. To quote jobs like this, change what
+          your Charm turns down in{' '}
+          <Link href="/app/train/knows" className="underline underline-offset-2">
+            What it knows
+          </Link>
+          .
+        </p>
+      )}
+      {quote.reachable === false && !quote.test && !turnedDown && (
         <p className="mt-3 text-sm text-muted">
           They saw this quote but didn&apos;t leave a phone number or email, so it wasn&apos;t
           billed. You&apos;ll hear from us if they come back to it.
@@ -187,24 +203,26 @@ export default function QuotePage() {
               />
             </div>
           )}
-          <QuoteForm
-            quote={shown}
-            business={me.business.name}
-            stamp={STAMPS[quote.status]}
-            actions={
-              waiting ? (
-                <>
-                  <PaperButton primary disabled={busy} onClick={() => void approve()}>
-                    <Send aria-hidden /> {busy ? 'Sending…' : 'Send quote'}
-                  </PaperButton>
-                  <PaperButton onClick={() => setEditing(true)}>
-                    <Pencil aria-hidden /> Edit
-                  </PaperButton>
-                  <PaperButton onClick={() => setDeclining(true)}>Decline</PaperButton>
-                </>
-              ) : undefined
-            }
-          />
+          {(!turnedDown || quote.card.lines.length > 0) && (
+            <QuoteForm
+              quote={shown}
+              business={me.business.name}
+              stamp={STAMPS[quote.status]}
+              actions={
+                waiting ? (
+                  <>
+                    <PaperButton primary disabled={busy} onClick={() => void approve()}>
+                      <Send aria-hidden /> {busy ? 'Sending…' : 'Send quote'}
+                    </PaperButton>
+                    <PaperButton onClick={() => setEditing(true)}>
+                      <Pencil aria-hidden /> Edit
+                    </PaperButton>
+                    <PaperButton onClick={() => setDeclining(true)}>Decline</PaperButton>
+                  </>
+                ) : undefined
+              }
+            />
+          )}
           {actionError && (
             <p className="text-sm text-stop" role="alert">
               {actionError}{' '}
@@ -292,11 +310,13 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
         <CircleAlert className="size-5" aria-hidden />{' '}
         {quote.status === 'review'
           ? 'Why it’s waiting for you'
-          : quote.card.style === 'range'
-            ? 'Why it went out as a range'
-            : quote.card.style === 'estimate'
-              ? 'Why it went out as an estimate'
-              : 'Worth a look'}
+          : quote.status === 'turned_down'
+            ? 'Why your Charm turned it down'
+            : quote.card.style === 'range'
+              ? 'Why it went out as a range'
+              : quote.card.style === 'estimate'
+                ? 'Why it went out as an estimate'
+                : 'Worth a look'}
       </h2>
       {reasons.length === 1 ? (
         <p className="mt-2 text-[15px]">{reasons[0]}</p>
@@ -548,7 +568,8 @@ function Reply({
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  if (quote.status === 'declined') return null;
+  // A turned-down customer left no way to reach them, and the chat is closed.
+  if (quote.status === 'declined' || quote.status === 'turned_down') return null;
 
   async function send(event: FormEvent) {
     event.preventDefault();

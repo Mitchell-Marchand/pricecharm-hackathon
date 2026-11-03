@@ -79,11 +79,14 @@ async function agentView(business: Row, chat: Row, token: string) {
   const spec = json<JobSpec | null>(chat.spec_json, null);
   // Photos are read outside the request; the Charm answers once they are.
   const reading = chat.status === 'chatting' && (await readingPhotos(chat));
-  const step = chat.human_handoff
-    ? { status: 'with_owner', next: 'wait' }
-    : reading
-      ? { status: 'reading_photos', next: 'wait' }
-      : (progress[String(chat.status)] ?? { status: String(chat.status), next: 'wait' });
+  // A job the owner doesn't take on ends with the Charm's reply, which says why.
+  const step = chat.turned_down
+    ? { status: 'turned_down', next: 'done' }
+    : chat.human_handoff
+      ? { status: 'with_owner', next: 'wait' }
+      : reading
+        ? { status: 'reading_photos', next: 'wait' }
+        : (progress[String(chat.status)] ?? { status: String(chat.status), next: 'wait' });
   const out = quote && OUT.includes(String(quote.status));
   const card = out ? json<Quote>(quote.quote_json, {} as Quote) : null;
   const totalCents = Number(quote?.total_cents ?? 0);
@@ -105,6 +108,8 @@ async function agentView(business: Row, chat: Row, token: string) {
       access: spec?.access ?? '',
       extras: spec?.extras ?? [],
       timing: spec?.timing ?? '',
+      /** Where the job is: a ZIP or postcode, a town or a neighborhood. */
+      location: spec?.location ?? '',
     },
     quote: card
       ? {
@@ -170,7 +175,11 @@ agentRouter.get('/agent/businesses/:slug', async (req, res) => {
       services,
       serviceArea: String(business.service_area ?? ''),
       taking,
-      asksAbout: await questionChecklist(id),
+      // The chat also asks where the job is, as an area. Never the street address.
+      asksAbout: [
+        ...(await questionChecklist(id)),
+        'Where is the job? A ZIP or postcode, or the town or neighborhood.',
+      ],
       priceDependsOn: {
         sizes: drivers.services.map((service) => ({
           service: service.name,

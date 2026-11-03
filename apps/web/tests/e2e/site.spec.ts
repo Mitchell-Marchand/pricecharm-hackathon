@@ -76,6 +76,12 @@ test('a visitor types to the demo and gets a quote for the trade they pick', asy
     demo.getByText('No payment now. Marcus will reach out to book a time.'),
   ).toBeVisible();
   await demo.getByRole('button', { name: 'Looks good to me' }).click();
+  // The same details a real customer leaves, the job address with them. The demo keeps none.
+  await expect(demo.getByLabel('The job’s street address')).toBeVisible();
+  await expect(
+    demo.getByText('In the demo, nothing you type here is sent or saved.'),
+  ).toBeVisible();
+  await demo.getByRole('button', { name: 'Let Marcus know' }).click();
   await expect(
     demo.getByText('You’re all set. Marcus will be in touch to schedule.'),
   ).toBeVisible();

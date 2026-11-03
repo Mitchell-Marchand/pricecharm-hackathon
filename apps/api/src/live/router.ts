@@ -187,11 +187,15 @@ chatRouter.get('/chat/:slug/:chatId/photos/:photoId', async (req, res) => {
   res.type('image/jpeg').send(photo);
 });
 
-/** A name and an email or a phone number. Nothing is sent to check them. */
+/**
+ * A name and an email or a phone number, and the job's street address where the owner asks for
+ * it. Nothing is sent to check them.
+ */
 const contactInput = z.object({
   name: z.string().trim().min(1).max(160),
   email: z.string().trim().max(254).default(''),
   phone: z.string().trim().max(40).default(''),
+  address: z.string().max(400).default(''),
 });
 
 chatRouter.post('/chat/:slug/:chatId/contact', rateLimit(10, 15 * 60_000), async (req, res) => {
@@ -204,6 +208,7 @@ chatRouter.post('/chat/:slug/:chatId/contact', rateLimit(10, 15 * 60_000), async
     purpose,
     email: Boolean(input.email),
     phone: Boolean(input.phone),
+    address: Boolean(input.address.trim()),
   });
   res.json(ok(result));
 });

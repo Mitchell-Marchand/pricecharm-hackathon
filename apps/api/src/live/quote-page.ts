@@ -118,6 +118,8 @@ async function quotePage(businessId: string) {
     contactFirst: Boolean(business.contact_first),
     /** Quotes show a picture of the job done, made from the customer's photo. On by default. */
     afterPreview: Boolean(business.after_preview),
+    /** The contact form asks for the job's street address at the yes. On by default. */
+    askAddress: Boolean(business.ask_job_address ?? true),
   };
 }
 
@@ -137,6 +139,7 @@ const quotePageInput = z
     acceptLabel: oneLine(24, 'Keep the button to 24 characters or fewer, so it fits on a phone.'),
     contactFirst: z.boolean(),
     afterPreview: z.boolean(),
+    askAddress: z.boolean(),
   })
   .partial()
   .strict();
@@ -176,6 +179,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
   if (input.acceptLabel !== undefined) changes.push(['accept_label', input.acceptLabel]);
   if (input.contactFirst !== undefined) changes.push(['contact_first', input.contactFirst]);
   if (input.afterPreview !== undefined) changes.push(['after_preview', input.afterPreview]);
+  if (input.askAddress !== undefined) changes.push(['ask_job_address', input.askAddress]);
   if (changes.length)
     await mutate(
       `UPDATE businesses SET ${changes.map(([column]) => `${column}=?`).join(',')} WHERE id=?`,
@@ -191,6 +195,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
     accept_label: input.acceptLabel,
     contact_first: input.contactFirst,
     after_preview: input.afterPreview,
+    ask_address: input.askAddress,
   });
   res.json(ok(await quotePage(businessId)));
 });

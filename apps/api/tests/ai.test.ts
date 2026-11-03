@@ -626,7 +626,6 @@ test('the customer chat finds out everything the owner’s price depends on befo
       trade: 'Window cleaning',
       services: ['Windows'],
       area: 'Austin',
-      radiusMiles: null,
     },
     checklist: [],
     serviceName: 'Windows',
@@ -641,4 +640,65 @@ test('the customer chat finds out everything the owner’s price depends on befo
   assert.match(sent, /\\"conditions\\":\[\\"second story\\"\]/, 'The drivers go in as data');
   await intakeTurn(turn, []);
   assert.doesNotMatch(sent, /drivers are what/, 'Without a formula, the chat works as before');
+});
+
+test('the customer chat asks where the job is and turns down what the owner’s rules say', async () => {
+  const { intakeTurn } = await import('../src/ai/intake.js');
+  let sent = '';
+  let answer: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => {
+    sent = String(init?.body);
+    return response(answer);
+  };
+  const turn = {
+    business: {
+      name: 'Clear View',
+      trade: 'Window cleaning',
+      services: ['Windows'],
+      area: 'Austin',
+      locations: ['Austin', 'Round Rock'],
+    },
+    turnDowns: [
+      {
+        kind: 'too_far' as const,
+        rule: 'More than about 25 mi from the nearest of your locations',
+      },
+    ],
+    checklist: [],
+    serviceName: 'Windows',
+    conversation: [{ from: 'customer' as const, text: '20 windows, out in Llano.' }],
+    photosReceived: 0,
+  };
+  const spec = {
+    quantity: 20,
+    unit: 'windows',
+    condition: '',
+    access: '',
+    extras: [],
+    timing: '',
+    location: 'Llano',
+  };
+  answer = {
+    reply: 'Sorry, Llano is farther than we go.',
+    chips: [],
+    askPhoto: false,
+    serviceName: 'Windows',
+    ready: true,
+    summary: '20 windows in Llano.',
+    outOfScope: '',
+    turnDown: 'too_far',
+    spec,
+  };
+  const far = await intakeTurn(turn, []);
+  assert.equal(far.turnDown, 'too_far');
+  assert.equal(far.spec.location, 'Llano');
+  assert.equal(far.reply, 'Sorry, Llano is farther than we go.', 'A no keeps its own words');
+  assert.match(sent, /Never ask for a street address/);
+  assert.match(sent, /turnDowns are jobs this owner turns down/);
+  assert.match(sent, /More than about 25 mi from the nearest of your locations/, 'Their words');
+  answer = { ...answer, turnDown: 'made_up', ready: false, reply: 'Which part of town?' };
+  assert.equal((await intakeTurn(turn, [])).turnDown, '', 'A code it made up is no rule');
+  await intakeTurn({ ...turn, turnDowns: [] }, []);
+  assert.doesNotMatch(sent, /turnDowns are jobs/, 'With no rules, nothing is turned down');
+  assert.match(sent, /find out where the job is/, 'It still asks where the job is');
 });

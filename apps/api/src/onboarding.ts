@@ -9,6 +9,7 @@ import { isDisposableEmail } from './email-domains.js';
 import { changeCurrency } from './billing.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { CURRENCIES, currencyOf } from './money.js';
+import { businessLocations, MAX_LOCATIONS } from './locations.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
 import { draftIpBudgetKey } from './usage.js';
@@ -57,8 +58,6 @@ const stepOf = (value: unknown): OnboardingStep => {
     : (OLD_STEPS[step] ?? 'trade');
 };
 const RADII = ['10', '15', '25', '50'] as const;
-/** Places a business can work from. */
-export const MAX_LOCATIONS = 5;
 const DRAFTS_PER_ADDRESS_PER_DAY = 10;
 
 /**
@@ -74,19 +73,8 @@ function draftsPerAddress(): number {
 
 export const onboardingRouter = Router();
 
-/** The places a business works from, main one first. */
-export async function businessLocations(businessId: string, connection?: Sql): Promise<string[]> {
-  return (
-    await rows(
-      'SELECT area FROM business_locations WHERE business_id=? ORDER BY position',
-      [businessId],
-      connection,
-    )
-  ).map((row) => String(row.area));
-}
-
-/** Saves the places a business works from. The first stays in service_area for older code. */
-export async function saveLocations(businessId: string, areas: string[], connection: Sql) {
+/** Setup's own write of where it works, inside its save. Settings uses saveLocations. */
+async function writeLocations(businessId: string, areas: string[], connection: Sql) {
   await mutate('DELETE FROM business_locations WHERE business_id=?', [businessId], connection);
   for (const [position, area] of areas.entries())
     await mutate(
@@ -238,7 +226,7 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
     // An older page sends one area: it becomes their only location.
     const areas =
       input.locations ?? (input.area !== undefined ? [input.area].filter(Boolean) : null);
-    if (areas) await saveLocations(current.businessId, areas, connection);
+    if (areas) await writeLocations(current.businessId, areas, connection);
     if (input.radius !== undefined) set('travel_radius_miles', Number(input.radius));
     if (input.currency) await changeCurrency(current.businessId, input.currency, connection);
     if (fields.length)

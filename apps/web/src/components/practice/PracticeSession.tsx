@@ -8,9 +8,10 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Pencil, Receipt, RotateCw } from 'lucide-react';
+import { ArrowUp, Ban, Pencil, Receipt, RotateCw } from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
 import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
+import { TurnDownSheet, type TurnDownTarget } from '@/components/practice/TurnDownSheet';
 import { QuoteForm } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
 import { Avatar, Button, Tag, TextInput } from '@/components/ui';
@@ -29,6 +30,7 @@ import {
   type QuoteDraft,
 } from '@/lib/practice';
 import { total } from '@/lib/quote';
+import { turnsDown } from '@/lib/turn-downs';
 import { cx, money, rate, scrollToBottom } from '@/lib/util';
 
 function gapPercent(guessCents: number, ownerCents: number): number | null {
@@ -60,14 +62,64 @@ function ShadowBar({
   );
 }
 
+/** What turning a customer down saved, as it stands now, with a way to change it. */
+function TurnedDown({
+  run,
+  onTurnDown,
+}: {
+  run: PracticeRun;
+  onTurnDown: (target: TurnDownTarget) => void;
+}) {
+  const saved = run.turnDown;
+  if (!saved) return null;
+  const first = run.customer?.firstName ?? 'them';
+  const line = saved.rule
+    ? turnsDown(saved.rule)
+    : saved.minimumCents
+      ? `Charges at least ${money(saved.minimumCents)} for any job`
+      : null;
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      <p className="text-[15px] text-ink-2">
+        You turned {first} down: {saved.reasonText.toLowerCase()}.{' '}
+        {saved.removed
+          ? 'You’ve taken out what it saved since, so live chats don’t follow it.'
+          : saved.minimumCents
+            ? 'Smaller jobs get your minimum from now on.'
+            : 'Your Charm says no to jobs like this from now on, kindly, without a quote.'}
+      </p>
+      {line && !saved.removed && (
+        <div className="flex items-start justify-between gap-3 rounded-sm bg-surface-2 px-3.5 py-3">
+          <p className="text-[15px] font-medium text-ink">{line}</p>
+          <button
+            type="button"
+            onClick={() =>
+              onTurnDown(
+                saved.rule
+                  ? { mode: 'edit', rule: saved.rule }
+                  : { mode: 'minimum', minimumCents: saved.minimumCents },
+              )
+            }
+            className="inline-flex shrink-0 items-center gap-1 text-sm text-muted hover:text-accent"
+          >
+            <Pencil className="size-3.5" aria-hidden /> Change
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InsightCard({
   run,
   closePercent,
   onChange,
+  onTurnDown,
 }: {
   run: PracticeRun;
   closePercent: number;
   onChange: (run: PracticeRun) => void;
+  onTurnDown: (target: TurnDownTarget) => void;
 }) {
   const notify = useToast();
   const [editing, setEditing] = useState<string | null>(null);
@@ -145,6 +197,7 @@ function InsightCard({
           )}
         </div>
       )}
+      {run.outcome === 'declined' && <TurnedDown run={run} onTurnDown={onTurnDown} />}
       {run.outcome === 'site-visit' && (
         <p className="mt-4 text-[15px] text-ink-2">
           {flagged ? (
@@ -164,7 +217,12 @@ function InsightCard({
         </p>
       )}
 
-      <ul className="mt-5 divide-y divide-line border-y border-line">
+      <ul
+        className={cx(
+          'mt-5 divide-y divide-line border-y border-line',
+          !run.insights.length && 'hidden',
+        )}
+      >
         {run.insights.map((item) => (
           <li key={item.id} className="py-3">
             {editing === item.id ? (
@@ -251,6 +309,8 @@ export function PracticeSession({
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [builderOpen, setBuilderOpen] = useState(false);
+  // "We don't do this job", or changing what turning one down saved.
+  const [turnDown, setTurnDown] = useState<TurnDownTarget | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
   const [nudge, setNudge] = useState(false);
@@ -477,7 +537,12 @@ export function PracticeSession({
                 </p>
               )}
               {run && showInsights && (
-                <InsightCard run={run} closePercent={closePercent} onChange={onRun} />
+                <InsightCard
+                  run={run}
+                  closePercent={closePercent}
+                  onChange={onRun}
+                  onTurnDown={setTurnDown}
+                />
               )}
             </div>
           </>
@@ -495,7 +560,9 @@ export function PracticeSession({
             <p className="py-3 text-sm text-muted" role="status">
               {run.outcome === 'quote'
                 ? `Quote sent to ${customer?.firstName}.`
-                : `Asked ${customer?.firstName} for a visit.`}
+                : run.outcome === 'declined'
+                  ? `Told ${customer?.firstName} you can’t take it on.`
+                  : `Asked ${customer?.firstName} for a visit.`}
             </p>
           ) : (
             <>
@@ -511,6 +578,13 @@ export function PracticeSession({
                   className={cx(nudge && 'pulse')}
                 >
                   <Receipt aria-hidden /> I have enough to quote
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => run && setTurnDown({ mode: 'decline', run })}
+                  disabled={run?.status !== 'ready' || !run.messages.length || busy}
+                >
+                  <Ban aria-hidden /> We don’t do this job
                 </Button>
               </div>
               <form onSubmit={(event) => void send(event)} className="flex items-end gap-2">
@@ -546,6 +620,23 @@ export function PracticeSession({
           )}
         </div>
       </div>
+
+      <TurnDownSheet
+        target={turnDown}
+        onClose={() => setTurnDown(null)}
+        onDeclined={(next) => {
+          setTurnDown(null);
+          setNudge(false);
+          stageReveal(next);
+        }}
+        onSaved={() => {
+          setTurnDown(null);
+          notify('Saved. Your Charm follows it from now on.');
+          void loadPractice()
+            .then(onState)
+            .catch(() => {});
+        }}
+      />
 
       {run && customer && (
         <QuoteBuilder

@@ -7,6 +7,8 @@ import { requireWorkspace, workspace } from '../workspace.js';
 import {
   addPracticeRun,
   computeShadow,
+  declinePracticeRun,
+  declinePrefill,
   editInsight,
   ensurePracticeRuns,
   kickPreparation,
@@ -158,6 +160,36 @@ practiceRouter.post(
         turns: run.messages.filter((message) => message.from === 'owner').length,
       },
       { ref: run.id, value: ownerCents },
+    );
+    res.json(ok(run));
+  },
+);
+
+/** What the "Why not?" sheet fills in from this customer, once the owner opens it. */
+practiceRouter.get('/onboarding/practice/:id/decline', requireWorkspace, async (req, res) => {
+  res.json(ok(await declinePrefill(workspace(req).businessId, runId.parse(req.params.id))));
+});
+
+/** The owner turns this customer down, and saves the rule it follows from now on. */
+practiceRouter.post(
+  '/onboarding/practice/:id/decline',
+  rateLimit(20, 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    const { businessId } = workspace(req);
+    const run = await declinePracticeRun(businessId, runId.parse(req.params.id), req.body);
+    await recordRequestEvent(
+      req,
+      businessId,
+      'practice_declined',
+      {
+        position: run.position,
+        service: run.serviceName ?? '',
+        reason: run.turnDown?.reason ?? '',
+        minimum: Boolean(run.turnDown?.minimumCents),
+        turns: run.messages.filter((message) => message.from === 'owner').length,
+      },
+      { ref: run.id },
     );
     res.json(ok(run));
   },
