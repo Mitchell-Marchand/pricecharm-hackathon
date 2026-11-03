@@ -6,6 +6,7 @@ import { Download, LogOut } from 'lucide-react';
 import { PasswordInput } from '@/components/auth/PasswordInput';
 import { useOwner } from '@/components/owner/OwnerShell';
 import { CodeBox } from '@/components/owner/CodeBox';
+import { LocationSettings } from '@/components/owner/LocationSettings';
 import { PlanCards } from '@/components/owner/PlanCards';
 import { QuotePageSettings } from '@/components/owner/QuotePageSettings';
 import { WhatsAppSettings } from '@/components/owner/WhatsAppSettings';
@@ -299,6 +300,13 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </Section>
+
+        <Section
+          title="Where you work"
+          intro="Your Charm checks where each job is against these. Practice customers live near them too."
+        >
+          <LocationSettings />
         </Section>
 
         <Section
