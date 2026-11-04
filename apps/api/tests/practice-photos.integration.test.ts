@@ -254,6 +254,13 @@ test(
     const run = await settled(0);
     assert.equal(run.customer.distance.unit, 'mi');
     assert.equal(run.customer.distance.from, undefined, 'No location, no “from”');
+    // The photo they hold back is made just after they open.
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [held] = await rows('SELECT scenario_json FROM practice_runs WHERE id=?', [run.id]);
+      if (parse<{ extraPhoto: { photoId: string | null } }>(held.scenario_json).extraPhoto.photoId)
+        break;
+      await pause(50);
+    }
     const prepared = await send(run.id, 'post', 'messages', {
       text: 'Can you send a closer photo?',
     });
