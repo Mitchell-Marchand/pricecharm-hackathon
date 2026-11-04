@@ -1,5 +1,4 @@
 import { api, json } from './api';
-import type { ReadingProgress } from './chat';
 import type { Discount, Quote, QuoteLine } from './quote';
 import type { RuleInput, TurnDownKind, TurnDownRule } from './turn-downs';
 
@@ -12,45 +11,6 @@ export interface Distance {
   /** The owner's location it's from, as they typed it. */
   from?: string;
 }
-
-/**
- * What the Charm saw in the photos the customer opened with: still looking, what it found, or
- * that it couldn't read them. What it found is what its guess on this customer reads.
- */
-export type PhotoReading =
-  | { status: 'reading'; photoIds: string[]; progress: ReadingProgress | null }
-  | { status: 'failed'; photoIds: string[]; failure: string }
-  | {
-      status: 'read';
-      photoIds: string[];
-      summary: string;
-      counts: {
-        label: string;
-        unit: string;
-        count: number;
-        /** What it counted, before any fix. */
-        read: number;
-        atLeast: boolean;
-        kinds: { kind: string; count: number; condition: string }[];
-        fixed: boolean;
-      }[];
-      area: {
-        surface: string;
-        unit: string;
-        low: number;
-        high: number;
-        fixed: boolean;
-      } | null;
-      /** Its material, condition, access and anything else it noticed, in a few words each. */
-      details: string[];
-      /** What the owner added about the photos. */
-      note: string;
-      found: string[];
-      /** The photos with what it counted drawn on. */
-      drawn: { label: string; url: string }[];
-    };
-
-export type PhotoFixes = { counts?: Record<string, number>; area?: number | null; note?: string };
 
 export interface PracticeMessage {
   id: string;
@@ -117,8 +77,6 @@ export interface PracticeRun {
     minimumCents: number | null;
     removed: boolean;
   } | null;
-  /** What the Charm saw in the customer's photos. Missing from older APIs. */
-  photoReading?: PhotoReading | null;
   /** The customer is taking a photo the owner asked for. */
   takingPhoto?: boolean;
   /**
@@ -177,8 +135,12 @@ export type QuoteDraft = {
   note: string;
 };
 
-export const preparePractice = () =>
-  api<PracticeState>('/onboarding/practice/prepare', { method: 'POST', ...json({}) });
+/** `first` starts only the first customer, for a setup that hasn't reached practice yet. */
+export const preparePractice = (first = false) =>
+  api<PracticeState>('/onboarding/practice/prepare', {
+    method: 'POST',
+    ...json(first ? { first } : {}),
+  });
 export const loadPractice = () => api<PracticeState>('/onboarding/practice');
 export const sendPracticeMessage = (runId: string, text: string) =>
   api<{ run: PracticeRun; nudge: boolean }>(`/onboarding/practice/${runId}/messages`, {
@@ -207,12 +169,6 @@ export const fixInsight = (runId: string, insightId: string, text: string) =>
   api<PracticeRun>(`/onboarding/practice/${runId}/insights/${insightId}`, {
     method: 'PATCH',
     ...json({ text }),
-  });
-/** The owner's fix to what their Charm saw: a count, the size, or a note. */
-export const fixPhotoReading = (runId: string, fixes: PhotoFixes) =>
-  api<PracticeRun>(`/onboarding/practice/${runId}/photo-reading`, {
-    method: 'PATCH',
-    ...json(fixes),
   });
 export const retryPractice = (runId: string) =>
   api<PracticeState>(`/onboarding/practice/${runId}/retry`, { method: 'POST', ...json({}) });

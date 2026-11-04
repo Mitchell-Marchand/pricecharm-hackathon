@@ -52,12 +52,10 @@ export function openerPhotoIds(messages: Row[]): string[] {
   return opener ? json<string[]>(opener.photo_ids_json, []) : [];
 }
 
-/** Whether this customer's photos are still to be read before the chat goes on. */
+/** Whether this customer's photos are still to be read, which goes on behind the chat. */
 export function photosUnread(run: Row, messages: Row[]): boolean {
   if (!photoReadingsAvailable() || run.status !== 'ready' || run.outcome) return false;
   if (run.photo_reading_json) return false;
-  // Customers from before photos were read, already mid-chat, carry on without it.
-  if (messages.some((message) => message.sender === 'owner')) return false;
   return openerPhotoIds(messages).length > 0;
 }
 

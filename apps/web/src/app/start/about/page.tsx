@@ -7,6 +7,7 @@ import { SetupLoading } from '@/components/SetupLoading';
 import { BottomBar, WizardHeader } from '@/components/Wizard';
 import { Button, Field, SelectInput, TextInput } from '@/components/ui';
 import { CURRENCIES, currencyName, currencySymbol, type Currency } from '@/lib/currency';
+import { SHOW_SHOPPING_FACTS } from '@/lib/funnel-facts';
 import { pixelEvent } from '@/lib/meta-pixel';
 import { useOnboarding, type BusinessDraft } from '@/lib/onboarding';
 import { preparePractice } from '@/lib/practice';
@@ -191,7 +192,7 @@ function AboutForm({ business }: { business: BusinessDraft }) {
         </form>
       </main>
       <BottomBar
-        onBack={() => router.push('/start/why')}
+        onBack={() => router.push(SHOW_SHOPPING_FACTS ? '/start/why' : '/start/services')}
         onNext={() => void next()}
         nextLabel={moving ? 'Saving…' : 'Continue'}
         blocked={!named || !placed}

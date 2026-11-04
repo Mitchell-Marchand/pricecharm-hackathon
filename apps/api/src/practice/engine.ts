@@ -17,7 +17,6 @@ import {
   photoReadingView,
   practicePhotoNotes,
   READ_SECONDS,
-  readingPhotos,
   readPracticePhotos,
   resumePhotoReadings,
   RUN_COLUMNS,
@@ -128,10 +127,24 @@ export async function ensurePracticeRuns(businessId: string, count = PRACTICE_CO
  */
 export const MAX_PRACTICE_RUNS = { draft: 15, active: 50 };
 
+/** A business's customers in order, and whether the owner has started on each. */
+const customersOf = (businessId: string, connection: Sql) =>
+  rows(
+    `SELECT r.id,r.position,r.status,r.outcome,r.focus_service,
+     EXISTS(SELECT 1 FROM practice_messages m WHERE m.run_id=r.id AND m.sender='owner') AS started
+     FROM practice_runs r WHERE r.business_id=? ORDER BY r.position`,
+    [businessId],
+    connection,
+  );
+
+/** Not answered yet. One the owner has answered is finishing in the background, not waiting. */
+const isOpen = (run: Row) => run.status !== 'finished' && !run.outcome;
+
 /**
  * Another practice customer once setup's are done, for training whenever the owner likes,
- * and for one service if they pick it. If one is still being written or answered, that's the one:
- * the AI never writes two at once for a business.
+ * and for one service if they pick it. If one is still being written or answered, that's the one,
+ * unless they asked for a service and all that's open is a spare made for something else. Then
+ * the one they asked for goes first and the spare waits behind it.
  */
 export async function addPracticeRun(
   businessId: string,
@@ -139,14 +152,20 @@ export async function addPracticeRun(
 ): Promise<string> {
   return transaction(async (connection) => {
     await rows('SELECT id FROM businesses WHERE id=? FOR UPDATE', [businessId], connection);
-    const runs = await rows(
-      'SELECT id,position,status,outcome FROM practice_runs WHERE business_id=? ORDER BY position',
-      [businessId],
-      connection,
-    );
-    // One the owner has answered is finishing in the background, not waiting on them.
-    const open = runs.find((run) => run.status !== 'finished' && !run.outcome);
-    if (open) return String(open.id);
+    const runs = await customersOf(businessId, connection);
+    const open = runs.filter(isOpen);
+    const fits = (run: Row) =>
+      !focus || String(run.focus_service ?? '').toLowerCase() === focus.toLowerCase();
+    const current = open.find(fits) ?? open.find((run) => Number(run.started));
+    if (current) {
+      // Asked for now, so coming back opens it rather than the one just answered.
+      await mutate(
+        'UPDATE practice_runs SET created_at=UTC_TIMESTAMP(3) WHERE id=?',
+        [current.id],
+        connection,
+      );
+      return String(current.id);
+    }
     if (runs.length >= (draft ? MAX_PRACTICE_RUNS.draft : MAX_PRACTICE_RUNS.active))
       throw new ApiError(
         409,
@@ -156,26 +175,74 @@ export async function addPracticeRun(
           : 'That’s a lot of practice. Your Charm keeps learning from the quotes you send and the jobs you add.',
       );
     const id = randomUUID();
-    const position = runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1;
+    const next = runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1;
+    const [spare] = open;
+    if (spare)
+      await mutate('UPDATE practice_runs SET position=? WHERE id=?', [next, spare.id], connection);
     await mutate(
       'INSERT INTO practice_runs (id,business_id,position,focus_service) VALUES (?,?,?,?)',
-      [id, businessId, position, focus],
+      [id, businessId, spare ? spare.position : next, focus],
       connection,
     );
     return id;
   });
 }
 
-/** Starts preparing customers that are waiting, earliest first, outside the request. */
-export async function kickPreparation(businessId: string) {
-  const due = await rows(
-    "SELECT id FROM practice_runs WHERE business_id=? AND status='preparing' AND (prepare_until IS NULL OR prepare_until<UTC_TIMESTAMP(3)) ORDER BY position LIMIT 2",
+/**
+ * Keeps the next customer ready past setup's first ones, so moving on never means a wait. Once the
+ * owner has started on the last one waiting, one more is made behind it, so at most one sits
+ * unused. Never fails what the owner is doing: at worst the next customer is written on request.
+ */
+async function keepNextCustomerReady(businessId: string, focus: string | null) {
+  try {
+    await transaction(async (connection) => {
+      const [business] = await rows(
+        'SELECT status FROM businesses WHERE id=? FOR UPDATE',
+        [businessId],
+        connection,
+      );
+      const runs = await customersOf(businessId, connection);
+      const most = business.status === 'draft' ? MAX_PRACTICE_RUNS.draft : MAX_PRACTICE_RUNS.active;
+      if (runs.length >= most || runs.some((run) => isOpen(run) && !Number(run.started))) return;
+      await mutate(
+        'INSERT INTO practice_runs (id,business_id,position,focus_service) VALUES (?,?,?,?)',
+        [
+          randomUUID(),
+          businessId,
+          runs.reduce((last, run) => Math.max(last, Number(run.position)), -1) + 1,
+          focus,
+        ],
+        connection,
+      );
+    });
+    await kickPreparation(businessId);
+  } catch (error) {
+    reportError(error, { event: 'practice_prepare' });
+  }
+}
+
+/** The customer being answered and the next one are made ahead, and no more than that. */
+const CUSTOMERS_AHEAD = 2;
+
+/**
+ * Starts preparing customers that are waiting, earliest first, outside the request. Everything
+ * that checks on practice comes through here, polling included, so the ones already in hand
+ * count. Otherwise one wait for the first customer would write all of setup's at once.
+ */
+export async function kickPreparation(businessId: string, ahead = CUSTOMERS_AHEAD) {
+  const [held] = await rows(
+    "SELECT COUNT(*) AS count FROM practice_runs WHERE business_id=? AND outcome IS NULL AND (status='ready' OR (status='preparing' AND prepare_until>=UTC_TIMESTAMP(3)))",
     [businessId],
   );
-  for (const run of due)
-    void preparePracticeRun(String(run.id)).catch((error) =>
-      reportError(error, { event: 'practice_prepare' }),
-    );
+  const room = ahead - Number(held.count);
+  const due =
+    room > 0
+      ? await rows(
+          `SELECT id FROM practice_runs WHERE business_id=? AND status='preparing' AND (prepare_until IS NULL OR prepare_until<UTC_TIMESTAMP(3)) ORDER BY position LIMIT ${room}`,
+          [businessId],
+        )
+      : [];
+  for (const run of due) startPreparing(String(run.id));
   // Photos a restart left unread, or an asked-for photo it left untaken, are picked up again.
   await resumePhotoReadings(businessId);
   const asked = await rows(
@@ -435,6 +502,50 @@ async function takePhoto(runId: string, token: string) {
   });
 }
 
+const startPreparing = (runId: string) =>
+  void preparePracticeRun(runId).catch((error) =>
+    reportError(error, { event: 'practice_prepare' }),
+  );
+
+/** Starts this customer now, however many are ready: the owner is waiting on this one. */
+export async function prepareNow(businessId: string, runId: string) {
+  startPreparing(runId);
+  await kickPreparation(businessId);
+}
+
+/**
+ * The photo a customer holds back until they're asked. It's made after they open, so nobody waits
+ * on a photo they may never see. If it isn't there when asked for, one is taken instead.
+ */
+async function makeHeldPhoto(businessId: string, runId: string, scenario: PracticeScenario) {
+  if (scenario.extraPhoto.photoId) return;
+  try {
+    const photoId = await createPracticePhoto(
+      businessId,
+      runId,
+      scenario,
+      scenario.extraPhoto.scene,
+    );
+    await transaction(async (connection) => {
+      const [run] = await rows(
+        'SELECT scenario_json FROM practice_runs WHERE id=? FOR UPDATE',
+        [runId],
+        connection,
+      );
+      const current = json<PracticeScenario | null>(run?.scenario_json, null);
+      if (!current) return;
+      current.extraPhoto.photoId = photoId;
+      await mutate(
+        'UPDATE practice_runs SET scenario_json=? WHERE id=?',
+        [JSON.stringify(current), runId],
+        connection,
+      );
+    });
+  } catch (error) {
+    reportError(error, { event: 'practice_photo' });
+  }
+}
+
 /**
  * Writes the customer and their photos. Safe to call from anywhere: a lease keeps two requests
  * from preparing the same customer, and a stale lease is picked up again.
@@ -463,7 +574,7 @@ export async function preparePracticeRun(runId: string): Promise<void> {
       );
     }
     let ready = scenario;
-    const missing = [...ready.photos, ready.extraPhoto].filter((photo) => !photo.photoId);
+    const missing = ready.photos.filter((photo) => !photo.photoId);
     // A photo that fails leaves the request with fewer photos rather than no customer.
     await Promise.all(
       missing.map(async (photo) => {
@@ -475,8 +586,8 @@ export async function preparePracticeRun(runId: string): Promise<void> {
       }),
     );
     const photoIds = ready.photos.flatMap((photo) => (photo.photoId ? [photo.photoId] : []));
-    // The photos are read before the chat goes on. Demo mode's stand-in reading is instant, so
-    // it's saved with the customer. A real one is held for now and read once they're ready.
+    // The photos are read behind the chat, for the Charm's guess. Demo mode's stand-in reading is
+    // instant, so it's saved with the customer. A real one starts once they're ready.
     const toRead = !reading && photoIds.length > 0 && photoReadingsAvailable();
     if (toRead && aiMode === 'demo') {
       reading = { photoIds, result: demoPhotoReading(ready), failure: '' };
@@ -501,7 +612,11 @@ export async function preparePracticeRun(runId: string): Promise<void> {
       return true;
     });
     // Still outside the request: preparation runs on its own.
-    if (opened && readToken) await readPracticePhotos(runId, readToken);
+    if (opened)
+      await Promise.all([
+        readToken ? readPracticePhotos(runId, readToken) : null,
+        makeHeldPhoto(businessId, runId, ready),
+      ]);
   } catch (error) {
     reportError(error, { event: 'practice_prepare' });
     const failure =
@@ -571,10 +686,8 @@ function declinedView(run: Row, known: TurnDownView | undefined) {
   };
 }
 
-/** Says why the customer can't take a message or a quote yet, while their photos aren't done. */
-function assertIdle(run: Row, messages: Row[]) {
-  if (readingPhotos(run, messages))
-    throw new ApiError(409, 'PRACTICE_READING', 'Your Charm is still looking at the photos.');
+/** Says why the customer can't take a message or a quote yet: they're taking a photo. */
+function assertIdle(run: Row) {
   if (run.photo_ask_json)
     throw new ApiError(409, 'PRACTICE_PHOTO', 'They’re still taking that photo.');
 }
@@ -778,7 +891,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
   releaseFormula(businessId);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   const before = await runMessages(runId);
-  assertIdle(run, before);
+  assertIdle(run);
   if (before.length >= MAX_MESSAGES)
     throw new ApiError(
       422,
@@ -787,6 +900,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
     );
   const ownerId = await addMessage(undefined, businessId, runId, 'owner', 'text', text);
   const turn = before.filter((message) => message.sender === 'owner').length;
+  if (!turn) await keepNextCustomerReady(businessId, run.focus_service ?? null);
   // Up to two photos when asked: the prepared one straight away, or one taken of what they asked.
   const preparedPhoto = Boolean(scenario.extraPhoto.photoId) && !run.photo_sent;
   const photoAvailable =
@@ -909,6 +1023,8 @@ async function runImages(businessId: string, runId: string, messages: Row[]): Pr
 export const FIRST_GUESS_AFTER = 3;
 /** How long a guess waits for the formula that was being worked out from the latest quote. */
 const FORMULA_WAIT_MS = 90_000;
+/** How long a guess waits for the customer's photos to be read. */
+const READ_WAIT_MS = 30_000;
 /** One guess per customer at a time, however many requests ask for it. */
 const guessing = new Map<string, Promise<Shadow>>();
 
@@ -955,14 +1071,32 @@ async function formulaReady(businessId: string, data: PricingData, examples: num
   }
 }
 
+/**
+ * The photos are read behind the chat, and the owner never waits on that. A guess goes on what was
+ * read, as a live quote does, so it's the one thing that waits, out of their sight, and not for
+ * long: a reading takes about 20 seconds, and one that stalled shouldn't hold up a guess.
+ */
+async function photosRead(runId: string) {
+  const until = Date.now() + READ_WAIT_MS;
+  for (;;) {
+    const [run] = await rows(
+      'SELECT (photo_read_until>UTC_TIMESTAMP(3)) AS held FROM practice_runs WHERE id=?',
+      [runId],
+    );
+    if (!Number(run?.held) || Date.now() > until) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 async function guessFor(businessId: string, runId: string): Promise<Shadow> {
+  await photosRead(runId);
   const run = await loadRun(businessId, runId);
   const existing = json<Shadow | null>(run.shadow_json, null);
   if (existing) return existing;
   if (run.status === 'finished')
     throw new ApiError(409, 'PRACTICE_CLOSED', 'This practice request is already done.');
   const all = await runMessages(runId);
-  if (!run.outcome) assertIdle(run, all);
+  if (!run.outcome) assertIdle(run);
   // No guess until it comes from what this owner taught: a formula worked out from enough of
   // their own quotes. A stranger's guess on the first customers says nothing about them.
   const taught = await loadPricingData(businessId, { excludeRunId: runId });
@@ -1018,7 +1152,7 @@ async function guessFor(businessId: string, runId: string): Promise<Shadow> {
       // Only the size the customer said. What the photos show comes from the Charm's reading of
       // them, as a live customer's does, never from what the pretend customer knows.
       spec: saidSpec(scenario, json<string[]>(run.asked_json, [])),
-      // What it saw in the photos, with the owner's fixes: the same notes the card shows.
+      // What it saw in the photos, with any fixes.
       media: practicePhotoNotes(run),
       images: aiMode === 'demo' ? [] : await runImages(businessId, runId, messages),
       history: { excludeRunId: runId },
@@ -1192,9 +1326,11 @@ async function finishRun(
   runId: string,
   outcome: { quote: QuoteDraft } | { siteVisit: string },
 ) {
+  let focus: string | null = null;
   const question = await transaction(async (connection) => {
     const run = await loadRun(businessId, runId, connection, true);
     openRun(run);
+    focus = run.focus_service ?? null;
     const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
     if ('quote' in outcome) {
       const [business] = await rows(
@@ -1249,6 +1385,7 @@ async function finishRun(
   });
   // Their answer changes their notes, so the formula waits for it and is worked out once for both.
   if (question) holdFormula(businessId, QUESTION_HOLD_MS);
+  await keepNextCustomerReady(businessId, focus);
   void completeRun(businessId, runId).catch((error) =>
     reportError(error, { event: 'practice_finish' }),
   );
@@ -1342,7 +1479,7 @@ async function resumeFinishing(businessId: string, runs: Row[]) {
 export async function sendPracticeQuote(businessId: string, runId: string, body: unknown) {
   const quote = quoteDraftSchema.parse(body);
   const run = await loadRun(businessId, runId);
-  if (!run.outcome) assertIdle(run, await runMessages(runId));
+  if (!run.outcome) assertIdle(run);
   return finishRun(businessId, runId, { quote });
 }
 
@@ -1378,8 +1515,8 @@ export async function declinePracticeRun(businessId: string, runId: string, body
   const scenario = await transaction(async (connection) => {
     const run = await loadRun(businessId, runId, connection, true);
     openRun(run);
-    // Not while a photo is still being read or taken, as for a reply or a quote.
-    assertIdle(run, await runMessages(runId));
+    // Not while a photo is still being taken, as for a reply or a quote.
+    assertIdle(run);
     let saved: SavedTurnDown;
     if (input.kind === 'minimum') {
       await setMinimum(businessId, input.minimumCents, connection);
@@ -1397,7 +1534,9 @@ export async function declinePracticeRun(businessId: string, runId: string, body
     await addMessage(connection, businessId, runId, 'owner', 'declined', saved.reason);
     return json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   });
-  const [run] = await rows('SELECT asked_json FROM practice_runs WHERE id=?', [runId]);
+  const [run] = await rows('SELECT asked_json,focus_service FROM practice_runs WHERE id=?', [
+    runId,
+  ]);
   const labels = askedLabels(scenario, json<string[]>(run.asked_json, []));
   const insights = labels.length
     ? [{ id: `${runId.slice(0, 8)}-0`, text: `Asks about ${joinList(labels)}` }]
@@ -1417,7 +1556,7 @@ export async function declinePracticeRun(businessId: string, runId: string, body
       connection,
     );
   });
-  await kickPreparation(businessId);
+  await keepNextCustomerReady(businessId, run.focus_service ?? null);
   return viewOf(businessId, runId);
 }
 
@@ -1533,5 +1672,5 @@ export async function retryPracticeRun(businessId: string, runId: string) {
   );
   if (!updated.affectedRows)
     throw new ApiError(409, 'PRACTICE_NOT_FAILED', 'This practice customer is fine.');
-  await kickPreparation(businessId);
+  await prepareNow(businessId, runId);
 }

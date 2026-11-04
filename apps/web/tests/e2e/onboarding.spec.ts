@@ -10,8 +10,6 @@ async function describeBusiness(page: Page, name: string) {
   await page.getByRole('radio', { name: 'Pressure washing' }).click();
   await expect(page).toHaveURL(/\/start\/services$/);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page).toHaveURL(/\/start\/why$/);
-  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page).toHaveURL(/\/start\/about$/);
   await page.getByLabel('Business name').fill(name);
   await page.getByLabel('Main location').fill('Portland, OR');
@@ -105,10 +103,11 @@ test('setup asks one thing a screen and saves each as you go', async ({ page }) 
       'true',
     );
 
-  // Between questions, a number about their trade.
+  // Nothing else stands between picking a trade and their business details.
   await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page).toHaveURL(/\/start\/why$/);
-  // How customers shop, never a claim about a business setup knows nothing about yet.
+  await expect(page).toHaveURL(/\/start\/about$/);
+  // How customers shop is switched off for now (SHOW_SHOPPING_FACTS), and ready to turn back on.
+  await page.goto('/start/why');
   await expect(page.getByText('Window cleaning customers')).toBeVisible();
   await expect(
     page.getByRole('heading', { name: /7 in 10\s*want a price before they call anyone/ }),
@@ -181,6 +180,13 @@ test('a trade that isn’t listed is picked straight from the search', async ({ 
   // Its card takes them on too, as a listed trade's does.
   await page.getByRole('radio', { name: 'Pet sitting', exact: true }).click();
   await expect(page).toHaveURL(/\/start\/services$/);
+  // A typed-in trade has no customer made ahead, so its first one starts from here.
+  const prepared = page.waitForRequest((request) =>
+    request.url().endsWith('/api/v1/onboarding/practice/prepare'),
+  );
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/about$/);
+  expect((await prepared).postDataJSON()).toEqual({ first: true });
 });
 
 test('the public pages render without sideways scrolling on a phone', async ({ page }) => {

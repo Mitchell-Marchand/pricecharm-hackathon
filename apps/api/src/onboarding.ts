@@ -245,6 +245,16 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
     if (input.customTrade !== undefined) set('custom_trade', input.customTrade);
     if (input.tradeId !== undefined || input.customTrade !== undefined)
       set('industry', tradeName(tradeId, customTrade).slice(0, 160));
+    // Customers already made for another trade are no use. Ones not started go, and are made again.
+    if (
+      (tradeId ?? null) !== (business.trade_id ?? null) ||
+      customTrade !== (business.custom_trade ?? '')
+    )
+      await mutate(
+        "DELETE FROM practice_runs WHERE business_id=? AND outcome IS NULL AND id NOT IN (SELECT run_id FROM practice_messages WHERE business_id=? AND sender='owner')",
+        [current.businessId, current.businessId],
+        connection,
+      );
     if (input.name !== undefined) set('name', input.name);
     // An older page sends one area: it becomes their only location.
     const areas =

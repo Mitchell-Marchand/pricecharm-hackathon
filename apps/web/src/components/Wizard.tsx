@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, CloudAlert, CloudCheck, LoaderCircle } from 'lucide-react';
 import { api, errorMessage, json } from '@/lib/api';
+import { SHOW_SHOPPING_FACTS } from '@/lib/funnel-facts';
 import { useOnboarding } from '@/lib/onboarding';
 import { cx } from '@/lib/util';
 import { Logo } from './Logo';
@@ -28,9 +29,10 @@ const SCREENS = [
   'live',
 ] as const;
 export type Screen = (typeof SCREENS)[number];
+const SHOWN = SCREENS.filter((screen) => SHOW_SHOPPING_FACTS || screen !== 'why');
 
 function SetupProgress({ screen }: { screen: Screen }) {
-  const done = Math.round(((SCREENS.indexOf(screen) + 1) / SCREENS.length) * 100);
+  const done = Math.round(((SHOWN.indexOf(screen) + 1) / SHOWN.length) * 100);
   return (
     <div
       className="h-1 w-full bg-line"

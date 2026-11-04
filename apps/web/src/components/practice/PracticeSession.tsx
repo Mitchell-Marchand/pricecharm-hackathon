@@ -8,15 +8,18 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
-import { ArrowUp, Ban, Check, MessageSquarePlus, Pencil, Receipt, RotateCw } from 'lucide-react';
+import {
+  ArrowUp,
+  Ban,
+  Camera,
+  Check,
+  MessageSquarePlus,
+  Pencil,
+  Receipt,
+  RotateCw,
+} from 'lucide-react';
 import { CustomerMessage, OwnerMessage, SiteVisitMessage, Typing } from '@/components/Chat';
 import { PhotoViewer, type ViewerPhoto } from '@/components/PhotoViewer';
-import {
-  PhotoReadingCard,
-  PhotoReadingFailed,
-  PhotoReadingStatus,
-  TakingPhoto,
-} from '@/components/practice/PhotoReading';
 import { QuoteBuilder } from '@/components/practice/QuoteBuilder';
 import { TurnDownSheet, type TurnDownTarget } from '@/components/practice/TurnDownSheet';
 import { QuoteForm } from '@/components/QuoteForm';
@@ -38,6 +41,7 @@ import {
   type PracticeRun,
   type PracticeState,
   type QuoteDraft,
+  type Tone,
 } from '@/lib/practice';
 import { total } from '@/lib/quote';
 import { turnsDown } from '@/lib/turn-downs';
@@ -552,6 +556,21 @@ function LookingAtIt() {
   );
 }
 
+/** The customer off taking the photo the owner asked for. */
+function TakingPhoto({ name, initials, tone }: { name: string; initials: string; tone: Tone }) {
+  return (
+    <div className="fade-up flex items-end gap-2.5" role="status">
+      <div className="w-9 shrink-0 max-sm:hidden">
+        <Avatar initials={initials} tone={tone} />
+      </div>
+      <div className="flex h-11 items-center gap-2 rounded-[16px] rounded-bl-[4px] border border-line bg-surface px-4 text-[15px] text-muted shadow-1">
+        <Camera className="size-4 animate-pulse" aria-hidden />
+        Taking a photo…<span className="sr-only"> {name} will send it in a moment.</span>
+      </div>
+    </div>
+  );
+}
+
 /** After the owner answers, the quote lands first, then the customer replies, then the insights. */
 type Reveal = { runId: string; messages: number; insights: boolean };
 
@@ -594,7 +613,7 @@ export function PracticeSession({
   // While they type on a phone the keyboard needs the room the buttons take. Once what they typed
   // is sent, the buttons are back, so quoting never means closing the keyboard first.
   const [replying, setReplying] = useState(false);
-  // A reply sent while the Charm reads the photos, which goes once it's done.
+  // A reply sent while the customer takes a photo, which goes once it's there.
   const [queued, setQueued] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
   // "We don't do this job", or changing what turning one down saved.
@@ -624,16 +643,15 @@ export function PracticeSession({
         .then(onState)
         .catch(() => {});
     }, 1500);
-    const note = window.setTimeout(() => setSlow(true), 6000);
+    const note = window.setTimeout(() => setSlow(true), 2000);
     return () => {
       window.clearInterval(poll);
       window.clearTimeout(note);
     };
   }, [run?.status, run?.id, onState]);
 
-  // While the Charm reads the photos or the customer takes one, check back until it's done.
-  const reading = run?.photoReading?.status === 'reading';
-  const waiting = run?.status === 'ready' && (reading || Boolean(run.takingPhoto));
+  // While the customer takes a photo, check back until it's there.
+  const waiting = run?.status === 'ready' && Boolean(run.takingPhoto);
   // Answered, and its guess and what it picked up still coming: check back until they're in.
   const finishing = Boolean(run?.outcome) && !run?.finished;
   useEffect(() => {
@@ -657,24 +675,15 @@ export function PracticeSession({
     if (visibleMessages.length > 1 || typing || pending) scrollToBottom();
   }, [visibleMessages.length, typing, pending, showInsights, run?.takingPhoto]);
 
-  // Every photo in the chat, in order, for the full-screen viewer, then what the Charm counted.
-  const photoReading = run?.photoReading ?? null;
-  const viewerPhotos: ViewerPhoto[] = [
-    ...visibleMessages.flatMap((message) =>
-      message.from === 'customer'
-        ? message.photos.map((photo) => ({
-            src: photo.url,
-            label: `Photo from ${run?.customer?.name ?? 'your customer'}`,
-          }))
-        : [],
-    ),
-    ...(photoReading?.status === 'read'
-      ? photoReading.drawn.map((photo) => ({
+  // Every photo in the chat, in order, for the full-screen viewer.
+  const viewerPhotos: ViewerPhoto[] = visibleMessages.flatMap((message) =>
+    message.from === 'customer'
+      ? message.photos.map((photo) => ({
           src: photo.url,
-          label: `What your Charm counted: ${photo.label}`,
+          label: `Photo from ${run?.customer?.name ?? 'your customer'}`,
         }))
-      : []),
-  ];
+      : [],
+  );
   const photosBefore = (position: number) =>
     visibleMessages
       .slice(0, position)
@@ -684,7 +693,7 @@ export function PracticeSession({
     event?.preventDefault();
     const text = draft.trim();
     if (!run || !text) return;
-    // Never a dead tap: while it reads the photos, the reply waits and goes once it's done.
+    // Never a dead tap: while a photo's on its way, the reply waits and goes once it's there.
     if (waiting && !typing && !pending && !run.outcome) {
       setQueued(true);
       return;
@@ -793,27 +802,6 @@ export function PracticeSession({
   }, [queued, busy]);
   const customer = run?.customer;
   const lastQuoteId = [...(run?.messages ?? [])].reverse().find((message) => message.quote)?.id;
-  const readId = photoReading?.photoIds[0];
-
-  /** Under the photos the customer opened with: the Charm looking, or what it saw. */
-  const renderReading = () => {
-    if (!run || !photoReading) return null;
-    if (photoReading.status === 'reading')
-      return <PhotoReadingStatus key="reading" progress={photoReading.progress} />;
-    if (photoReading.status === 'failed') return <PhotoReadingFailed key="reading" />;
-    const drawnAt = viewerPhotos.length - photoReading.drawn.length;
-    return (
-      <PhotoReadingCard
-        key="reading"
-        run={run}
-        reading={photoReading}
-        canFix={run.status === 'ready' && !run.outcome && !busy}
-        onChange={onRun}
-        onShowDrawn={() => setViewing(drawnAt)}
-      />
-    );
-  };
-
   const renderMessage = (message: PracticeMessage, position: number) => {
     if (!customer) return null;
     if (message.quote)
@@ -832,8 +820,7 @@ export function PracticeSession({
     if (message.from === 'owner')
       return <OwnerMessage key={message.id}>{message.text}</OwnerMessage>;
     const following = visibleMessages[position + 1];
-    const read = Boolean(readId) && message.photos.some((photo) => photo.id === readId);
-    const bubble = (
+    return (
       <CustomerMessage
         key={message.id}
         name={customer.name}
@@ -841,19 +828,11 @@ export function PracticeSession({
         tone={customer.tone}
         photos={message.photos.length ? message.photos.map((photo) => photo.url) : undefined}
         onPhoto={(index) => setViewing(photosBefore(position) + index)}
-        showAvatar={read || !following || following.from !== 'customer'}
+        showAvatar={!following || following.from !== 'customer'}
         flat
       >
         {message.text}
       </CustomerMessage>
-    );
-    return read ? (
-      <div key={message.id} className="flex flex-col gap-2.5">
-        {bubble}
-        {renderReading()}
-      </div>
-    ) : (
-      bubble
     );
   };
 
@@ -913,12 +892,6 @@ export function PracticeSession({
                   flat
                 />
               )}
-              {run?.status === 'preparing' && slow && (
-                <p className="text-sm text-muted" role="status">
-                  Writing a practice customer for your trade, with photos of the job. This takes
-                  about half a minute the first time.
-                </p>
-              )}
               {run && finishing && (reveal?.runId !== run.id || reveal?.insights) && (
                 <LookingAtIt />
               )}
@@ -957,6 +930,12 @@ export function PracticeSession({
             </p>
           ) : (
             <>
+              {run?.status === 'preparing' && slow && (
+                <p className="pb-2.5 text-sm text-muted max-sm:pb-2" role="status">
+                  Your customer is on the way, with photos of the job. This can take about half a
+                  minute.
+                </p>
+              )}
               <div
                 className={cx(
                   'flex flex-wrap items-center gap-2 pb-2.5 max-sm:flex-nowrap max-sm:pb-2',
@@ -996,11 +975,7 @@ export function PracticeSession({
                   rows={1}
                   value={draft}
                   placeholder={
-                    reading
-                      ? 'Your Charm is looking at the photos…'
-                      : customer
-                        ? `Ask ${customer.firstName} a question…`
-                        : 'Ask a question…'
+                    customer ? `Ask ${customer.firstName} a question…` : 'Ask a question…'
                   }
                   onChange={(event) => {
                     setDraft(event.target.value);
@@ -1024,7 +999,7 @@ export function PracticeSession({
               </form>
               {queued && (
                 <p className="pt-2 text-sm text-muted" role="status">
-                  It goes as soon as your Charm has looked at the photos.
+                  It goes as soon as the photo comes through.
                 </p>
               )}
             </>

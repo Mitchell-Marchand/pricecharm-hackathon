@@ -15,6 +15,7 @@ import {
   ensurePracticeRuns,
   fixPhotoReading,
   kickPreparation,
+  prepareNow,
   PRACTICE_COUNT,
   practiceState,
   retryPracticeRun,
@@ -31,11 +32,18 @@ import { gapPercent, quoteTotal } from './types.js';
 export const practiceRouter = Router();
 const runId = z.uuid();
 
-/** Creates the practice customers and starts writing them. Safe to call more than once. */
+/**
+ * Creates the practice customers and starts writing them. Safe to call more than once. With
+ * `first`, only the first one starts, for a setup that hasn't reached practice yet.
+ */
 practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req, res) => {
+  const { first } = z
+    .object({ first: z.boolean().optional() })
+    .strict()
+    .parse(req.body ?? {});
   const { businessId } = workspace(req);
   await ensurePracticeRuns(businessId);
-  await kickPreparation(businessId);
+  await kickPreparation(businessId, first ? 1 : undefined);
   await recordRequestEvent(req, businessId, 'practice_prepared', await setupFacts(businessId));
   res.json(ok(await practiceState(businessId)));
 });
@@ -64,7 +72,7 @@ practiceRouter.post(
     if (service && !focus)
       throw new ApiError(422, 'PRACTICE_SERVICE', 'That isn’t one of your services.');
     const id = await addPracticeRun(businessId, { focus, draft });
-    await kickPreparation(businessId);
+    await prepareNow(businessId, id);
     await recordRequestEvent(
       req,
       businessId,

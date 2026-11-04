@@ -112,7 +112,7 @@ test(
     assert.equal(reading.counts[0].label, 'planters');
     assert.ok(reading.details.includes('dark stains, worst by the door'));
 
-    // While a reading holds the photos, the chat waits for it, and says so.
+    // A reading goes on behind the chat, which never waits for it.
     const [{ photo_reading_json: read }] = await rows(
       'SELECT photo_reading_json FROM practice_runs WHERE id=?',
       [dana.id],
@@ -124,15 +124,8 @@ test(
     const held = (await owner.get('/api/v1/onboarding/practice')).body.data.runs[0];
     assert.equal(held.photoReading.status, 'reading');
     assert.deepEqual(held.photoReading.progress, { step: 'counting', counting: ['planters'] });
-    for (const [what, data] of [
-      ['messages', { text: 'How big is it?' }],
-      ['guess', {}],
-      ['quote', { lines: [{ id: 'a', label: 'Patio', amountCents: 20000 }] }],
-    ] as const) {
-      const waited = await send(dana.id, 'post', what, data);
-      assert.equal(waited.status, 409, what);
-      assert.equal(waited.body.error.code, 'PRACTICE_READING');
-    }
+    const asked = await send(dana.id, 'post', 'messages', { text: 'How big is it?' });
+    assert.equal(asked.status, 200, JSON.stringify(asked.body));
     // A reading a restart cut short runs out and is picked up again.
     await mutate(
       'UPDATE practice_runs SET photo_read_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
