@@ -1,9 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { Meter, useCharm } from '@/components/Charm';
+import {
+  PracticeBar,
+  useScoreGain,
+  type PracticeMenuItem,
+} from '@/components/practice/PracticeBar';
 import { PracticeSession } from '@/components/practice/PracticeSession';
 import { SetupLoading } from '@/components/SetupLoading';
 import { useToast } from '@/components/Toast';
@@ -28,17 +33,7 @@ const WELL_TRAINED = 85;
 /** How trained the Charm is, under the header for the whole of practice. */
 function TrainingMeter({ charm }: { charm: CharmView | null }) {
   const score = charm?.readiness.score ?? null;
-  const last = useRef<number | null>(null);
-  const [gain, setGain] = useState(0);
-  useEffect(() => {
-    if (score === null) return;
-    const before = last.current;
-    last.current = score;
-    if (before === null || score <= before) return;
-    setGain(score - before);
-    const timer = window.setTimeout(() => setGain(0), 2400);
-    return () => window.clearTimeout(timer);
-  }, [score]);
+  const gain = useScoreGain(score);
   const more = charm?.readiness.toWellTrained;
   return (
     <div className="gutter mx-auto flex max-w-[760px] items-center gap-3 pb-3" aria-live="polite">
@@ -133,13 +128,21 @@ export default function PracticeStep() {
 
   const later = () => (draft ? setSaving(true) : router.push('/app/train'));
   const first = index === 0 && (run?.messages.length ?? 0) <= 1;
+  const toTraining = () => router.push('/start/training');
+  const menu: PracticeMenuItem[] = [
+    ...(first ? [{ label: 'Back', onSelect: toTraining }] : []),
+    { label: 'Finish later', onSelect: later },
+  ];
 
   return (
     // The tilted copies behind a quote reach past the edge on a phone. The page doesn't slide.
     <div className="flex min-h-dvh flex-col overflow-x-clip">
-      <WizardHeader screen="practice">
-        <TrainingMeter charm={charm} />
-      </WizardHeader>
+      <PracticeBar run={run} charm={charm} menu={menu} />
+      <div className="hidden sm:contents">
+        <WizardHeader screen="practice">
+          <TrainingMeter charm={charm} />
+        </WizardHeader>
+      </div>
 
       <PracticeSession
         key={run?.id ?? 'loading'}
@@ -148,14 +151,19 @@ export default function PracticeStep() {
         onRun={(changed) => setPractice((current) => current && withRun(current, changed))}
         onState={apply}
         closePercent={practice?.closePercent}
-        className="pt-8 pb-10"
+        className="pt-8 pb-10 max-sm:pt-3 max-sm:pb-4"
         intro={
           <>
+            {index === 0 && (
+              <p className="pb-3 text-center text-xs text-muted sm:hidden">
+                Pretend customer. Nothing you send here goes anywhere.
+              </p>
+            )}
             {first && (
-              <div className="mb-8">
+              <div className="mb-8 max-sm:hidden">
                 <button
                   type="button"
-                  onClick={() => router.push('/start/training')}
+                  onClick={toTraining}
                   className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"
                 >
                   <ArrowLeft className="size-4" aria-hidden /> Back
@@ -168,7 +176,7 @@ export default function PracticeStep() {
               </div>
             )}
             {!first && run?.focus && (run?.messages.length ?? 0) <= 1 && (
-              <h1 className="t-h2 mb-6">
+              <h1 className="t-h2 mb-6 max-sm:hidden">
                 Practice {article(run.focus)} {run.focus} job
               </h1>
             )}

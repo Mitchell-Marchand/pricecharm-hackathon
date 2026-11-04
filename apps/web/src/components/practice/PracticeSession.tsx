@@ -582,8 +582,8 @@ export function PracticeSession({
   done: ReactNode;
   as?: 'main' | 'div';
   className?: string;
-  /** Side padding, for pages that don't already have it. */
-  gutter?: boolean;
+  /** Side padding, for pages that don't already have it, or don't on a phone. */
+  gutter?: boolean | 'phone';
   /** How close its guess has to come to count, the owner's own setting. */
   closePercent?: number;
 }) {
@@ -591,6 +591,9 @@ export function PracticeSession({
   const [typing, setTyping] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  // While they type on a phone the keyboard needs the room the buttons take. Once what they typed
+  // is sent, the buttons are back, so quoting never means closing the keyboard first.
+  const [replying, setReplying] = useState(false);
   // A reply sent while the Charm reads the photos, which goes once it's done.
   const [queued, setQueued] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -839,6 +842,7 @@ export function PracticeSession({
         photos={message.photos.length ? message.photos.map((photo) => photo.url) : undefined}
         onPhoto={(index) => setViewing(photosBefore(position) + index)}
         showAvatar={read || !following || following.from !== 'customer'}
+        flat
       >
         {message.text}
       </CustomerMessage>
@@ -853,9 +857,11 @@ export function PracticeSession({
     );
   };
 
+  const sides = gutter === 'phone' ? 'max-sm:gutter' : gutter && 'gutter';
+
   return (
     <>
-      <Content className={cx('mx-auto w-full max-w-[760px] flex-1', gutter && 'gutter', className)}>
+      <Content className={cx('mx-auto w-full max-w-[760px] flex-1', sides, className)}>
         {intro}
         {run?.status === 'failed' ? (
           <div className="rounded-md border border-line bg-surface p-5" role="alert">
@@ -867,7 +873,8 @@ export function PracticeSession({
           </div>
         ) : (
           <>
-            <div className="flex items-center gap-3 border-b border-line pb-4">
+            {/* On a phone this is the header's job (PracticeBar). */}
+            <div className="flex items-center gap-3 border-b border-line pb-4 max-sm:hidden">
               {customer ? (
                 <Avatar initials={customer.initials} tone={customer.tone} size="lg" />
               ) : (
@@ -888,7 +895,7 @@ export function PracticeSession({
               <Tag tone="accent">Practice</Tag>
             </div>
 
-            <div className="mt-6 flex flex-col gap-4" aria-live="polite">
+            <div className="flex flex-col gap-4 sm:mt-6" aria-live="polite">
               {visibleMessages.map(renderMessage)}
               {pending && <OwnerMessage>{pending}</OwnerMessage>}
               {customer && run?.takingPhoto && !typing && (
@@ -903,6 +910,7 @@ export function PracticeSession({
                   name={customer?.firstName ?? 'Your customer'}
                   initials={customer?.initials ?? '…'}
                   tone={customer?.tone ?? 'canary'}
+                  flat
                 />
               )}
               {run?.status === 'preparing' && slow && (
@@ -936,7 +944,7 @@ export function PracticeSession({
         className="sticky bottom-0 z-30 border-t border-line bg-bg/92 backdrop-blur-md"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
-        <div className={cx('mx-auto max-w-[760px] py-3', gutter && 'gutter')}>
+        <div className={cx('mx-auto max-w-[760px] py-3 max-sm:py-2', sides)}>
           {run?.finished && showInsights ? (
             done
           ) : run?.outcome ? (
@@ -949,7 +957,12 @@ export function PracticeSession({
             </p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2 pb-2.5">
+              <div
+                className={cx(
+                  'flex flex-wrap items-center gap-2 pb-2.5 max-sm:flex-nowrap max-sm:pb-2',
+                  replying && draft.trim() && 'max-sm:hidden',
+                )}
+              >
                 <Button
                   variant="quote"
                   onClick={() => {
@@ -958,16 +971,19 @@ export function PracticeSession({
                     if (run) void requestGuess(run.id).catch(() => {});
                   }}
                   disabled={run?.status !== 'ready' || !run.messages.length || waiting}
-                  className={cx(nudge && 'pulse')}
+                  className={cx('max-sm:h-10 max-sm:flex-1', nudge && 'pulse')}
                 >
-                  <Receipt aria-hidden /> I have enough to quote
+                  <Receipt aria-hidden /> <span className="sm:hidden">Send quote</span>
+                  <span className="max-sm:hidden">I have enough to quote</span>
                 </Button>
                 <Button
                   variant="secondary"
                   onClick={() => run && setTurnDown({ mode: 'decline', run })}
                   disabled={run?.status !== 'ready' || !run.messages.length || busy}
+                  className="max-sm:h-10 max-sm:flex-1"
                 >
-                  <Ban aria-hidden /> We don’t do this job
+                  <Ban aria-hidden /> <span className="sm:hidden">Turn down</span>
+                  <span className="max-sm:hidden">We don’t do this job</span>
                 </Button>
               </div>
               <form onSubmit={(event) => void send(event)} className="flex items-end gap-2">
@@ -993,13 +1009,15 @@ export function PracticeSession({
                     event.target.style.height = `${Math.min(event.target.scrollHeight, 144)}px`;
                   }}
                   onKeyDown={onReplyKey}
-                  className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-sm border border-line-strong bg-surface px-3.5 py-3 text-base leading-6 text-ink focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none"
+                  onFocus={() => setReplying(true)}
+                  onBlur={() => setReplying(false)}
+                  className="max-h-36 min-h-12 min-w-0 flex-1 resize-none rounded-sm border border-line-strong bg-surface px-3.5 py-3 text-base leading-6 text-ink focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-soft)] focus:outline-none max-sm:min-h-11 max-sm:py-2"
                 />
                 <Button
                   type="submit"
                   aria-label="Send"
                   disabled={!draft.trim() || (busy && !waiting) || queued}
-                  className="size-12 px-0"
+                  className="size-12 px-0 max-sm:size-11"
                 >
                   <ArrowUp aria-hidden />
                 </Button>

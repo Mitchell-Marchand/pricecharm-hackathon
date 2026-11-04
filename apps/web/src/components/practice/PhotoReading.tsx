@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type CSSProperties, type FormEvent } from 'react';
-import { Camera, Check, Pencil, ScanEye } from 'lucide-react';
+import { Camera, Check, ChevronDown, Pencil, ScanEye } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { Avatar, Button, TextInput } from '@/components/ui';
 import { errorMessage } from '@/lib/api';
@@ -15,9 +15,13 @@ const list = (items: string[]) =>
   items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : (items[0] ?? '');
 const number = (value: number) => value.toLocaleString('en-US');
 const upper = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 
-/** Under a customer's bubble, lined up with it past the avatar. */
-const UNDER = 'ml-[46px] max-w-[420px]';
+/** Under a customer's bubble, lined up with it past the avatar, which a phone doesn't show. */
+const UNDER = 'max-w-[420px] sm:ml-[46px]';
+/** The cards under the photos, slimmer on a phone so the chat keeps the screen. */
+const CARD =
+  'fade-up rounded-md border border-line bg-surface px-4 py-3.5 shadow-1 max-sm:px-3 max-sm:py-2.5';
 
 /**
  * The owner watching their Charm read the customer's photos: each step as it happens and what
@@ -46,21 +50,18 @@ export function PhotoReadingStatus({ progress }: { progress: ReadingProgress | n
   const seen = progress?.seen?.trim();
   const found = progress?.found ?? [];
   return (
-    <div
-      className={cx(UNDER, 'fade-up rounded-md border border-line bg-surface px-4 py-3.5 shadow-1')}
-      role="status"
-      aria-live="polite"
-    >
+    <div className={cx(UNDER, CARD)} role="status" aria-live="polite">
       <p className="flex items-center gap-2 text-[15px] font-semibold">
         <ScanEye className="size-4 text-accent" aria-hidden /> Your Charm is looking at the photos
       </p>
-      <ol className="mt-3 flex flex-col gap-2">
+      <ol className="mt-3 flex flex-col gap-2 max-sm:mt-1.5">
         {STEPS.map((item, index) => (
           <li
             key={item.step}
             className={cx(
               'flex items-center gap-2.5 text-[14.5px] leading-snug',
               index < at ? 'text-ink-2' : index === at ? 'font-medium text-ink' : 'text-muted',
+              index !== at && 'max-sm:hidden',
             )}
           >
             <span className="flex size-5 shrink-0 items-center justify-center">
@@ -81,11 +82,11 @@ export function PhotoReadingStatus({ progress }: { progress: ReadingProgress | n
           </li>
         ))}
       </ol>
-      <div className="mt-3.5 h-1.5 overflow-hidden rounded-full bg-surface-2">
+      <div className="mt-3.5 h-1.5 overflow-hidden rounded-full bg-surface-2 max-sm:mt-2">
         <div key={at} className="reading-bar h-full rounded-full bg-accent" style={bar} />
       </div>
       {(seen || found.length > 0) && (
-        <div className="mt-3 flex flex-col gap-1.5 border-t border-line pt-3 text-[13.5px] leading-[1.5] text-ink-2">
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-line pt-3 text-[13.5px] leading-[1.5] text-ink-2 max-sm:hidden">
           {found.length > 0 && (
             <p>
               <span className="font-medium text-ink">Found so far:</span> {found.join(', ')}
@@ -94,7 +95,7 @@ export function PhotoReadingStatus({ progress }: { progress: ReadingProgress | n
           {seen && <p>{seen}</p>}
         </div>
       )}
-      <p className="mt-3 text-xs text-muted">
+      <p className="mt-3 text-xs text-muted max-sm:hidden">
         Customers&apos; photos get read like this too. It usually takes under half a minute.
       </p>
     </div>
@@ -136,12 +137,14 @@ export function PhotoReadingCard({
 }) {
   const notify = useToast();
   const [editing, setEditing] = useState(false);
+  // On a phone it's one line until the owner opens it.
+  const [opened, setOpened] = useState(false);
   const [saving, setSaving] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [area, setArea] = useState('');
   const [note, setNote] = useState('');
 
-  function open() {
+  function startFix() {
     setCounts(Object.fromEntries(reading.counts.map((item) => [item.label, String(item.count)])));
     setArea(
       reading.area
@@ -196,18 +199,39 @@ export function PhotoReadingCard({
   const fixed = reading.counts.some((item) => item.fixed) || reading.area?.fixed || reading.note;
 
   return (
-    <section
-      className={cx(UNDER, 'fade-up rounded-md border border-line bg-surface px-4 py-3.5 shadow-1')}
-      aria-labelledby={`saw-${run.id}`}
-    >
+    <section className={cx(UNDER, CARD)} aria-labelledby={`saw-${run.id}`}>
       <div className="flex items-start justify-between gap-3">
-        <h3 id={`saw-${run.id}`} className="t-label flex items-center gap-1.5 text-muted">
+        <h3
+          id={`saw-${run.id}`}
+          className="t-label flex items-center gap-1.5 text-muted max-sm:hidden"
+        >
           <ScanEye className="size-3.5" aria-hidden /> What your Charm saw
         </h3>
+        <button
+          type="button"
+          aria-expanded={opened || editing}
+          onClick={() => setOpened((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm sm:hidden"
+        >
+          <ScanEye className="size-4 shrink-0 text-accent" aria-hidden />
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">
+              {seen.length ? 'Your Charm saw' : 'What your Charm saw'}
+            </span>
+            {seen.length > 0 && ` ${lower(seen[0])}`}
+          </span>
+          <ChevronDown
+            className={cx(
+              'size-4 shrink-0 text-muted transition-transform',
+              opened && 'rotate-180',
+            )}
+            aria-hidden
+          />
+        </button>
         {canFix && !editing && (
           <button
             type="button"
-            onClick={open}
+            onClick={startFix}
             className="-my-1 inline-flex shrink-0 items-center gap-1 py-1 text-sm text-muted hover:text-accent"
           >
             <Pencil className="size-3.5" aria-hidden /> Fix
@@ -269,7 +293,7 @@ export function PhotoReadingCard({
           </div>
         </form>
       ) : (
-        <>
+        <div className={cx(!opened && 'max-sm:hidden')}>
           {reading.summary && <p className="mt-2 text-[15px] text-ink">{reading.summary}</p>}
           {seen.length > 0 && (
             <ul className="mt-2 flex flex-col gap-1 text-[15px] text-ink">
@@ -305,7 +329,7 @@ export function PhotoReadingCard({
               See what it counted
             </button>
           )}
-        </>
+        </div>
       )}
     </section>
   );
@@ -332,7 +356,7 @@ export function TakingPhoto({
 }) {
   return (
     <div className="fade-up flex items-end gap-2.5" role="status">
-      <div className="w-9 shrink-0">
+      <div className="w-9 shrink-0 max-sm:hidden">
         <Avatar initials={initials} tone={tone} />
       </div>
       <div className="flex h-11 items-center gap-2 rounded-[16px] rounded-bl-[4px] border border-line bg-surface px-4 text-[15px] text-muted shadow-1">

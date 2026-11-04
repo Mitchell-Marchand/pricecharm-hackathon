@@ -83,12 +83,19 @@ function SignedIn({ children }: { children: ReactNode }) {
     href === '/app'
       ? pathname === '/app' || pathname.startsWith('/app/quotes')
       : pathname.startsWith(href);
+  // A practice chat on a phone is all chat, with its own header, as it is in setup.
+  const practicing = pathname.startsWith('/app/train/practice');
 
   return (
     <OwnerContext.Provider value={{ me, reload }}>
       {/* The tilted copies behind a quote reach past the edge on a phone. The page doesn't slide. */}
       <div className="min-h-dvh overflow-x-clip">
-        <header className="sticky top-0 z-40 border-b border-line bg-bg/92 backdrop-blur-md">
+        <header
+          className={cx(
+            'sticky top-0 z-40 border-b border-line bg-bg/92 backdrop-blur-md',
+            practicing && 'max-sm:hidden',
+          )}
+        >
           <div className="gutter mx-auto flex h-16 max-w-6xl items-center gap-6">
             <Logo href="/app" />
             <nav aria-label="Main" className="hidden items-center gap-1 sm:flex">
@@ -107,9 +114,18 @@ function SignedIn({ children }: { children: ReactNode }) {
           </nav>
         </header>
         {!me.user.emailVerified && (
-          <ConfirmEmail email={me.user.email} onConfirmed={reload} variant="band" />
+          <div className={cx(practicing && 'max-sm:hidden')}>
+            <ConfirmEmail email={me.user.email} onConfirmed={reload} variant="band" />
+          </div>
         )}
-        <main className="gutter mx-auto max-w-6xl pt-8 pb-24 sm:pt-10">{children}</main>
+        <main
+          className={cx(
+            'mx-auto max-w-6xl pt-8 pb-24 sm:pt-10',
+            practicing ? 'max-sm:pt-0 sm:gutter' : 'gutter',
+          )}
+        >
+          {children}
+        </main>
       </div>
     </OwnerContext.Provider>
   );

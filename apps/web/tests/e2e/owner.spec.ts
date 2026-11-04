@@ -211,6 +211,10 @@ test('an owner resets a forgotten password, then signs out from the menu at the 
   await expect(menu).toBeHidden();
   await expect(account).toBeFocused();
 
+  // A link into setup takes a signed-in owner to their account.
+  await page.goto('/start');
+  await expect(page).toHaveURL(/\/app$/);
+
   await page.goto('/start/business');
   await expect(page.getByRole('button', { name: /Finish later/ })).toHaveCount(0);
   await page.getByRole('button', { name: /^Account/ }).click();
@@ -239,6 +243,15 @@ test('after setup, an owner practices with as many customers as they like', asyn
   // The customer is in the address, so a reload comes back to the same chat.
   await page.reload();
   await expect(page.getByText('How big is the patio?')).toBeVisible();
+
+  // On a phone it's all chat, with the app's header and tabs out of the way.
+  await page.setViewportSize({ width: 390, height: 664 });
+  await expect(page.getByRole('heading', { name: 'Dana R.' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'More' }).click();
+  await expect(page.getByRole('link', { name: 'Back to Train' })).toBeVisible();
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole('button', { name: 'I have enough to quote' }).click();
   const builder = page.getByRole('dialog', { name: /^Quote for / });

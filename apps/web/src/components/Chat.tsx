@@ -49,6 +49,7 @@ export function CustomerMessage({
   onPhoto,
   children,
   showAvatar = true,
+  flat = false,
 }: {
   name: string;
   initials: string;
@@ -58,10 +59,14 @@ export function CustomerMessage({
   onPhoto?: (index: number) => void;
   children?: ReactNode;
   showAvatar?: boolean;
+  /** No avatar on a phone, where the header says who this is and the message needs the width. */
+  flat?: boolean;
 }) {
   return (
     <div className="fade-up flex items-end gap-2.5">
-      <div className="w-9 shrink-0">{showAvatar && <Avatar initials={initials} tone={tone} />}</div>
+      <div className={cx('w-9 shrink-0', flat && 'max-sm:hidden')}>
+        {showAvatar && <Avatar initials={initials} tone={tone} />}
+      </div>
       <div
         className={cx(
           'min-w-0 rounded-[16px] rounded-bl-[4px] border border-line bg-surface shadow-1',
@@ -116,16 +121,19 @@ export function Typing({
   initials,
   tone,
   logo,
+  flat = false,
 }: {
   name: string;
   initials: string;
   tone: 'canary' | 'pink' | 'blue';
   /** The business's own logo, in place of its initials. */
   logo?: Logo | null;
+  /** No avatar on a phone, as with CustomerMessage. */
+  flat?: boolean;
 }) {
   return (
     <div className="fade-up flex items-end gap-2.5" role="status">
-      <div className="w-9 shrink-0">
+      <div className={cx('w-9 shrink-0', flat && 'max-sm:hidden')}>
         {logo ? (
           <BusinessMark initials={initials} logo={logo} square />
         ) : (
