@@ -559,6 +559,91 @@ test('a formula quote is the middle of its readings, and a range when they disag
   assert.match(apart.drafted?.reasoning ?? '', /anywhere from \$180 to \$300/);
 });
 
+test('a choice the owner hasn’t priced holds back a quote only until they’ve priced enough jobs', async () => {
+  const { priceFromFormula } = await import('../src/pricing/formula-draft.js');
+  const learned = (quotes: number) => ({
+    formula: {
+      services: [
+        { name: 'Windows', unit: 'windows', rateCents: 1000, points: [], minimumCents: null },
+      ],
+      surcharges: [],
+      addOns: [],
+      bundlePercent: null,
+      roundToCents: 100,
+      minimumCents: null,
+      itemizes: true,
+    },
+    notes: [],
+    examples: Array<null>(quotes).fill(null),
+    gaps: [0, 0, 0],
+    fits: true,
+  });
+  globalThis.fetch = async () =>
+    response({
+      service: 'Windows',
+      size: 20,
+      surcharges: [],
+      addOns: [],
+      otherServices: [],
+      uncovered: '',
+      unpriced: 'tinted glass',
+    });
+  const input = {
+    serviceName: 'Windows',
+    conversation: [{ from: 'customer' as const, text: '20 tinted windows, please.' }],
+    spec: null,
+  };
+  const early = await priceFromFormula(learned(11), input);
+  assert.equal(early.drafted?.confidence, 'low');
+  assert.match(early.drafted?.reasoning ?? '', /tinted glass/);
+  const trained = await priceFromFormula(learned(12), input);
+  assert.equal(trained.drafted?.confidence, 'high');
+});
+
+test('the chat follows the customer’s language, and the job stays in English for the pricing', async () => {
+  const { intakeTurn } = await import('../src/ai/intake.js');
+  let asked = '';
+  globalThis.fetch = async (_url, init) => {
+    asked = String(JSON.parse(String(init?.body)).instructions);
+    return response({
+      reply: '¿Cuántas ventanas?',
+      chips: [],
+      askPhoto: true,
+      serviceName: 'Windows',
+      ready: false,
+      summary: 'Windows.',
+      outOfScope: '',
+      turnDown: '',
+      language: 'ES',
+      spec: {
+        quantity: null,
+        unit: '',
+        condition: '',
+        access: '',
+        extras: [],
+        timing: '',
+        location: '',
+      },
+    });
+  };
+  const turn = await intakeTurn(
+    {
+      business: { name: 'Bright', trade: 'window cleaning', services: ['Windows'], area: '' },
+      checklist: [],
+      serviceName: '',
+      conversation: [{ from: 'customer', text: 'Hola, ¿cuánto por las ventanas?' }],
+      photosReceived: 0,
+      language: 'Portuguese',
+      ownerLanguage: 'French',
+    },
+    [],
+  );
+  assert.equal(turn.language, 'es');
+  assert.match(asked, /Until they've written enough to tell, use Portuguese/);
+  assert.match(asked, /for the owner, in French/);
+  assert.match(asked, /always in English/);
+});
+
 test('the customer chat finds out everything the owner’s price depends on before it’s done', async () => {
   const { intakeTurn } = await import('../src/ai/intake.js');
   const { priceDrivers } = await import('../src/pricing/formula-draft.js');

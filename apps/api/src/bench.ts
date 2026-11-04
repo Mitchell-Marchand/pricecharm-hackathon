@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aiMode, aiProvider, modelFor, runWithAiUsage, useSavedAnswers } from './ai/index.js';
 import { unsettledDrivers } from './ai/drivers.js';
+import { readJobParts } from './ai/formula.js';
 import { intakeTurn, type IntakeTurn } from './ai/intake.js';
 import { draftGenericQuote } from './ai/quote-engine.js';
 import { describeComparison, type SavedRun } from './bench/compare.js';
@@ -62,6 +63,7 @@ import {
   type Learned,
 } from './pricing/formula-draft.js';
 import { loadPricingData } from './pricing/history.js';
+import { disagreement, mostUnsure } from './pricing/next-job.js';
 import { describeJob, describeSpec } from './pricing/spec.js';
 import { gapPercent, quoteTotal, type DraftedQuote } from './practice/types.js';
 import { accuracy, closer, share } from './proof.js';
@@ -115,7 +117,14 @@ type Shape = Parameters<typeof drawJob>[2];
  * Setup's practice customers, in order, as SITUATIONS in src/practice/plan.ts describes them
  * (experiments, since October 30). The plans setup used before are kept, so a run can compare.
  */
-type Customer = { shape: Shape; extra?: number; stretch?: 'bigger' | 'smaller'; aim?: Aim };
+type Customer = {
+  shape: Shape;
+  extra?: number;
+  stretch?: 'bigger' | 'smaller';
+  aim?: Aim;
+  /** Picked from everyday jobs for where the readings disagree (src/pricing/next-job.ts). */
+  pick?: boolean;
+};
 
 const PLANS: Record<string, Customer[]> = {
   original: [
@@ -176,12 +185,20 @@ PLANS.newowner = [
   { shape: 'plain', aim: 'schedule' },
   ...Array.from({ length: 8 }, () => ({ shape: 'any' as const })),
 ];
+// The first six of those, then six everyday jobs picked for where the Charm's three readings of
+// the owner's quotes disagree, from the same jobs newowner's everyday customers are drawn from.
+PLANS.picked = [
+  ...PLANS.newowner.slice(0, 6),
+  ...Array.from({ length: 6 }, () => ({ shape: 'any' as const, pick: true })),
+];
 const PLAN = 'experiments';
 /**
  * The most questions a --chat run's customer chat asks before the job is priced anyway. A live
  * chat has no limit; nearly every benchmark chat is done well before this.
  */
 const CHAT_TURNS = 12;
+/** How many everyday jobs each picked customer is chosen from. */
+const PICK_FROM = 14;
 
 function option(name: string) {
   const index = process.argv.indexOf(`--${name}`);
@@ -265,11 +282,7 @@ async function seedOwner(
       (found, next) => found ?? aimedJob(rng.practice, owner, next, offerings, jobs, asked),
       null,
     );
-  for (const [position, { shape, extra, stretch, aim }] of plan.entries()) {
-    const size = stretch ? stretchSize(services, sizesShown(jobs), stretch) : null;
-    const job = size
-      ? stretchedJob(rng.practice, owner, size.service, size.around)
-      : ((aim && aimed(aim)) ?? drawJob(rng.practice, owner, shape, extra));
+  const addCustomer = async (position: number, job: SimJob, shape: Shape) => {
     jobs.push(job);
     const quote = ownerQuote(owner, job);
     const spec = jobSpec(owner, job);
@@ -333,8 +346,16 @@ async function seedOwner(
           new Date(finished.getTime() - 30_000 + index * 1000),
         ],
       );
+  };
+  for (const [position, { shape, extra, stretch, aim, pick }] of plan.entries()) {
+    if (pick) break;
+    const size = stretch ? stretchSize(services, sizesShown(jobs), stretch) : null;
+    const job = size
+      ? stretchedJob(rng.practice, owner, size.service, size.around)
+      : ((aim && aimed(aim)) ?? drawJob(rng.practice, owner, shape, extra));
+    await addCustomer(position, job, shape);
   }
-  return { id, jobs, runs };
+  return { id, jobs, runs, addCustomer };
 }
 
 type Test = {
@@ -725,6 +746,9 @@ async function main() {
     owner: SimOwner;
     businessId: string;
     runs: { id: string; finished: Date }[];
+    jobs: SimJob[];
+    addCustomer: (position: number, job: SimJob, shape: Shape) => Promise<void>;
+    rng: Rng;
   }[] = [];
   for (const [index, owner] of owners.entries()) {
     const base = seed * 1000 + index * 10;
@@ -732,6 +756,7 @@ async function main() {
       id: businessId,
       jobs: examples,
       runs,
+      addCustomer,
     } = await seedOwner(
       owner,
       { past: seeded(base + 1), practice: seeded(base + 2) },
@@ -741,7 +766,14 @@ async function main() {
       offerings,
       chat,
     );
-    seededRuns.push({ owner, businessId, runs });
+    seededRuns.push({
+      owner,
+      businessId,
+      runs,
+      jobs: examples,
+      addCustomer,
+      rng: seeded(base + 4),
+    });
     const rng = seeded(base + 3);
     for (let n = 0; n < perOwner; n++) {
       const job = drawJob(rng, owner, 'any');
@@ -1014,14 +1046,18 @@ async function main() {
   }
   /** With --ask, each owner's questions and answers, in order. */
   const answered: Record<string, { ask: string; answer: string }[]> = {};
-  if (ask) {
+  /** Owners' questions up to now, from where each one's practice got to. */
+  const askedUpTo = new Map<string, number>();
+  const askOwners = async () => {
     // After each practice customer, the question setup would ask then (src/practice/owner-questions.ts),
     // answered from the owner's own rules a moment after they priced it. Each owner's go in order,
     // since every question depends on the ones before; a few owners at a time.
     console.info(`Asking ${owners.length} owners a question after each practice customer.`);
     await pool(
       seededRuns.map(({ owner, businessId, runs }) => async () => {
-        for (const run of runs) {
+        const from = askedUpTo.get(businessId) ?? 0;
+        askedUpTo.set(businessId, runs.length);
+        for (const run of runs.slice(from)) {
           const question = await transaction((connection) =>
             pickQuestion(connection, businessId, run.id),
           );
@@ -1041,6 +1077,66 @@ async function main() {
       }),
       concurrency,
     );
+  };
+  if (ask) await askOwners();
+  const picks = plan.flatMap((customer, position) => (customer.pick ? [position] : []));
+  if (picks.length) {
+    // What the Charm has learned so far picks the rest: each owner's everyday jobs are read into
+    // their formula, then the ones its readings disagree on most are the ones they're asked about.
+    console.info(`Picking ${picks.length} customers for each of ${owners.length} owners.`);
+    await pool(
+      seededRuns.map(({ owner, businessId, rng, jobs, addCustomer }) => async () => {
+        const learned = await tallied(businessId, () => learnedFormula(businessId, {}, model));
+        const everyday = Array.from({ length: PICK_FROM }, () => drawJob(rng, owner, 'any'));
+        const scored = learned
+          ? await Promise.all(
+              everyday.map(async (job) => {
+                const text = customerMessage(rng, owner, job);
+                const read = await counted(businessId, () =>
+                  readJobParts({
+                    formula: learned.formula,
+                    request: {
+                      serviceName: job.service,
+                      conversation: [{ from: 'customer', text }],
+                    },
+                    model,
+                  }),
+                ).catch(() => null);
+                const { uncovered, unpriced, ...parts } = read ?? {
+                  service: job.service,
+                  size: null,
+                  surcharges: [],
+                  addOns: [],
+                  otherServices: [],
+                  uncovered: '',
+                  unpriced: '',
+                };
+                const readings = [learned, ...(learned.also ?? [])].map((item) => item.formula);
+                return {
+                  job,
+                  // What its formula doesn't cover yet is worth more than any disagreement.
+                  score: uncovered || unpriced ? 2 : disagreement(readings, parts),
+                  kind: [
+                    parts.service,
+                    ...parts.surcharges,
+                    ...parts.addOns.map((item) => item.name),
+                    ...parts.otherServices.map((item) => item.name),
+                  ]
+                    .sort()
+                    .join('+'),
+                };
+              }),
+            )
+          : everyday.map((job) => ({ job, score: 0, kind: job.service }));
+        const chosen = mostUnsure(scored, picks.length);
+        for (const [index, job] of chosen.entries()) await addCustomer(picks[index], job, 'any');
+        for (const test of tests)
+          if (test.businessId === businessId) test.gaps = informationGaps(owner, jobs, test.job);
+      }),
+      3,
+    );
+    holdFailedFormulas(null);
+    if (ask) await askOwners();
   }
   if (formula) {
     // Each owner's formula is worked out before any job is priced, a few at a time, so the long

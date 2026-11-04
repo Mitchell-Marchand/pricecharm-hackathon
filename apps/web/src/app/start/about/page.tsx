@@ -67,8 +67,8 @@ function AboutForm({ business }: { business: BusinessDraft }) {
       return show(named ? placeInput.current : nameInput.current);
     }
     setMoving(true);
-    // Saved first, so the first practice customer is written for this business, while they read
-    // what's coming.
+    // The first customer has been on its way since they picked their trade. Saved first, so the
+    // next one is written for this business while they read what's coming.
     const saved = await flush();
     setMoving(false);
     if (!saved) return;

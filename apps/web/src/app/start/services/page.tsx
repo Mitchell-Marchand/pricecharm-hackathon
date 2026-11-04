@@ -7,7 +7,6 @@ import { BottomBar, WizardHeader } from '@/components/Wizard';
 import { Button, Chip, TextInput } from '@/components/ui';
 import { SHOW_SHOPPING_FACTS } from '@/lib/funnel-facts';
 import { useOnboarding, type BusinessDraft } from '@/lib/onboarding';
-import { preparePractice } from '@/lib/practice';
 import { TRADES_BY_ID } from '@/lib/trades';
 
 export default function ServicesStep() {
@@ -18,7 +17,7 @@ export default function ServicesStep() {
 
 /** Which services they offer: the usual ones for their trade are already on. */
 function ServicesForm({ business }: { business: BusinessDraft }) {
-  const { updateBusiness, goTo, flush } = useOnboarding();
+  const { updateBusiness, goTo } = useOnboarding();
   const [newService, setNewService] = useState('');
   const [tried, setTried] = useState(false);
   const trade = business.tradeId ? TRADES_BY_ID[business.tradeId] : null;
@@ -98,11 +97,7 @@ function ServicesForm({ business }: { business: BusinessDraft }) {
         onBack={() => void goTo('trade')}
         onNext={() => {
           if (none) return setTried(true);
-          // A typed-in trade has no customer made ahead, so its first is written while they finish
-          // setup. It's made from what's saved, so saving comes first.
-          void goTo('about', SHOW_SHOPPING_FACTS ? '/start/why' : undefined).then(async () => {
-            if (!business.tradeId && (await flush())) void preparePractice(true).catch(() => {});
-          });
+          void goTo('about', SHOW_SHOPPING_FACTS ? '/start/why' : undefined);
         }}
         blocked={none}
         hint="Turn on at least one service."

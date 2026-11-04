@@ -40,6 +40,21 @@ test('a formula prices every part of the job, rounds each line, and discounts tw
   assert.equal(quote?.totalCents, 36000);
 });
 
+test('the same service at two places is priced at each one’s size, with no bundle discount', () => {
+  const quote = priceJob(formula, {
+    service: 'Exterior windows',
+    size: 20,
+    surcharges: [],
+    addOns: [],
+    otherServices: [{ name: 'Exterior windows', size: 30 }],
+  });
+  assert.deepEqual(
+    quote?.lines.map((line) => line.amountCents),
+    [16000, 24000],
+  );
+  assert.equal(quote?.discount, null);
+});
+
 test('a small job is raised to the minimum, and a part the formula lacks means no price', () => {
   const small = {
     service: 'Exterior windows',

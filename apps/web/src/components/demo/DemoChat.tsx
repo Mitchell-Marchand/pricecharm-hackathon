@@ -23,6 +23,7 @@ import { TRADE_DATA_BY_ID } from '@/lib/trades';
 import { useStickToBottom } from '@/lib/use-stick-to-bottom';
 import { cx, uid } from '@/lib/util';
 import { setCurrency } from '@/lib/currency';
+import { sayFrom } from '@/lib/words';
 
 /** The API's limits, so the visitor sees them before the server has to say no. */
 const MAX_TEXT = 300;
@@ -73,7 +74,7 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
   const pass = useRef('');
 
   const [lines, setLines] = useState<Line[]>(() => [
-    { id: 'hello', from: 'bot', text: greeting(demo.business, demo.owner) },
+    { id: 'hello', from: 'bot', text: greeting(sayFrom({}), demo.business, demo.owner) },
   ]);
   const [mode, setMode] = useState<'live' | 'scripted'>('live');
   const [busy, setBusy] = useState(false);
@@ -325,7 +326,9 @@ export function DemoChat({ demo, className }: { demo: Demo; className?: string }
     timers.current.forEach((id) => window.clearTimeout(id));
     timers.current = [];
     pass.current = '';
-    setLines([{ id: uid('d'), from: 'bot', text: greeting(demo.business, demo.owner) }]);
+    setLines([
+      { id: uid('d'), from: 'bot', text: greeting(sayFrom({}), demo.business, demo.owner) },
+    ]);
     setMode('live');
     setBusy(false);
     setDraft('');

@@ -349,13 +349,19 @@ export function refreshFormula(businessId: string): void {
  * it's worked out again in the background, and this one prices until then; when their notes
  * have changed, it doesn't, since it wouldn't follow them.
  */
-export async function currentFormula(businessId: string, data: PricingData) {
+export async function currentFormula(
+  businessId: string,
+  data: PricingData,
+  /** Also take one from before the owner's newest notes, for a guess that can't wait for them. */
+  { anyNotes = false }: { anyNotes?: boolean } = {},
+) {
   refreshFormula(businessId);
   const [kept] = await rows('SELECT learned_json FROM pricing_formulas WHERE business_id=?', [
     businessId,
   ]);
   const learned = kept ? json<Learned | null>(kept.learned_json, null) : null;
-  return learned && JSON.stringify(learned.notes) === JSON.stringify(data.history.notes)
+  return learned &&
+    (anyNotes || JSON.stringify(learned.notes) === JSON.stringify(data.history.notes))
     ? learned
     : null;
 }
@@ -425,6 +431,13 @@ function measuredSize(formula: PriceFormula, service: string, spec: JobSpec | nu
   return unit === spec.unit ? spec.quantity : null;
 }
 
+/**
+ * From this many of the owner's quotes, a choice they haven't priced stops holding a quote back. On
+ * the benchmark at 12 chats that takes firm quotes from 72% to 82% of jobs, with 96% still within
+ * 15% of the owner. At 6 chats only 10 of 26 such quotes came within 10%, so those stay ranges.
+ */
+const SURE_PAST_UNPRICED = 12;
+
 /** One reading's price for the job, or why it can't price it. */
 async function readingPrice(
   learned: Learned,
@@ -448,7 +461,12 @@ async function readingPrice(
   });
   if (read.uncovered) return { reason: `the formula doesn’t cover ${read.uncovered}` };
   const { unpriced, uncovered: _uncovered, ...asked } = read;
-  const parts = { ...asked, size: measuredSize(formula, read.service, input.spec) ?? read.size };
+  // With a second place for the same service, the chat's one size can't say which it's for.
+  const twoPlaces = asked.otherServices.some(
+    (other) => other.name.toLowerCase() === read.service.toLowerCase(),
+  );
+  const measured = twoPlaces ? null : measuredSize(formula, read.service, input.spec);
+  const parts = { ...asked, size: measured ?? read.size };
   const priced = priceJob(formula, parts);
   if (!priced) return { reason: 'the formula can’t price this job' };
   // Its doubts are judged against the owner's own quotes, as the formula was checked on them.
@@ -458,7 +476,9 @@ async function readingPrice(
   const doubts = [
     ...(learned.fits ? [] : ['It doesn’t give back enough of your own quotes yet.']),
     // A choice the customer made that none of the owner's quotes priced, like a cheaper finish.
-    ...(unpriced ? [`They asked for ${unpriced}, which you haven’t priced yet.`] : []),
+    ...(unpriced && learned.examples.length < SURE_PAST_UNPRICED
+      ? [`They asked for ${unpriced}, which you haven’t priced yet.`]
+      : []),
     ...doubtsAbout(formula, checks, parts, priced),
   ];
   return { formula, priced, doubts, parts };

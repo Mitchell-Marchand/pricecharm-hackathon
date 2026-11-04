@@ -9,6 +9,7 @@ import {
 } from '../ai/practice.js';
 import { generatePracticePhoto } from '../ai/practice-images.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
+import { businessLanguage, languageName } from '../languages.js';
 import { photoReadingsAvailable } from '../live/photo-readings.js';
 import { copyLibraryEntry, libraryEntryFor } from './library.js';
 import { distanceOf, drawDistance, reconcileScenario } from './photo-facts.js';
@@ -60,7 +61,15 @@ import {
   demoReply,
   demoScenario,
 } from './demo.js';
-import { focusSituation, planSituation } from './plan.js';
+import {
+  drawAskedPhoto,
+  drawPhotoSet,
+  openerForOnePhoto,
+  photoSetsAvailable,
+} from './photo-set.js';
+import { focusLesson, focusSituation, pickedCustomer, planCustomer, type Lesson } from './plan.js';
+import { pickJob } from '../pricing/next-job.js';
+import { TRADE_DRIVERS } from './trade-drivers.js';
 import {
   gapPercent,
   quoteDraftSchema,
@@ -71,7 +80,7 @@ import {
   type QuoteDraft,
   type Shadow,
 } from './types.js';
-import { money as formatMoney } from '../money.js';
+import { money as formatMoney, type Currency } from '../money.js';
 import {
   addTurnDown,
   REASONS,
@@ -225,6 +234,41 @@ async function keepNextCustomerReady(businessId: string, focus: string | null) {
 const CUSTOMERS_AHEAD = 2;
 
 /**
+ * The first customer, from the moment setup knows the trade and its services, so the chat is
+ * waiting when the owner gets there. It does nothing once one is made or being made.
+ */
+export async function startFirstCustomer(businessId: string) {
+  await ensurePracticeRuns(businessId);
+  await kickPreparation(businessId, 1);
+}
+
+/**
+ * Takes away customers the owner hasn't started on that were made for a service they've turned
+ * off. One still being written was told about that service, so it goes too. They're made again
+ * from what's offered now.
+ */
+export async function dropCustomersOfOldServices(
+  businessId: string,
+  services: string[],
+  connection: Sql,
+) {
+  const offered = new Set(services.map((name) => name.toLowerCase()));
+  const waiting = await rows(
+    `SELECT r.id,r.scenario_json,r.prepare_until FROM practice_runs r WHERE r.business_id=? AND r.outcome IS NULL
+     AND NOT EXISTS(SELECT 1 FROM practice_messages m WHERE m.run_id=r.id AND m.sender='owner')`,
+    [businessId],
+    connection,
+  );
+  for (const run of waiting) {
+    const scenario = json<PracticeScenario | null>(run.scenario_json, null);
+    const old = scenario
+      ? !offered.has(scenario.serviceName.toLowerCase())
+      : Boolean(run.prepare_until);
+    if (old) await mutate('DELETE FROM practice_runs WHERE id=?', [run.id], connection);
+  }
+}
+
+/**
  * Starts preparing customers that are waiting, earliest first, outside the request. Everything
  * that checks on practice comes through here, polling included, so the ones already in hand
  * count. Otherwise one wait for the first customer would write all of setup's at once.
@@ -274,14 +318,14 @@ async function locationFor(businessId: string, area: string, random = Math.rando
 }
 
 /** What the business has taught so far, for choosing what the next practice customer asks. */
-async function nextSituation(
+async function nextCustomer(
   businessId: string,
   position: number,
   services: string[],
   focus: string | null,
-) {
+): Promise<{ situation: string; lesson: Lesson; pick?: string }> {
   const data = await loadPricingData(businessId);
-  if (focus) return focusSituation(focus, data.points);
+  if (focus) return { situation: focusSituation(focus, data.points), lesson: focusLesson(focus) };
   const runs = await rows(
     "SELECT scenario_json FROM practice_runs WHERE business_id=? AND status='finished' AND position<>? ORDER BY position",
     [businessId, position],
@@ -289,7 +333,7 @@ async function nextSituation(
   const [past] = await rows('SELECT COUNT(*) AS count FROM past_jobs WHERE business_id=?', [
     businessId,
   ]);
-  return planSituation({
+  const plan = planCustomer({
     position,
     setupCount: PRACTICE_COUNT,
     pastJobs: Number(past.count),
@@ -301,7 +345,51 @@ async function nextSituation(
       (run) => json<PracticeScenario>(run.scenario_json, {} as PracticeScenario).situation ?? '',
     ),
   });
+  if (!plan.everyday || process.env.PRACTICE_PICKER === 'off') return plan;
+  const learned = await currentFormula(businessId, data).catch(() => null);
+  if (!learned) return plan;
+  const [business] = await rows('SELECT trade_id FROM businesses WHERE id=?', [businessId]);
+  const asked = (
+    await rows('SELECT owner_question_json FROM practice_runs WHERE business_id=?', [businessId])
+  ).flatMap((run) => {
+    const question = json<{ key: string } | null>(run.owner_question_json, null);
+    return question ? [question.key] : [];
+  });
+  const job = pickJob({
+    readings: [learned, ...(learned.also ?? [])].map((reading) => reading.formula),
+    examples: learned.examples,
+    extras: (TRADE_DRIVERS[String(business?.trade_id)] ?? []).filter(
+      (driver) => driver.customer && !asked.includes(driver.key),
+    ),
+    used: runs.flatMap(
+      (run) => json<PracticeScenario>(run.scenario_json, {} as PracticeScenario).pick ?? [],
+    ),
+  });
+  return job ? pickedCustomer(job, learned.formula, position) : plan;
 }
+
+/** The language an owner works in, when it isn't English. English customers change nothing. */
+async function practiceLanguage(businessId: string) {
+  const [business] = await rows('SELECT language FROM businesses WHERE id=?', [businessId]);
+  const language = business ? businessLanguage(business) : 'en';
+  return language === 'en' ? undefined : languageName(language);
+}
+
+/** Roughly where a business is from its currency, for a customer made before they've said. */
+const COUNTRIES: Partial<Record<Currency, string>> = {
+  CAD: 'Canada',
+  AUD: 'Australia',
+  NZD: 'New Zealand',
+  GBP: 'the United Kingdom',
+  EUR: 'Europe',
+  INR: 'India',
+  NGN: 'Nigeria',
+  KES: 'Kenya',
+  ZAR: 'South Africa',
+  BRL: 'Brazil',
+  MXN: 'Mexico',
+  PHP: 'the Philippines',
+};
 
 async function writeScenario(
   businessId: string,
@@ -309,7 +397,12 @@ async function writeScenario(
   focus: string | null,
 ): Promise<PracticeScenario> {
   const context = await businessContext(businessId);
-  const situation = await nextSituation(businessId, position, context.services, focus);
+  const { situation, lesson, pick } = await nextCustomer(
+    businessId,
+    position,
+    context.services,
+    focus,
+  );
   const location = await locationFor(businessId, context.area);
   if (aiMode === 'demo') {
     const scenario = demoScenario(position, focus ? [focus] : context.services);
@@ -333,17 +426,20 @@ async function writeScenario(
     const scenario = json<PracticeScenario>(row.scenario_json, {} as PracticeScenario);
     return { name: scenario.firstName, service: scenario.serviceName };
   });
+  const language = await practiceLanguage(businessId);
   const scenario = await withAiUsage(businessId, `practice:${position}`, () =>
     writePracticeScenario({
       trade: context.trade,
       businessName: context.name,
       services: context.services,
-      location,
+      location: location || (COUNTRIES[context.currency] ?? ''),
       distanceUnit: context.currency === 'USD' ? 'mi' : 'km',
       radiusMiles: context.radiusMiles,
       jobs,
       situation,
+      lesson,
       earlier,
+      language,
     }),
   );
   // Practice for one service counts toward that service, whatever the AI called it.
@@ -351,6 +447,7 @@ async function writeScenario(
     ...scenario,
     serviceName: focus ?? scenario.serviceName,
     situation,
+    ...(pick ? { pick } : {}),
     distance: scenario.distance
       ? { ...scenario.distance, ...(location ? { from: location } : {}) }
       : drawDistance(context.currency, location),
@@ -364,6 +461,8 @@ async function libraryScenario(
   position: number,
   focus: string | null,
 ) {
+  // The library's customers write English.
+  if (await practiceLanguage(businessId)) return null;
   const found = await libraryEntryFor(businessId, position, focus);
   if (!found) return null;
   try {
@@ -398,6 +497,10 @@ async function createPracticePhoto(
             }),
           )
         ).bytes;
+  return savePracticePhoto(businessId, runId, bytes);
+}
+
+async function savePracticePhoto(businessId: string, runId: string, bytes: Buffer) {
   const metadata = await sharp(bytes).metadata();
   const id = randomUUID(),
     key = `${id}.jpg`;
@@ -418,6 +521,43 @@ async function createPracticePhoto(
     ],
   );
   return id;
+}
+
+/**
+ * The photo the owner asked for, made from the customer's other photos of that place, so it's the
+ * same place. It's null if it doesn't pass. With nothing to work from, it's drawn from words.
+ */
+async function createAskedPhoto(
+  businessId: string,
+  runId: string,
+  scenario: PracticeScenario,
+  ask: { scene: string; place?: number },
+) {
+  const place = ask.place ?? 0;
+  const own = scenario.photos.filter((photo) => photo.photoId && (photo.place ?? 0) === place);
+  const shown = own.length ? own : scenario.photos.filter((photo) => photo.photoId);
+  if (aiMode === 'demo' || !photoSetsAvailable() || !shown.length)
+    return createPracticePhoto(businessId, runId, scenario, ask.scene);
+  const stored = await rows(
+    `SELECT id,storage_key FROM attachments WHERE business_id=? AND id IN (${shown.map(() => '?').join(',')})`,
+    [businessId, ...shown.map((photo) => photo.photoId)],
+  );
+  const keys = new Map(stored.map((row) => [String(row.id), String(row.storage_key)]));
+  const references = await Promise.all(
+    shown.flatMap((photo) => {
+      const key = keys.get(String(photo.photoId));
+      return key ? [getPhoto(key).then((bytes) => ({ scene: photo.scene, bytes }))] : [];
+    }),
+  );
+  const bytes = await drawAskedPhoto({
+    owner: businessId,
+    project: scenario.project,
+    references,
+    view: ask.scene,
+    place,
+    spend: (task) => withAiUsage(businessId, `practice-photo:${runId}`, task),
+  });
+  return bytes ? savePracticePhoto(businessId, runId, bytes) : null;
 }
 
 /** Whether a new photo can be made here: demo mode has bundled ones, live needs an image key. */
@@ -456,10 +596,13 @@ async function takePhoto(runId: string, token: string) {
   if (!run) return;
   const businessId = String(run.business_id);
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-  const ask = json<{ scene: string; text: string } | null>(run.photo_ask_json, null);
+  const ask = json<{ scene: string; text: string; place?: number } | null>(
+    run.photo_ask_json,
+    null,
+  );
   let photoId: string | null = null;
   try {
-    if (ask) photoId = await createPracticePhoto(businessId, runId, scenario, ask.scene);
+    if (ask) photoId = await createAskedPhoto(businessId, runId, scenario, ask);
   } catch (error) {
     if (!(error instanceof ApiError)) reportError(error, { event: 'practice_asked_photo' });
   }
@@ -518,7 +661,7 @@ export async function prepareNow(businessId: string, runId: string) {
  * on a photo they may never see. If it isn't there when asked for, one is taken instead.
  */
 async function makeHeldPhoto(businessId: string, runId: string, scenario: PracticeScenario) {
-  if (scenario.extraPhoto.photoId) return;
+  if (scenario.extraPhoto.photoId || !scenario.extraPhoto.scene) return;
   try {
     const photoId = await createPracticePhoto(
       businessId,
@@ -575,16 +718,36 @@ export async function preparePracticeRun(runId: string): Promise<void> {
     }
     let ready = scenario;
     const missing = ready.photos.filter((photo) => !photo.photoId);
-    // A photo that fails leaves the request with fewer photos rather than no customer.
-    await Promise.all(
-      missing.map(async (photo) => {
-        try {
-          photo.photoId = await createPracticePhoto(businessId, runId, ready, photo.scene);
-        } catch (error) {
-          reportError(error, { event: 'practice_photo' });
-        }
-      }),
-    );
+    if (ready.project && missing.length && aiMode !== 'demo' && photoSetsAvailable()) {
+      const shots = await drawPhotoSet({
+        owner: businessId,
+        title: `${ready.serviceName} photo`,
+        project: ready.project,
+        photos: ready.photos,
+        spend: (task) => withAiUsage(businessId, `practice-photo:${runId}`, task),
+      });
+      for (const [index, shot] of shots.entries())
+        if (shot) ready.photos[index].photoId = await savePracticePhoto(businessId, runId, shot);
+      const kept = ready.photos.filter((photo) => photo.photoId);
+      ready = {
+        ...ready,
+        photos: kept,
+        opener:
+          kept.length === 1 && ready.photos.length > 1
+            ? openerForOnePhoto(ready.opener)
+            : ready.opener,
+      };
+    } else
+      // A photo that fails leaves the request with fewer photos rather than no customer.
+      await Promise.all(
+        missing.map(async (photo) => {
+          try {
+            photo.photoId = await createPracticePhoto(businessId, runId, ready, photo.scene);
+          } catch (error) {
+            reportError(error, { event: 'practice_photo' });
+          }
+        }),
+      );
     const photoIds = ready.photos.flatMap((photo) => (photo.photoId ? [photo.photoId] : []));
     // The photos are read behind the chat, for the Charm's guess. Demo mode's stand-in reading is
     // instant, so it's saved with the customer. A real one starts once they're ready.
@@ -906,6 +1069,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
   const photoAvailable =
     Number(run.photo_asks ?? 0) < PHOTO_ASKS && (preparedPhoto || canTakePhotos());
   const businessName = await businessContextName(businessId);
+  const language = await practiceLanguage(businessId);
   let reply: CustomerReply;
   try {
     reply =
@@ -922,6 +1086,7 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
               ownerMessage: text,
               photoAvailable,
               preparedPhoto,
+              language,
             }),
           );
   } catch (error) {
@@ -973,7 +1138,13 @@ export async function sendOwnerMessage(businessId: string, runId: string, text: 
         JSON.stringify(asked),
         prepared,
         take || prepared ? 1 : 0,
-        take ? JSON.stringify({ scene: reply.photoScene, text: reply.photoText }) : null,
+        take
+          ? JSON.stringify({
+              scene: reply.photoScene,
+              text: reply.photoText,
+              place: reply.photoPlace,
+            })
+          : null,
         photoToken,
         photoToken,
         runId,
@@ -1021,7 +1192,7 @@ async function runImages(businessId: string, runId: string, messages: Row[]): Pr
  */
 /** Priced customers before the Charm guesses: what its formula needs to be worked out. */
 export const FIRST_GUESS_AFTER = 3;
-/** How long a guess waits for the formula that was being worked out from the latest quote. */
+/** How long a guess waits for the owner's first formula to be worked out. */
 const FORMULA_WAIT_MS = 90_000;
 /** How long a guess waits for the customer's photos to be read. */
 const READ_WAIT_MS = 30_000;
@@ -1058,14 +1229,14 @@ const withheld = (why: NonNullable<Shadow['withheld']>, toGo = 0): Shadow => ({
 });
 
 /**
- * Whether the owner's formula has been worked out from every priced customer so far. Right after
- * a quote it's being worked out again, so this waits for it, a little.
+ * Whether the owner has a formula to guess from. Their first takes a couple of minutes to work out
+ * after their third quote, so this waits for it, a little. One that's a quote or a note behind is
+ * fine: a guess comes from what the Charm knows so far, and a slow one only means no guess.
  */
-async function formulaReady(businessId: string, data: PricingData, examples: number) {
+async function formulaReady(businessId: string, data: PricingData) {
   const until = Date.now() + FORMULA_WAIT_MS;
   for (;;) {
-    const learned = await currentFormula(businessId, data);
-    if (learned && (learned.totals?.length ?? 0) >= examples) return true;
+    if (await currentFormula(businessId, data, { anyNotes: true })) return true;
     if (Date.now() > until) return false;
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
@@ -1106,8 +1277,7 @@ async function guessFor(businessId: string, runId: string): Promise<Shadow> {
     await keepShadow(runId, shadow);
     return shadow;
   }
-  if (aiMode !== 'demo' && !(await formulaReady(businessId, taught, examples)))
-    return withheld('working');
+  if (aiMode !== 'demo' && !(await formulaReady(businessId, taught))) return withheld('working');
   const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
   // Only the chat up to the owner's answer: it can be guessed after their quote goes in, but never
   // from it or from what the customer said back.
@@ -1156,6 +1326,7 @@ async function guessFor(businessId: string, runId: string): Promise<Shadow> {
       media: practicePhotoNotes(run),
       images: aiMode === 'demo' ? [] : await runImages(businessId, runId, messages),
       history: { excludeRunId: runId },
+      anyNotes: true,
       demo: aiMode === 'demo' ? await demo() : undefined,
     }),
   );
@@ -1312,9 +1483,10 @@ async function marketBeside(
 const FINISH_SECONDS = 180;
 /**
  * How long the formula waits for the owner to answer the question a practice quote asks, before
- * it's worked out without the answer. Moving on to the next customer ends the wait.
+ * it's worked out without the answer. It's short because the next guess waits on the formula. An
+ * answer after that works it out again, and moving on to the next customer ends the wait.
  */
-const QUESTION_HOLD_MS = 120_000;
+const QUESTION_HOLD_MS = 20_000;
 
 /**
  * The owner's answer, in at once with the customer's reply. What the Charm would have charged and
@@ -1408,17 +1580,50 @@ function completeRun(businessId: string, runId: string): Promise<void> {
   return pending;
 }
 
+/** How long what the Charm picked up waits for its guess, so the two can show together. */
+const GUESS_HEAD_START_MS = 3000;
+
 async function complete(businessId: string, runId: string) {
-  // The AI's private guess only measures how close it gets. If it can't be made, the owner's
-  // answer still stands, and this run just has no guess.
-  await computeShadow(businessId, runId).catch((error) => {
+  // The AI's private guess only measures how close it gets, and it waits on the formula, so it can
+  // take a while. Nobody waits for it: the owner can move on already, and what it picked up shows
+  // without it. If it can't be made, this run just has no guess.
+  const guess = computeShadow(businessId, runId).catch((error) => {
     if (!(error instanceof ApiError && error.code === 'PRACTICE_CLOSED'))
       reportError(error, { event: 'practice_guess' });
   });
+  await Promise.race([guess, new Promise((resolve) => setTimeout(resolve, GUESS_HEAD_START_MS))]);
   const run = await loadRun(businessId, runId);
   if (run.status === 'finished' || !run.outcome) return;
+  const context = await businessContext(businessId);
+  const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
+  const asked = json<string[]>(run.asked_json, []);
+  const quote = json<Quote | null>(run.quote_json, null);
+  const outcome: { quote: Quote } | { siteVisit: string } =
+    run.outcome === 'quote' && quote
+      ? { quote }
+      : { siteVisit: String(run.site_visit_reason ?? '') };
+  // A finish picked up again keeps what's already there, and anything the owner did to it.
+  if (!run.insights_json) {
+    const insights = await insightsFor(businessId, runId, scenario, asked, outcome, context.trade);
+    const market =
+      'quote' in outcome
+        ? await marketBeside(businessId, context, scenario, outcome.quote, asked).catch((error) => {
+            reportError(error, { event: 'practice_market' });
+            return null;
+          })
+        : null;
+    await mutate('UPDATE practice_runs SET insights_json=?,market_json=? WHERE id=?', [
+      JSON.stringify(insights),
+      market && JSON.stringify(market),
+      runId,
+    ]);
+  }
+  // Only now does the quote count, so the guess is always from before the owner's answer.
+  await guess;
+  await keepShadow(runId, withheld('working'));
+  const [settled] = await rows('SELECT shadow_json FROM practice_runs WHERE id=?', [runId]);
   // How close the Charm's own guess came to the owner's price: the moment it clicks, or doesn't.
-  const guessed = json<Shadow | null>(run.shadow_json, null);
+  const guessed = json<Shadow | null>(settled.shadow_json, null);
   const priced = json<Quote | null>(run.quote_json, null);
   if (priced && guessed) {
     const ownerCents = quoteTotal(priced);
@@ -1437,25 +1642,9 @@ async function complete(businessId: string, runId: string) {
       { ref: runId, value: ownerCents },
     ).catch(() => {});
   }
-  const context = await businessContext(businessId);
-  const scenario = json<PracticeScenario>(run.scenario_json, {} as PracticeScenario);
-  const asked = json<string[]>(run.asked_json, []);
-  const quote = json<Quote | null>(run.quote_json, null);
-  const outcome: { quote: Quote } | { siteVisit: string } =
-    run.outcome === 'quote' && quote
-      ? { quote }
-      : { siteVisit: String(run.site_visit_reason ?? '') };
-  const insights = await insightsFor(businessId, runId, scenario, asked, outcome, context.trade);
-  const market =
-    'quote' in outcome
-      ? await marketBeside(businessId, context, scenario, outcome.quote, asked).catch((error) => {
-          reportError(error, { event: 'practice_market' });
-          return null;
-        })
-      : null;
   await mutate(
-    "UPDATE practice_runs SET insights_json=?,market_json=?,status='finished',finished_at=UTC_TIMESTAMP(3),finish_until=NULL WHERE id=? AND status<>'finished'",
-    [JSON.stringify(insights), market && JSON.stringify(market), runId],
+    "UPDATE practice_runs SET status='finished',finished_at=UTC_TIMESTAMP(3),finish_until=NULL WHERE id=?",
+    [runId],
   );
   refreshFormula(businessId);
   await kickPreparation(businessId);

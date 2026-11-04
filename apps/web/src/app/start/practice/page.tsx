@@ -238,6 +238,7 @@ export default function PracticeStep() {
         onClose={() => setSaving(false)}
         title="Save your Charm"
         subtitle="Your practice is saved. We’ll email you a link to pick up where you left off, on this device or another one."
+        onward={seeCharm}
       />
     </div>
   );

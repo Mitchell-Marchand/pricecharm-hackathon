@@ -179,6 +179,18 @@ test('on a phone, the owner looks over the photos, asks for more and zooms in', 
   await expectNoSideways(page);
 });
 
+test('finishing later saves the email and goes on to the account', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 664 });
+  await practiceDraft(page);
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Finish later' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Save your Charm' });
+  await dialog.getByLabel('Email').fill('later@example.com');
+  await dialog.getByRole('button', { name: 'Continue' }).click();
+  await expect(page).toHaveURL(/\/start\/ready$/);
+  await expect(page.getByLabel('Email')).toHaveValue('later@example.com');
+});
+
 test('on a phone, the chat gets the screen', async ({ page }) => {
   // What Safari leaves of an 844 pt phone with its bars showing.
   await page.setViewportSize({ width: 390, height: 664 });
@@ -188,8 +200,9 @@ test('on a phone, the chat gets the screen', async ({ page }) => {
   const headerBottom = header.y + header.height;
   // Over 55% of the whole phone is chat, and it starts right under the header.
   expect(buttons.y - headerBottom).toBeGreaterThan(844 * 0.55);
-  const photo = (await page.getByRole('button', { name: /^Open photo 1 of 2/ }).boundingBox())!;
-  expect(photo.y - headerBottom).toBeLessThan(160);
+  // The customer is there at once, so this waits for the message to finish coming in.
+  const photo = page.getByRole('button', { name: /^Open photo 1 of 2/ });
+  await expect.poll(async () => (await photo.boundingBox())!.y - headerBottom).toBeLessThan(160);
   await expectNoSideways(page);
 
   // The way out is behind the menu.

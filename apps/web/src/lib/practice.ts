@@ -135,12 +135,8 @@ export type QuoteDraft = {
   note: string;
 };
 
-/** `first` starts only the first customer, for a setup that hasn't reached practice yet. */
-export const preparePractice = (first = false) =>
-  api<PracticeState>('/onboarding/practice/prepare', {
-    method: 'POST',
-    ...json(first ? { first } : {}),
-  });
+export const preparePractice = () =>
+  api<PracticeState>('/onboarding/practice/prepare', { method: 'POST', ...json({}) });
 export const loadPractice = () => api<PracticeState>('/onboarding/practice');
 export const sendPracticeMessage = (runId: string, text: string) =>
   api<{ run: PracticeRun; nudge: boolean }>(`/onboarding/practice/${runId}/messages`, {

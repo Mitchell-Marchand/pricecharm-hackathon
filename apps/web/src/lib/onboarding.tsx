@@ -35,6 +35,8 @@ export interface BusinessDraft {
 
 export interface Onboarding {
   draft: boolean;
+  /** The address they gave to finish later. An older API leaves it out. */
+  email?: string;
   step: Step;
   business: BusinessDraft;
   slug: string | null;

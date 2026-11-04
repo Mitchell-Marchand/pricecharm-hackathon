@@ -29,6 +29,8 @@ export interface Knows {
   questions: CharmQuestion[];
   rates: ServiceRate[];
   notes: PriceNote[];
+  /** A change the owner told it to make to every quote for now. Missing from older APIs. */
+  priceChange?: { words: string } | null;
 }
 
 const at = (kind: 'questions' | 'notes', id?: string) =>

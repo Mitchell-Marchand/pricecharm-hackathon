@@ -327,8 +327,16 @@ function WhyWaiting({ quote }: { quote: QuoteDetail }) {
           ))}
         </ul>
       )}
-      {(quote.reasoning || quote.basis) && (
+      {(quote.reasoning || quote.basis || quote.priceChangePercent) && (
         <div className="mt-3 flex flex-col gap-1.5 border-t border-ink/10 pt-3 text-sm text-ink-2">
+          {!!quote.priceChangePercent && (
+            <p>
+              <span className="font-semibold text-ink">Your price change: </span>
+              {Math.abs(quote.priceChangePercent)}%{' '}
+              {quote.priceChangePercent > 0 ? 'higher' : 'lower'}, in this total. Your Charm doesn’t
+              learn from it.
+            </p>
+          )}
           {quote.basis && (
             <p>
               <span className="font-semibold text-ink">Started from: </span>

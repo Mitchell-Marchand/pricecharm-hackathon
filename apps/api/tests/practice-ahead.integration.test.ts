@@ -118,7 +118,10 @@ test(
       customTrade: 'Dog grooming',
       services: ['Full groom'],
     });
-    await setup.prepare({ first: true });
+    await setup.until(
+      async () => (await started(setup.businessId)) === 1,
+      'the first customer started',
+    );
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(await started(setup.businessId), 1);
     await setup.prepare();
@@ -126,6 +129,39 @@ test(
       async () => (await started(setup.businessId)) === 2,
       'the next customer started',
     );
+  },
+);
+
+test(
+  'the first customer goes when its service is turned off, and stays when one is added',
+  { skip: !enabled },
+  async () => {
+    const setup = await practiceSetup('203.0.113.84', {
+      customTrade: 'Dog grooming',
+      services: ['Full groom', 'Nail trim'],
+    });
+    const change = (services: string[]) =>
+      setup.owner
+        .patch('/api/v1/onboarding/business')
+        .set('Origin', origin)
+        .send({ services })
+        .expect(200);
+    await setup.until(
+      async () => (await setup.runs())[0]?.status === 'ready',
+      'the first customer got ready',
+    );
+    const [first] = await setup.runs();
+    const other = first.serviceName === 'Full groom' ? 'Nail trim' : 'Full groom';
+
+    await change(['Full groom', 'Nail trim', 'Teeth']);
+    assert.equal((await setup.runs())[0].id, first.id);
+
+    await change([other, 'Teeth']);
+    await setup.until(async () => {
+      const [next] = await setup.runs();
+      return next?.status === 'ready' && next.id !== first.id;
+    }, 'the customer was made again');
+    assert.notEqual((await setup.runs())[0].serviceName, first.serviceName);
   },
 );
 

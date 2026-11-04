@@ -146,6 +146,7 @@ function InsightCard({
   const apart = guess - ownerCents;
   const market = run.outcome === 'quote' ? run.market : null;
   const max = Math.max(guess, ownerCents) * 1.08 || 1;
+  const held = guess > 0 ? null : heldBack(run);
   const save = async (id: string) => {
     const text = value.trim();
     setEditing(null);
@@ -174,31 +175,33 @@ function InsightCard({
               <ShadowBar label="Your quote" cents={ownerCents} max={max} tone="ink" />
             </>
           )}
-          <p className="text-[15px] text-ink-2">
-            {guess > 0 ? (
-              <>
-                Before you sent yours, it guessed {money(guess)}
-                {apart === 0 ? (
-                  <>
-                    , <span className="font-semibold text-ink">the same as you</span>.
-                  </>
-                ) : (
-                  <>
-                    ,{' '}
-                    <span className="font-semibold text-ink">
-                      {money(Math.abs(apart))} {apart > 0 ? 'more' : 'less'} than you
-                    </span>
-                    {gap ? ` (${gap}%)` : ''}.
-                  </>
-                )}{' '}
-                {gap !== null && gap <= closePercent
-                  ? "That's close. It's learning your pricing."
-                  : "It'll get closer with each practice quote."}
-              </>
-            ) : (
-              <HeldBack run={run} />
-            )}
-          </p>
+          {(guess > 0 || held) && (
+            <p className="text-[15px] text-ink-2">
+              {guess > 0 ? (
+                <>
+                  Before you sent yours, it guessed {money(guess)}
+                  {apart === 0 ? (
+                    <>
+                      , <span className="font-semibold text-ink">the same as you</span>.
+                    </>
+                  ) : (
+                    <>
+                      ,{' '}
+                      <span className="font-semibold text-ink">
+                        {money(Math.abs(apart))} {apart > 0 ? 'more' : 'less'} than you
+                      </span>
+                      {gap ? ` (${gap}%)` : ''}.
+                    </>
+                  )}{' '}
+                  {gap !== null && gap <= closePercent
+                    ? "That's close. It's learning your pricing."
+                    : "It'll get closer with each practice quote."}
+                </>
+              ) : (
+                held
+              )}
+            </p>
+          )}
           {market && (
             <p className="text-[15px] text-ink-2">
               You may be charging less than most. {market.businesses} other{' '}
@@ -473,8 +476,8 @@ function OwnerQuestion({
   );
 }
 
-/** Why the Charm didn't guess this one, and when it will. */
-function HeldBack({ run }: { run: PracticeRun }) {
+/** When the Charm starts guessing, before it has. A guess that didn't come isn't mentioned. */
+function heldBack(run: PracticeRun) {
   const why = run.shadow?.withheld;
   // How many it still needed before this one. This one counts now.
   const left = Math.max(0, (run.shadow?.toGo ?? 1) - 1);
@@ -495,65 +498,7 @@ function HeldBack({ run }: { run: PracticeRun }) {
         </span>
       </>
     );
-  if (why === 'service')
-    return (
-      <>
-        It hadn&apos;t seen a {run.serviceName?.toLowerCase() ?? 'job like this'} priced yet, so it
-        didn&apos;t guess this one. Now it has.
-      </>
-    );
-  if (why === 'working')
-    return (
-      <>
-        It was still working out your prices from your last quote, so it didn&apos;t guess this one.
-      </>
-    );
-  return <>It didn&apos;t have enough to go on to guess this one. Now it does.</>;
-}
-
-/** While its guess and what it picked up come in, after the owner has answered. */
-function LookingAtIt() {
-  const steps = [
-    'Reading the job',
-    'Working out what it would have charged',
-    'Lining it up with yours',
-  ];
-  const [step, setStep] = useState(0);
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setStep((current) => Math.min(current + 1, steps.length - 1)),
-      2500,
-    );
-    return () => window.clearInterval(timer);
-  }, [steps.length]);
-  return (
-    <section
-      className="fade-up rounded-md border border-line bg-surface p-5 shadow-1 sm:p-6"
-      aria-live="polite"
-      aria-busy="true"
-    >
-      <p className="t-label text-muted">Only you see this</p>
-      <h2 className="t-h2 mt-2">Your Charm is looking at how you priced it</h2>
-      <ol className="mt-5 flex flex-col gap-3">
-        {steps.map((label, index) => (
-          <li key={label} className="flex items-center gap-3 text-[15px]">
-            <span
-              className={cx(
-                'inline-flex size-5 shrink-0 items-center justify-center rounded-full',
-                index < step && 'bg-go text-surface',
-                index === step && 'border-2 border-accent border-t-transparent animate-spin',
-                index > step && 'border border-line-strong',
-              )}
-              aria-hidden
-            >
-              {index < step && <Check className="size-3.5" />}
-            </span>
-            <span className={index > step ? 'text-muted' : 'text-ink'}>{label}</span>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
+  return null;
 }
 
 /** The customer off taking the photo the owner asked for. */
@@ -669,7 +614,10 @@ export function PracticeSession({
       ? run.messages.slice(0, reveal.messages)
       : run.messages
     : [];
-  const showInsights = Boolean(run?.finished) && (reveal?.runId !== run?.id || reveal?.insights);
+  // The owner moves on as soon as the customer has replied. Nothing here waits on the Charm: what
+  // it picked up, and its guess, show up if they're in while the owner's still here.
+  const answered = Boolean(run?.outcome) && (reveal?.runId !== run?.id || reveal?.insights);
+  const showInsights = answered && Boolean(run?.finished || run?.insights.length);
 
   useEffect(() => {
     if (visibleMessages.length > 1 || typing || pending) scrollToBottom();
@@ -892,9 +840,6 @@ export function PracticeSession({
                   flat
                 />
               )}
-              {run && finishing && (reveal?.runId !== run.id || reveal?.insights) && (
-                <LookingAtIt />
-              )}
               {run && showInsights && (
                 <InsightCard
                   run={run}
@@ -903,11 +848,7 @@ export function PracticeSession({
                   onTurnDown={setTurnDown}
                 />
               )}
-              {run?.question &&
-                (finishing || showInsights) &&
-                (reveal?.runId !== run.id || reveal?.insights) && (
-                  <OwnerQuestion run={run} onChange={onRun} />
-                )}
+              {run?.question && answered && <OwnerQuestion run={run} onChange={onRun} />}
             </div>
           </>
         )}
@@ -918,7 +859,7 @@ export function PracticeSession({
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         <div className={cx('mx-auto max-w-[760px] py-3 max-sm:py-2', sides)}>
-          {run?.finished && showInsights ? (
+          {answered ? (
             done
           ) : run?.outcome ? (
             <p className="py-3 text-sm text-muted" role="status">

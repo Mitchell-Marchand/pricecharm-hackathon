@@ -1,5 +1,11 @@
 import { median, SOLID_POINTS, type PricePoint } from '../pricing/rates.js';
 import { formatQuantity, roundSize } from '../pricing/units.js';
+import type { PriceFormula } from '../pricing/formula.js';
+import type { PickedJob } from '../pricing/next-job.js';
+import type { PhotoSet } from './types.js';
+
+/** What a practice customer is there to teach, and the photos that show it best. */
+export type Lesson = { teaches: string; photos: PhotoSet };
 
 /**
  * Setup's customers each change one thing from a plain job, so nothing hides anything else: an
@@ -15,6 +21,16 @@ export const SITUATIONS = [
   'A usual-sized job that’s harder to reach, like a second story, and otherwise clear: no buildup, no extras.',
   'A small job at the low end of what they do, from a customer in a hurry.',
   'A bigger job that combines two of their services and adds the first extra again, where the customer asks whether doing both together saves anything.',
+];
+
+/** What each of SITUATIONS teaches, in the same order. */
+export const SITUATION_LESSONS: Lesson[] = [
+  { teaches: 'what the extra adds to their main service', photos: 'overview_detail' },
+  { teaches: 'their price for this service and what this extra adds', photos: 'overview_detail' },
+  { teaches: 'how much a job in bad shape adds', photos: 'overview_detail' },
+  { teaches: 'how much a hard-to-reach job adds', photos: 'overview_detail' },
+  { teaches: 'their smallest price, and any minimum', photos: 'overview' },
+  { teaches: 'what two services cost done together', photos: 'two_parts' },
 ];
 
 /**
@@ -43,6 +59,28 @@ export function newOwnerSituations(services: string[]): string[] {
       : []),
     `A usual-sized "${main}" job in rough shape, like heavy buildup or stains, that's also harder to reach than most, like a second story, if that matters for this work. The photos show both.`,
     `A usual "${main}" job where timing matters: if businesses in their trade do regular visits, the customer wants it on a regular schedule; otherwise they need it done this week.`,
+  ];
+}
+
+/** What each of newOwnerSituations teaches, in the same order. */
+export function newOwnerLessons(services: string[]): Lesson[] {
+  const [, ...others] = services;
+  return [
+    { teaches: 'their rate on a usual job', photos: 'overview_detail' },
+    { teaches: 'their smallest price, and any minimum', photos: 'overview' },
+    {
+      teaches: 'how the price grows with size, and what the extra adds',
+      photos: 'overview_detail',
+    },
+    ...others.slice(0, 3).map((service): Lesson => ({
+      teaches: `their rate for ${service}`,
+      photos: 'overview_detail',
+    })),
+    ...(others.length
+      ? [{ teaches: 'what two services cost done together', photos: 'two_parts' } as Lesson]
+      : []),
+    { teaches: 'how much bad shape and hard access add', photos: 'overview_detail' },
+    { teaches: 'how timing or a regular schedule changes the price', photos: 'overview' },
   ];
 }
 
@@ -94,6 +132,10 @@ export function focusSituation(service: string, points: PricePoint[]): string {
   return `A usual "${service}" job, around ${formatQuantity(roundSize(median(quantities)), unit)}. Nothing unusual.`;
 }
 
+/** About how rarely someone wants the same work at two places. */
+const TWO_PLACES_EVERY = 11;
+const EVERYDAY_PHOTOS: PhotoSet[] = ['overview_detail', 'overview', 'overview_detail', 'two_parts'];
+
 /**
  * The next practice customer. Setup keeps its fixed mix so every owner starts with the same range,
  * then a service they've never priced, then everyday customers, drawn the way the benchmark's usual
@@ -104,17 +146,32 @@ export function focusSituation(service: string, points: PricePoint[]): string {
  * sizes twice or half any priced and extras the trade usually charges for, reached only 74%: odd
  * jobs teach less than the ones that come in (aimedJob in src/bench/owners.ts).
  */
-export function planSituation(input: PlanInput): string {
+export function planCustomer(input: PlanInput): {
+  situation: string;
+  lesson: Lesson;
+  /** One of the everyday customers, which pickedCustomer can do better than at random. */
+  everyday?: boolean;
+} {
   if (input.pastJobs === 0) {
     const plan = newOwnerSituations(input.services);
-    if (input.position < plan.length) return plan[input.position];
-  } else if (input.position < input.setupCount)
-    return SITUATIONS[input.position % SITUATIONS.length];
+    if (input.position < plan.length)
+      return {
+        situation: plan[input.position],
+        lesson: newOwnerLessons(input.services)[input.position],
+      };
+  } else if (input.position < input.setupCount) {
+    const at = input.position % SITUATIONS.length;
+    return { situation: SITUATIONS[at], lesson: SITUATION_LESSONS[at] };
+  }
 
   for (const service of input.services) {
     if (input.examples[service.toLowerCase()]) continue;
     const plan = `A typical, clear job for their "${service}" service, sized like a usual job for it. They haven't priced this service here yet.`;
-    if (!input.asked.includes(plan)) return plan;
+    if (!input.asked.includes(plan))
+      return {
+        situation: plan,
+        lesson: { teaches: `their rate for ${service}`, photos: 'overview_detail' },
+      };
   }
 
   const random = input.random ?? Math.random;
@@ -122,8 +179,14 @@ export function planSituation(input: PlanInput): string {
   const [main, ...others] = input.services;
   const service =
     others.length && chance(0.3) ? others[Math.floor(random() * others.length)] : main;
+  // Now and then, as in real life: one service at two places, to see what a second address does.
+  if (input.position % TWO_PLACES_EVERY === TWO_PLACES_EVERY - 1)
+    return {
+      situation: `An everyday customer who wants their "${main}" service done at two separate places, like their home and a rental or a parent's house, each with its own size, and says so in their first message. If that isn't something customers of this trade do, make it an everyday job at one place instead.`,
+      lesson: { teaches: 'whether a second place changes the price', photos: 'two_parts' },
+    };
   const extras = chance(0.4) ? (chance(0.5) ? 1 : 2) : 0;
-  return [
+  const situation = [
     `An everyday customer for their "${service}" service, like the ones they get all the time, with a job ${['on the smaller side', 'in the middle', 'on the bigger side'][Math.floor(random() * 3)]} of their usual jobs for it.`,
     chance(0.35) ? 'It’s in rough shape, like heavy buildup or stains.' : 'It’s in normal shape.',
     chance(0.45)
@@ -142,4 +205,69 @@ export function planSituation(input: PlanInput): string {
   ]
     .filter(Boolean)
     .join(' ');
+  return {
+    situation,
+    everyday: true,
+    lesson: {
+      teaches: 'whether its prices hold up on the jobs that come in most',
+      // Everyday customers send what real ones do: a mix, in a set order so it stays a mix.
+      photos: EVERYDAY_PHOTOS[input.position % EVERYDAY_PHOTOS.length],
+    },
+  };
 }
+
+const listOf = (items: string[]) =>
+  items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : (items[0] ?? '');
+
+/** The customer who brings a picked job (pickJob in src/pricing/next-job.ts), in plain words. */
+export function pickedCustomer(
+  job: PickedJob,
+  formula: PriceFormula,
+  position: number,
+): { situation: string; lesson: Lesson; pick: string } {
+  const { parts, newThing } = job;
+  const unit = formula.services.find((item) => item.name === parts.service)?.unit ?? '';
+  const when = parts.surcharges.map(
+    (name) => formula.surcharges.find((item) => item.name === name)?.when || name,
+  );
+  const wants = parts.addOns.map((item) => item.name);
+  const others = parts.otherServices.map(
+    (other) =>
+      `their "${other.name}" service, around ${formatQuantity(
+        other.size ?? 0,
+        formula.services.find((item) => item.name === other.name)?.unit ?? '',
+      )}`,
+  );
+  return {
+    pick: job.kind,
+    situation: [
+      `An everyday customer for their "${parts.service}" service, like the ones they get all the time, with a job around ${formatQuantity(parts.size ?? 0, unit)}.`,
+      when.length ? `This applies to it: ${listOf(when)}.` : 'It’s in normal shape.',
+      wants.length ? `They want ${listOf(wants)} too.` : 'No extras.',
+      others.length ? `They also want ${listOf(others)} done in the same visit.` : '',
+      newThing
+        ? `Part of the job, which businesses in their trade often price on its own: ${newThing}.`
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
+    lesson: {
+      teaches: newThing
+        ? `what they charge for ${newThing}`
+        : 'what this mix of work costs, which the owner’s quotes so far don’t settle',
+      photos: others.length
+        ? 'two_parts'
+        : newThing || wants.length || when.length
+          ? 'overview_detail'
+          : EVERYDAY_PHOTOS[position % EVERYDAY_PHOTOS.length],
+    },
+  };
+}
+
+export const planSituation = (input: PlanInput) => planCustomer(input).situation;
+
+/** A customer aimed at one service, like focusSituation, and what they're there to teach. */
+export const focusLesson = (service: string): Lesson => ({
+  teaches: `their price for ${service} at a size they haven't priced yet`,
+  photos: 'overview',
+});

@@ -4,6 +4,7 @@ import { lossReasonLabel, lossReasons, type LossReason } from '../live/outcomes.
 import { discountCents, type Quote } from '../practice/types.js';
 import { money as formatMoney, type Currency } from '../money.js';
 import { priceText } from '../pricing/style.js';
+import { say } from '../words.js';
 
 /**
  * WhatsApp's Cloud API: reading what Meta sends us, and shaping and sending the Charm's messages.
@@ -100,6 +101,7 @@ const messageSchema = z.object({
   text: z.object({ body: z.string() }).optional(),
   image: media.optional(),
   video: media.optional(),
+  audio: media.optional(),
   location: z
     .object({
       latitude: z.number(),
@@ -179,7 +181,7 @@ function readMessage(
       };
     }
     case 'audio':
-      return { kind: 'voice', text: '' };
+      return { kind: 'voice', text: '', mediaId: message.audio?.id };
     case 'document':
       return { kind: 'file', text: '' };
     default:
@@ -514,7 +516,7 @@ export const CHIP = 'chip:';
  * A Charm message with the suggestions under it: up to three short ones as buttons, more as a list.
  * The customer can always type instead.
  */
-export function withChoices(text: string, chips: string[]): Outbound {
+export function withChoices(text: string, chips: string[], language = 'en'): Outbound {
   const options = [...new Set(chips.map((chip) => chip.trim()).filter(Boolean))].filter(
     (option) => CHIP.length + option.length <= LIMITS.choiceId,
   );
@@ -532,7 +534,7 @@ export function withChoices(text: string, chips: string[]): Outbound {
   return {
     kind: 'list',
     text,
-    button: 'Pick one',
+    button: fit(say(language, 'Pick one'), LIMITS.buttonTitle),
     rows: options.slice(0, LIMITS.rows).map((option, index) => ({
       id: ids[index],
       title: fit(option, LIMITS.rowTitle),
@@ -554,25 +556,36 @@ export const REASON = 'reason:';
 /** What the customer sent with their request, which the quote says it's based on. */
 export type Sent = { photos: boolean; video: boolean };
 
-const basedOn = (sent: Sent) =>
-  sent.photos && sent.video
-    ? 'your photos and video'
-    : sent.video
-      ? 'your video'
-      : sent.photos
-        ? 'your photos'
-        : 'what you told us';
+const basedOn = (sent: Sent, language: string) =>
+  say(
+    language,
+    sent.photos && sent.video
+      ? 'your photos and video'
+      : sent.video
+        ? 'your video'
+        : sent.photos
+          ? 'your photos'
+          : 'what you told us',
+  );
 
 /** Under the price: the same note the quote card on the web carries. */
-function footnote(quote: Pick<Quote, 'style' | 'range'>, sent: Sent) {
-  const from = basedOn(sent);
+function footnote(quote: Pick<Quote, 'style' | 'range'>, sent: Sent, language: string) {
+  const from = basedOn(sent, language);
   if (quote.style === 'range' && quote.range)
-    return `A price range based on ${from}. You’ll know the exact price before any work starts.`;
+    return say(
+      language,
+      'A price range based on {from}. You’ll know the exact price before any work starts.',
+      { from },
+    );
   if (quote.style === 'estimate')
-    return `An estimate based on ${from}. You’ll know the exact price before any work starts.`;
-  return from === 'what you told us'
-    ? 'Based on what you told us.'
-    : `Based on ${from} and what you told us.`;
+    return say(
+      language,
+      'An estimate based on {from}. You’ll know the exact price before any work starts.',
+      { from },
+    );
+  return sent.photos || sent.video
+    ? say(language, 'Based on {from} and what you told us.', { from })
+    : say(language, 'Based on what you told us.');
 }
 
 /**
@@ -589,47 +602,58 @@ export function quoteMessage(input: {
   acceptLabel: string;
   link: string;
   currency?: Currency;
+  language?: string;
 }): Outbound {
-  const { quote } = input;
+  const { quote, language = 'en' } = input;
   const money = (cents: number) => formatMoney(cents, input.currency);
   const range = quote.style === 'range' && quote.range ? quote.range : null;
   const lines = quote.lines.map((line) =>
     range ? `• ${line.label}` : `• ${line.label}: ${money(line.amountCents)}`,
   );
   const off = discountCents(quote);
-  if (off > 0 && !range) lines.push(`• ${quote.discount?.reason || 'Discount'}: −${money(off)}`);
+  if (off > 0 && !range)
+    lines.push(`• ${quote.discount?.reason || say(language, 'Discount')}: −${money(off)}`);
   const when = [
-    quote.start ? `Can start: ${quote.start}` : '',
-    quote.duration ? `Takes about ${quote.duration.replace(/^about\s+/i, '')}` : '',
+    quote.start ? `${say(language, 'Can start')}: ${quote.start}` : '',
+    quote.duration
+      ? `${say(language, 'Takes about')} ${quote.duration.replace(/^about\s+/i, '')}`
+      : '',
   ]
     .filter(Boolean)
     .join(' · ');
   const compose = (shown: string[]) =>
     [
-      `*${quote.style === 'estimate' ? 'Estimate' : 'Quote'} from ${input.business}*`,
+      `*${say(language, quote.style === 'estimate' ? 'Estimate from {business}' : 'Quote from {business}', { business: input.business })}*`,
       '',
       ...shown,
       '',
-      `*${range ? 'Price range' : 'Total'}: ${priceText(quote, input.totalCents, input.currency)}*`,
+      `*${say(language, range ? 'Price range' : 'Total')}: ${priceText(quote, input.totalCents, input.currency)}*`,
       ...(when ? [when] : []),
-      footnote(quote, input.sent),
+      footnote(quote, input.sent, language),
       '',
-      `See the full quote: ${input.link}`,
+      say(language, 'See the full quote: {link}', { link: input.link }),
     ].join('\n');
   // A long quote keeps its first lines and points to the full quote for the rest.
   let shown = lines.length,
     text = compose(lines);
   while (text.length > LIMITS.body && shown > 1) {
     shown--;
-    text = compose([...lines.slice(0, shown), `• and ${lines.length - shown} more`]);
+    text = compose([
+      ...lines.slice(0, shown),
+      `• ${say(language, 'and {count} more', { count: lines.length - shown })}`,
+    ]);
   }
   // The longest that fits WhatsApp's footer.
   const footer =
     [
-      `No payment now. ${input.owner} will reach out to book a time.`,
-      `No payment now. ${input.owner} will reach out to book.`,
-      `No payment now. ${input.business} will reach out to book.`,
-    ].find((line) => line.length <= LIMITS.footer) ?? 'No payment now.';
+      say(language, 'No payment now. {owner} will reach out to book a time.', {
+        owner: input.owner,
+      }),
+      say(language, 'No payment now. {owner} will reach out to book.', { owner: input.owner }),
+      say(language, 'No payment now. {owner} will reach out to book.', {
+        owner: input.business,
+      }),
+    ].find((line) => line.length <= LIMITS.footer) ?? say(language, 'No payment now.');
   return {
     kind: 'buttons',
     text: text.slice(0, LIMITS.body),
@@ -638,26 +662,28 @@ export function quoteMessage(input: {
       {
         id: QUOTE.accept,
         title:
-          input.acceptLabel.length <= LIMITS.buttonTitle ? input.acceptLabel : 'Looks good to me',
+          input.acceptLabel.length <= LIMITS.buttonTitle
+            ? input.acceptLabel
+            : fit(say(language, 'Looks good to me'), LIMITS.buttonTitle),
       },
-      { id: QUOTE.question, title: 'Ask a question' },
-      { id: QUOTE.decline, title: 'Not going ahead' },
+      { id: QUOTE.question, title: fit(say(language, 'Ask a question'), LIMITS.buttonTitle) },
+      { id: QUOTE.decline, title: fit(say(language, 'Not going ahead'), LIMITS.buttonTitle) },
     ],
   };
 }
 
 /** Reasons whose web wording is too long for a list row. */
-const SHORT_REASONS: Partial<Record<LossReason, string>> = { price: 'Over my budget' };
+export const SHORT_REASONS: Partial<Record<LossReason, string>> = { price: 'Over my budget' };
 
 /** Asked after "Not going ahead", with the reasons the web asks for. */
-export function reasonsMessage(owner: string): Outbound {
+export function reasonsMessage(owner: string, language = 'en'): Outbound {
   return {
     kind: 'list',
-    text: `Mind saying why? It helps ${owner}.`,
-    button: 'Pick a reason',
+    text: say(language, 'Mind saying why? It helps {owner}.', { owner }),
+    button: fit(say(language, 'Pick a reason'), LIMITS.buttonTitle),
     rows: lossReasons.map((reason) => ({
       id: `${REASON}${reason}`,
-      title: fit(SHORT_REASONS[reason] ?? lossReasonLabel(reason), LIMITS.rowTitle),
+      title: fit(say(language, SHORT_REASONS[reason] ?? lossReasonLabel(reason)), LIMITS.rowTitle),
     })),
   };
 }

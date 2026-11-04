@@ -261,6 +261,17 @@ export function KnowsEditor({
           </Link>
           .
         </p>
+        {knows.priceChange && (
+          <p className="mt-4 rounded-md bg-canary-soft px-4 py-3 font-medium">
+            {knows.priceChange.words}{' '}
+            <Link
+              href="/app/train"
+              className="font-normal text-accent underline underline-offset-2"
+            >
+              Change it
+            </Link>
+          </p>
+        )}
         <ul aria-label="Your rates" className="mt-5 divide-y divide-line border-y border-line">
           {knows.rates.map((rate) => (
             <li key={rate.service} className="py-3">

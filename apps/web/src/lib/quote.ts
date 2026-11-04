@@ -1,3 +1,4 @@
+import { sayFrom, type Say } from './words';
 /** The quote card's data. Practice quotes, customer quotes and the landing page samples share it. */
 export interface Discount {
   kind: 'amount' | 'percent';
@@ -57,27 +58,33 @@ export function rangeOf(quote: Pick<Quote, 'style' | 'range'>) {
   return quote.style === 'range' && quote.range ? quote.range : null;
 }
 
-/** What the customer sent with their request, as the quote says it's based on it. */
-function basedOn(sent: { photos: boolean; video: boolean }) {
-  if (sent.photos && sent.video) return 'your photos and video';
-  if (sent.video) return 'your video';
-  if (sent.photos) return 'your photos';
-  return 'what you told us';
-}
-
 /** The line under a customer's quote, saying how firm the price is and what it's based on. */
 export function quoteFootnote(
   quote: Pick<Quote, 'style' | 'range'>,
   sent: { photos: boolean; video: boolean },
+  t: Say = sayFrom({}),
 ) {
-  const from = basedOn(sent);
+  // What the customer sent with their request, as the quote says it's based on it.
+  const from = t(
+    sent.photos && sent.video
+      ? 'your photos and video'
+      : sent.video
+        ? 'your video'
+        : sent.photos
+          ? 'your photos'
+          : 'what you told us',
+  );
   if (rangeOf(quote))
-    return `A price range based on ${from}. You’ll know the exact price before any work starts.`;
+    return t('A price range based on {from}. You’ll know the exact price before any work starts.', {
+      from,
+    });
   if (quote.style === 'estimate')
-    return `An estimate based on ${from}. You’ll know the exact price before any work starts.`;
-  return from === 'what you told us'
-    ? 'Based on what you told us.'
-    : `Based on ${from} and what you told us.`;
+    return t('An estimate based on {from}. You’ll know the exact price before any work starts.', {
+      from,
+    });
+  return sent.photos || sent.video
+    ? t('Based on {from} and what you told us.', { from })
+    : t('Based on what you told us.');
 }
 
 /** A range around the total, rounded outward like the server's. */

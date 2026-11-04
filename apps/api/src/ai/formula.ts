@@ -289,7 +289,7 @@ Read the customer's request into this business's price formula, using the formul
 - service: which of the formula's services the main work is. size: the main work's size, in that service's unit, or null if the customer hasn't said.
 - surcharges: the formula's surcharges whose condition this job has, from what the customer says or the details. None when it doesn't clearly apply. A condition the formula has no surcharge for costs nothing extra.
 - addOns: the formula's add-ons the customer asks for. count: for per-item ones, the number the customer gave, else null.
-- otherServices: any other of the formula's services they want done in the same job, with its size, or null if they didn't give one.
+- otherServices: any other of the formula's services they want done in the same job, with its size, or null if they didn't give one. A second separate place or spot for the same service, like two driveways at two addresses, goes here too, under that service's name, with its own size. Several of one thing at one place, like 3 trees, is just the size.
 - extraSize: for a main service with a second count, how many the customer has of it (like 2 bathrooms), or null if they haven't said or the service has none.
 - uncovered: work they ask for, a service or an extra, that nothing in the formula covers, in a few words, or empty. Never a condition of the job, like stains or a second story.
 - unpriced: a choice they make about the work that would change its price and that none of the formula's surcharges names, like a material, a grade or a lighter or fuller version of the service, in a few words, or empty. Never the size, and never something the formula has a surcharge, add-on or service for.`,

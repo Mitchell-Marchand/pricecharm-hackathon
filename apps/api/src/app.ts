@@ -38,6 +38,7 @@ import { shareRouter } from './share.js';
 import { chatRouter } from './live/router.js';
 import { agentRouter } from './live/agent.js';
 import { logoRouter, quotePageRouter } from './live/quote-page.js';
+import { priceChangeRouter } from './price-change.js';
 import { demoRouter } from './demo.js';
 import { ownerQuotesRouter } from './live/owner.js';
 import { visitsRouter } from './metrics.js';
@@ -207,6 +208,7 @@ export function createApp() {
     shareRouter,
     ownerQuotesRouter,
     quotePageRouter,
+    priceChangeRouter,
     locationsRouter,
     channelRouter,
   );

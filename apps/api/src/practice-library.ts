@@ -5,7 +5,12 @@ import { parseArgs } from 'node:util';
 import { TRADES_BY_ID } from '@pricecharm/trades';
 import { aiMode, aiProvider, runWithAiUsage } from './ai/index.js';
 import { closeDatabase, rows } from './db.js';
-import { buildLibraryEntry, LIBRARY_POSITIONS } from './practice/library.js';
+import {
+  buildLibraryEntry,
+  exportLibrary,
+  importLibrary,
+  LIBRARY_POSITIONS,
+} from './practice/library.js';
 
 /**
  * Builds the checked library of setup's first practice customers for one trade
@@ -14,6 +19,8 @@ import { buildLibraryEntry, LIBRARY_POSITIONS } from './practice/library.js';
  *
  *   npm run practice-library -- --trade window-cleaning --spend
  *   npm run practice-library -- --trade window-cleaning --position 2 --replace --spend
+ *   npm run practice-library -- --export library.json
+ *   npm run practice-library -- --import library.json
  *
  * It calls paid image and AI models, about 3 images, a scenario and a photo reading per customer,
  * so it won't run without --spend. With AI_PROVIDER=demo nothing is spent and it builds demo
@@ -76,13 +83,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       position: { type: 'string', multiple: true },
       spend: { type: 'boolean', default: false },
       replace: { type: 'boolean', default: false },
+      export: { type: 'string' },
+      import: { type: 'string' },
     },
   });
   const positions = values.position?.length
     ? values.position.map((value) => Number(value) - 1)
     : Array.from({ length: LIBRARY_POSITIONS }, (_, index) => index);
   Promise.resolve()
-    .then(() => {
+    .then(async () => {
+      if (values.export)
+        return console.info(`Exported ${await exportLibrary(values.export)} customers.`);
+      if (values.import)
+        return console.info(`Added ${await importLibrary(values.import)} customers.`);
       if (!values.trade)
         throw new Error('Usage: npm run practice-library -- --trade <trade id> --spend');
       if (positions.some((position) => !(position >= 0 && position < LIBRARY_POSITIONS)))

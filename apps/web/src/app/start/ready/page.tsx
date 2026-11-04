@@ -71,7 +71,7 @@ export default function ReadyStep() {
         <div className="grid items-start gap-12 md:grid-cols-[1fr_380px]">
           <div className="max-w-xl">
             <p className="inline-flex items-center gap-2 font-semibold text-go">
-              <CircleCheckBig className="size-5" aria-hidden /> Practice done
+              <CircleCheckBig className="size-5" aria-hidden /> Practice saved
             </p>
             <h1 className="t-hero mt-4">{headline(charm?.readiness.score, charm?.settings)}</h1>
             <p className="mt-5 text-lg text-ink-2">

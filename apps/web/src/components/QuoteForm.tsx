@@ -5,13 +5,9 @@ import { Check, X } from 'lucide-react';
 import type { Logo } from '@/lib/chat';
 import { discountCents, rangeOf, total, type Quote } from '@/lib/quote';
 import { addDays, cx, lowerFirst, money, prefersReducedMotion, shortDate } from '@/lib/util';
+import { useWords } from '@/lib/words';
 
 export type Stamp = 'practice' | 'sent' | 'accepted';
-const STAMP_TEXT: Record<Stamp, string> = {
-  practice: 'Practice',
-  sent: 'Sent',
-  accepted: 'Accepted',
-};
 
 function useCountUp(target: number, animate: boolean): number {
   const [value, setValue] = useState(() => (animate && !prefersReducedMotion() ? 0 : target));
@@ -38,7 +34,7 @@ function FormField({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <p className="t-label text-[10px]! text-paper-muted">{label}</p>
-      <p className="qf-rule truncate pb-1 text-sm font-medium">{value || '—'}</p>
+      <p className="qf-rule pb-1 text-sm font-medium wrap-anywhere">{value || '—'}</p>
     </div>
   );
 }
@@ -68,6 +64,12 @@ export function QuoteForm({
   footnote?: string;
   actions?: ReactNode;
 }) {
+  const { t, language } = useWords();
+  const stampText: Record<Stamp, string> = {
+    practice: t('Practice'),
+    sent: t('Sent'),
+    accepted: t('Accepted'),
+  };
   const sum = total(quote);
   const off = discountCents(quote);
   const range = rangeOf(quote);
@@ -105,29 +107,29 @@ export function QuoteForm({
                 compact ? 'mt-1 text-[22px]' : 'mt-1.5 text-[28px]',
               )}
             >
-              {quote.style === 'estimate' ? 'Estimate' : 'Quote'}
+              {quote.style === 'estimate' ? t('Estimate') : t('Quote')}
             </p>
           </div>
-          <p className="qf-no shrink-0 text-sm">No. {quote.number}</p>
+          <p className="qf-no shrink-0 text-sm">{t('No. {number}', { number: quote.number })}</p>
         </header>
 
         <div className={cx('mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-6', pad)}>
           {quote.customer || quote.place ? (
             <FormField
-              label="For"
+              label={t('For')}
               value={[quote.customer, quote.place].filter(Boolean).join(' · ')}
             />
           ) : (
             <span />
           )}
-          <FormField label="Date" value={shortDate(quote.issuedAt)} />
+          <FormField label={t('Date')} value={shortDate(quote.issuedAt, language)} />
         </div>
 
         <table className={cx('mt-4 w-full', compact ? 'text-sm' : 'text-[15px]')}>
           <thead className="sr-only">
             <tr>
-              <th>Item</th>
-              <th>Amount</th>
+              <th>{t('Item')}</th>
+              <th>{t('Amount')}</th>
             </tr>
           </thead>
           <tbody>
@@ -154,7 +156,9 @@ export function QuoteForm({
             {quote.discount && off > 0 && (
               <tr className="qf-rule text-[var(--stamp-green)]">
                 <td className={cx('py-2.5 pr-3 align-top', compact ? 'pl-4' : 'pl-5 sm:pl-6')}>
-                  {quote.discount.kind === 'percent' ? `${quote.discount.value}% off` : 'Discount'}
+                  {quote.discount.kind === 'percent'
+                    ? t('{percent}% off', { percent: quote.discount.value })
+                    : t('Discount')}
                   {quote.discount.reason ? `, ${lowerFirst(quote.discount.reason)}` : ''}
                 </td>
                 <td
@@ -175,12 +179,12 @@ export function QuoteForm({
           className={cx('flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-4', pad)}
         >
           <span className="t-label shrink-0 text-paper-muted">
-            {range ? 'Price range' : 'Total'}
+            {range ? t('Price range') : t('Total')}
           </span>
           <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-3">
             {stamp && (
               <span className={cx('qf-stamp', `is-${stamp}`, animate && 'is-animated')}>
-                {STAMP_TEXT[stamp]}
+                {stampText[stamp]}
               </span>
             )}
             {range ? (
@@ -201,17 +205,23 @@ export function QuoteForm({
           <>
             {/* A blank the owner never set says nothing, so it's left off. */}
             <div className={cx('mt-5 grid grid-cols-3 gap-x-4', pad)}>
-              {quote.start.trim() && <FormField label="Can start" value={quote.start} />}
+              {quote.start.trim() && <FormField label={t('Can start')} value={quote.start} />}
               {quote.duration.trim() && (
-                <FormField label="Takes about" value={quote.duration.replace(/^about\s+/i, '')} />
+                <FormField
+                  label={t('Takes about')}
+                  value={quote.duration.replace(/^about\s+/i, '')}
+                />
               )}
-              <FormField label="Good until" value={addDays(quote.issuedAt, quote.validDays)} />
+              <FormField
+                label={t('Good until')}
+                value={addDays(quote.issuedAt, quote.validDays, language)}
+              />
             </div>
             {(quote.included.length > 0 || quote.excluded.length > 0) && (
               <div className={cx('mt-5 grid gap-4 sm:grid-cols-2', pad)}>
                 {quote.included.length > 0 && (
                   <div>
-                    <p className="t-label text-[10px]! text-paper-muted">Included</p>
+                    <p className="t-label text-[10px]! text-paper-muted">{t('Included')}</p>
                     <ul className="mt-1.5 flex flex-col gap-1 text-sm">
                       {quote.included.map((item) => (
                         <li key={item} className="flex gap-2 wrap-anywhere">
@@ -227,7 +237,7 @@ export function QuoteForm({
                 )}
                 {quote.excluded.length > 0 && (
                   <div>
-                    <p className="t-label text-[10px]! text-paper-muted">Not included</p>
+                    <p className="t-label text-[10px]! text-paper-muted">{t('Not included')}</p>
                     <ul className="mt-1.5 flex flex-col gap-1 text-sm">
                       {quote.excluded.map((item) => (
                         <li key={item} className="flex gap-2 wrap-anywhere">
@@ -243,13 +253,13 @@ export function QuoteForm({
             {/* What the price is for, so it's plain when the job turns out different. */}
             {quote.assumes && quote.assumes.length > 0 && (
               <div className={cx('mt-5', pad)}>
-                <p className="t-label text-[10px]! text-paper-muted">Priced for</p>
+                <p className="t-label text-[10px]! text-paper-muted">{t('Priced for')}</p>
                 <p className="mt-1.5 text-sm wrap-anywhere">{quote.assumes.join(' · ')}</p>
               </div>
             )}
             {quote.ifs && quote.ifs.length > 0 && (
               <div className={cx('mt-5', pad)}>
-                <p className="t-label text-[10px]! text-paper-muted">Price changes if</p>
+                <p className="t-label text-[10px]! text-paper-muted">{t('Price changes if')}</p>
                 <ul className="mt-1.5 flex flex-col gap-1 text-sm">
                   {quote.ifs.map((item) => (
                     <li key={item.when} className="flex justify-between gap-4 wrap-anywhere">
@@ -257,7 +267,7 @@ export function QuoteForm({
                       <span className="shrink-0 tabular-nums">
                         {item.cents < 0 ? '−' : '+'}
                         {money(Math.abs(item.cents))}
-                        {item.each ? ' each' : ''}
+                        {item.each ? ` ${t('each')}` : ''}
                       </span>
                     </li>
                   ))}

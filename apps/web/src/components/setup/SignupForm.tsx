@@ -14,11 +14,12 @@ const MIN_PASSWORD = 10;
 
 /** The account that saves a setup's Charm. Then they test it and go live. */
 export function SignupForm() {
-  const { goTo, reload } = useOnboarding();
+  const { state, goTo, reload } = useOnboarding();
   const human = useHumanCheck('signup');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
+  // The address they gave for finishing later, if they did.
+  const [email, setEmail] = useState(state?.email ?? '');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [agreed, setAgreed] = useState(false);

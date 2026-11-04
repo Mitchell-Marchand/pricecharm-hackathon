@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { tradeName } from '@pricecharm/trades';
 import { aiMode, aiProvider, type AiImage } from '../ai/index.js';
 import { intakeTurn } from '../ai/intake.js';
+import { translateLines } from '../ai/translate.js';
 import { countWords, type ReadingProgress, type Walkaround } from '../ai/walkaround.js';
 import { hashToken, newToken } from '../auth.js';
 import { mutate, rows, transaction, type Sql } from '../db.js';
@@ -59,6 +60,15 @@ import {
   readingPhotos,
   readPhotos,
 } from './photo-readings.js';
+import {
+  businessLanguage,
+  chatLanguage,
+  isLanguage,
+  LANGUAGES,
+  languageName,
+  offeredLanguages,
+  type LanguageCode,
+} from '../languages.js';
 import { currencyOf, money as formatMoney } from '../money.js';
 import { businessLocations } from '../locations.js';
 import {
@@ -72,6 +82,8 @@ import {
   turnedDownReason,
   type TurnDownRule,
 } from '../turn-downs.js';
+import { changedCents, changedDraft, currentPriceChange } from '../price-change.js';
+import { say } from '../words.js';
 
 const CHAT_DAYS = 14;
 const EMAIL_LINK_DAYS = 30;
@@ -168,6 +180,12 @@ export async function publicProfile(business: Row) {
     videos: aiProvider === 'meta' || aiMode === 'demo',
     /** The contact form at a yes, a visit or a question asks for the job's street address. */
     asksAddress: asksAddress(business),
+    /** What the chat opens in. */
+    language: businessLanguage(business),
+    /** What customers can switch it to, with the default first. */
+    languages: offeredLanguages(business).map((code) =>
+      LANGUAGES.find((language) => language.code === code)!,
+    ),
   };
 }
 
@@ -182,6 +200,8 @@ export async function addMessage(
     photoIds?: string[];
     videoId?: string;
     chips?: string[];
+    /** This asks for a photo, so the chat offers the buttons for one, in any language. */
+    asksPhoto?: boolean;
     /**
      * A reply to a line added a moment before, stamped a millisecond later so it sorts after. A
      * number is how many lines after, for a second one in the same moment.
@@ -191,7 +211,7 @@ export async function addMessage(
 ) {
   const after = Math.min(5, Number(input.reply ?? 0)) * 1000;
   await mutate(
-    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,${after ? `DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${after} MICROSECOND)` : 'UTC_TIMESTAMP(3)'})`,
+    `INSERT INTO lead_messages (id,business_id,chat_id,sender,kind,text,photo_ids_json,video_id,chips_json,asks_photo,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,${after ? `DATE_ADD(UTC_TIMESTAMP(3),INTERVAL ${after} MICROSECOND)` : 'UTC_TIMESTAMP(3)'})`,
     [
       randomUUID(),
       input.businessId,
@@ -202,6 +222,7 @@ export async function addMessage(
       JSON.stringify(input.photoIds ?? []),
       input.videoId ?? null,
       JSON.stringify(input.chips ?? []),
+      Boolean(input.asksPhoto),
     ],
     connection,
   );
@@ -211,8 +232,46 @@ export async function addMessage(
  * The first thing a customer reads. It says it's an assistant, not a person, and names the person
  * behind the business when there is one, the same words the chat shows before it starts.
  */
-export const greeting = (businessName: string, ownerName?: string) =>
-  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes${ownerName ? `, then ${ownerName} takes it from there` : ''}. What do you need done?`;
+export const greeting = (language: string, business: string, owner?: string) =>
+  owner
+    ? say(
+        language,
+        "Hi! I'm the quote assistant for {business}. I can put a price together for you in a couple of minutes, then {owner} takes it from there. What do you need done?",
+        { business, owner },
+      )
+    : say(
+        language,
+        "Hi! I'm the quote assistant for {business}. I can put a price together for you in a couple of minutes. What do you need done?",
+        { business },
+      );
+
+/** Runs translation against the customers' allowance, or the owner's for their own test chat. */
+const translating =
+  (business: Row, chat: Record<string, unknown>) =>
+  <T>(task: () => Promise<T>) =>
+    // Not one customer's doing, so it doesn't draw on the allowance of whoever opened the chat.
+    withChatUsage({ ip: `translation:${String(business.id)}` }, business, chat, task);
+
+/** The business's own words for a language: its services, and anything the owner wrote. */
+async function ownWords(business: Row, language: string, lines: string[], chat?: Row) {
+  const same = language === 'en' && businessLanguage(business) === 'en';
+  const translated = same
+    ? new Map<string, string>()
+    : await translateLines(
+        String(business.id),
+        language,
+        lines,
+        translating(business, chat ?? { id: '', source: 'link' }),
+      );
+  return (line: string) => translated.get(line.trim()) ?? line;
+}
+
+/** The services a chat opens with, in the language it's in. */
+export async function servicesIn(business: Row, language: string) {
+  const offered = await services(String(business.id));
+  const shown = await ownWords(business, language, offered);
+  return offered.map(shown);
+}
 
 /** Who a WhatsApp chat is with: Meta's ID for them on the business's number, and what Meta shares. */
 export type ChannelCustomer = {
@@ -232,13 +291,15 @@ export async function startChat(
   business: Row,
   source: 'link' | 'widget' | 'test' | 'whatsapp' | 'agent',
   customer?: ChannelCustomer,
+  picked?: LanguageCode,
 ) {
   const token = newToken(),
     id = randomUUID();
-  const offered = customer ? [] : await services(String(business.id));
+  const language = picked ?? businessLanguage(business);
+  const offered = customer ? [] : await servicesIn(business, language);
   await transaction(async (connection) => {
     await mutate(
-      'INSERT INTO lead_chats (id,business_id,token_hash,source,expires_at,customer_name,customer_phone,channel_account_id,channel_user_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO lead_chats (id,business_id,token_hash,source,expires_at,customer_name,customer_phone,channel_account_id,channel_user_id,language) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [
         id,
         business.id,
@@ -249,6 +310,8 @@ export async function startChat(
         customer?.phone ?? null,
         customer?.accountId ?? null,
         customer?.userId ?? null,
+        // A WhatsApp customer's language is whatever they write in, once they have.
+        customer ? null : language,
       ],
       connection,
     );
@@ -261,7 +324,7 @@ export async function startChat(
         businessId: String(business.id),
         chatId: id,
         sender: 'assistant',
-        text: greeting(String(business.name), await contactName(business, connection)),
+        text: greeting(language, String(business.name), await contactName(business, connection)),
         chips: offered.slice(0, 6),
       });
   });
@@ -351,11 +414,36 @@ export async function chatView(business: Row, chat: Row) {
         value: Number(quote.total_cents),
       });
   }
+  const language = chatLanguage(business, chat);
+  // What a customer reads that isn't fixed: the quote's own words and what was seen in a video.
+  const reading = measuringVideo
+    ? json<ReadingProgress | null>(measuringVideo.progress_json, null)
+    : photosMeasuring
+      ? photoProgress(chat)
+      : null;
+  const card = visible ? { ...json<Quote>(quote.quote_json, {} as Quote), note: '' } : null;
+  const acceptLabel = visible ? String(quote.accept_label || DEFAULT_ACCEPT_LABEL) : '';
+  const measured = [...videos.values()].flatMap((video) => videoView(video)?.found ?? []);
+  const shown = await ownWords(
+    business,
+    language,
+    [
+      ...(card ? quoteLines(card) : []),
+      acceptLabel,
+      ...measured,
+      reading?.seen ?? '',
+      ...(reading?.counting ?? []),
+      ...(reading?.found ?? []),
+    ],
+    chat,
+  );
   return {
     id: String(chat.id),
     status: String(chat.status),
     test: chat.source === 'test',
     serviceName: String(chat.service_name),
+    /** What the chat is in now, which follows what the customer writes. */
+    language,
     messages: messages.map((message) => ({
       id: String(message.id),
       from: message.sender as 'customer' | 'assistant' | 'owner',
@@ -365,8 +453,9 @@ export async function chatView(business: Row, chat: Row) {
         id,
         url: photoPath(String(business.slug), String(chat.id), id),
       })),
-      video: message.video_id ? videoView(videos.get(String(message.video_id))) : null,
+      video: message.video_id ? videoView(videos.get(String(message.video_id)), shown) : null,
       chips: json<string[]>(message.chips_json, []),
+      asksPhoto: Boolean(message.asks_photo),
       createdAt: new Date(message.created_at).toISOString(),
     })),
     /** Walk-around videos need Meta's models to watch and measure them. */
@@ -375,11 +464,12 @@ export async function chatView(business: Row, chat: Row) {
     /** What it's measuring is the customer's photos, not a video. Missing from older APIs. */
     measuringPhotos: photosMeasuring && !videoMeasuring,
     /** How far that has got, once it has started. */
-    progress: measuringVideo
-      ? json<ReadingProgress | null>(measuringVideo.progress_json, null)
-      : photosMeasuring
-        ? photoProgress(chat)
-        : null,
+    progress: reading && {
+      ...reading,
+      seen: reading.seen && shown(reading.seen),
+      counting: reading.counting?.map(shown),
+      found: reading.found?.map(shown),
+    },
     contact: {
       name: String(chat.customer_name),
       email: chat.customer_email ? String(chat.customer_email) : null,
@@ -389,10 +479,10 @@ export async function chatView(business: Row, chat: Row) {
       ? {
           id: String(quote.id),
           status: String(quote.status),
-          card: { ...json<Quote>(quote.quote_json, {} as Quote), note: '' },
+          card: card && quoteIn(card, shown),
           sentAt: quote.sent_at ? new Date(quote.sent_at).toISOString() : null,
           /** The words on its accept button. */
-          acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
+          acceptLabel: shown(acceptLabel),
           /** The customer's photo, and a picture of the job done made from it, once it's ready. */
           preview: business.after_preview
             ? previewView(quote, `/api/v1/chat/${business.slug}/${chat.id}/preview`)
@@ -422,13 +512,13 @@ async function chatImages(businessId: string, chatId: string): Promise<AiImage[]
 export type Asker = { ip?: string; socket?: { remoteAddress?: string } };
 
 /** A video in the chat: whether it's measured yet, and what was found, in a few words each. */
-function videoView(video: Row | undefined) {
+function videoView(video: Row | undefined, shown: (line: string) => string = (line) => line) {
   if (!video) return null;
   const result = json<Walkaround | null>(video.result_json, null);
   return {
     id: String(video.id),
     status: String(video.status) as 'measuring' | 'measured' | 'failed',
-    found: result
+    found: (result
       ? [
           ...countWords(result.counts),
           ...(result.area
@@ -437,12 +527,51 @@ function videoView(video: Row | undefined) {
               ]
             : []),
         ]
-      : [],
+      : []
+    ).map(shown),
   };
 }
 
+/** The words on a quote a customer reads, apart from its numbers. */
+export const quoteLines = (quote: Quote) => [
+  ...(quote.lines ?? []).map((line) => line.label),
+  quote.discount?.reason ?? '',
+  quote.start ?? '',
+  quote.duration ?? '',
+  ...(quote.included ?? []),
+  ...(quote.excluded ?? []),
+  ...(quote.assumes ?? []),
+  ...(quote.ifs ?? []).map((item) => item.when),
+];
+
+/** A quote with those words in the customer's language. */
+export const quoteIn = (quote: Quote, shown: (line: string) => string): Quote => ({
+  ...quote,
+  lines: (quote.lines ?? []).map((line) => ({ ...line, label: shown(line.label) })),
+  discount: quote.discount && { ...quote.discount, reason: shown(quote.discount.reason ?? '') },
+  start: shown(quote.start ?? ''),
+  duration: shown(quote.duration ?? ''),
+  included: (quote.included ?? []).map(shown),
+  excluded: (quote.excluded ?? []).map(shown),
+  assumes: quote.assumes?.map(shown),
+  ifs: quote.ifs?.map((item) => ({ ...item, when: shown(item.when) })),
+});
+
+/** A quote, and the words on it, as a customer in this chat reads them. */
+export async function quoteForChat(business: Row, chat: Row, quote: Quote) {
+  return quoteIn(
+    quote,
+    await ownWords(business, chatLanguage(business, chat), quoteLines(quote), chat),
+  );
+}
+
 /** Runs AI work against the right allowance: the owner's for their own tests, else the customers'. */
-function withChatUsage<T>(req: Asker, business: Row, chat: Row, task: () => Promise<T>) {
+function withChatUsage<T>(
+  req: Asker,
+  business: Row,
+  chat: Record<string, unknown>,
+  task: () => Promise<T>,
+) {
   return chat.source === 'test'
     ? withAiUsage(String(business.id), String(chat.id), task)
     : withCustomerAiUsage(
@@ -515,6 +644,8 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
         photoNotes: photos?.notes.length ? photos.notes : undefined,
         videoNotes: measured.flatMap((result) => result.notes),
         contactFirst,
+        language: languageName(chatLanguage(business, chat)),
+        ownerLanguage: languageName(businessLanguage(business)),
         // On WhatsApp the customer writes first, so the first reply says who it is.
         ...(chat.channel_account_id
           ? { customerStarted: { firstName: String(chat.customer_name).trim().split(/\s+/)[0] } }
@@ -536,6 +667,8 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
     (turn.turnDown ? rules.find((item) => item.kind === turn.turnDown) : undefined) ??
     sizeTurnDown(rules, spec);
   const next = rule ? 'closed' : !turn.ready ? 'chatting' : contactFirst ? 'contact' : 'quoting';
+  // What the customer writes in wins over what they picked, whatever the owner offers.
+  const language = isLanguage(turn.language) ? turn.language : chatLanguage(business, chat);
   await transaction(async (connection) => {
     if (!rule)
       await addMessage(connection, {
@@ -544,9 +677,10 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
         sender: 'assistant',
         text: turn.reply,
         chips: turn.chips,
+        asksPhoto: turn.askPhoto,
       });
     await mutate(
-      'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=? WHERE id=?',
+      'UPDATE lead_chats SET service_name=?,ready=?,summary=?,out_of_scope=?,spec_json=?,status=?,language=? WHERE id=?',
       [
         serviceName,
         turn.ready || Boolean(rule),
@@ -554,11 +688,13 @@ async function runIntake(req: Asker, business: Row, chat: Row) {
         rule ? '' : turn.outOfScope,
         JSON.stringify(spec),
         next,
+        language,
         chat.id,
       ],
       connection,
     );
-    if (rule) await turnDownRequest(connection, business, String(chat.id), rule);
+    if (rule)
+      await turnDownRequest(connection, business, String(chat.id), rule, undefined, language);
   });
   if (next === 'quoting') await prepareLiveQuote(req, String(business.id), String(chat.id));
 }
@@ -574,6 +710,7 @@ async function turnDownRequest(
   chatId: string,
   rule: TurnDownRule,
   draft?: { drafted: DraftedQuote; engine: unknown; totalCents: number },
+  language = businessLanguage(business),
 ) {
   const businessId = String(business.id);
   await rows('SELECT id FROM lead_chats WHERE id=? FOR UPDATE', [chatId], connection);
@@ -587,7 +724,7 @@ async function turnDownRequest(
     businessId,
     chatId,
     sender: 'assistant',
-    text: customerLine(rule, String(business.name)),
+    text: customerLine(rule, String(business.name), language),
     reply: true,
   });
   await mutate(
@@ -662,7 +799,13 @@ export async function customerMessage(req: Request, text: string) {
         chatId: String(chat.id),
         sender: 'assistant',
         kind: 'status',
-        text: `Got it. ${owner} will see this and get back to you.`,
+        text: say(
+          chatLanguage(business, chat),
+          'Got it. {owner} will see this and get back to you.',
+          {
+            owner,
+          },
+        ),
         reply: true,
       });
     }
@@ -855,9 +998,13 @@ export async function leaveContact(
         chatId,
         sender: 'assistant',
         kind: 'status',
-        text: contact.email
-          ? `Thanks, ${contact.name.split(/\s+/)[0]}. We’ll email you as soon as ${owner} sends it.`
-          : `Thanks, ${contact.name.split(/\s+/)[0]}. ${owner} will be in touch with your quote.`,
+        text: say(
+          chatLanguage(business, locked),
+          contact.email
+            ? 'Thanks, {first}. We’ll email you as soon as {owner} sends it.'
+            : 'Thanks, {first}. {owner} will be in touch with your quote.',
+          { first: contact.name.split(/\s+/)[0], owner },
+        ),
       });
       if (!test) await notifyOwner(businessId, chatId, 'review', connection);
       return false;
@@ -872,7 +1019,9 @@ export async function leaveContact(
           chatId,
           sender: 'assistant',
           kind: 'status',
-          text: `Sent. A copy is on its way to ${contact.email}.`,
+          text: say(chatLanguage(business, locked), 'Sent. A copy is on its way to {email}.', {
+            email: contact.email!,
+          }),
         });
       if (!test) {
         if (contact.email)
@@ -1120,6 +1269,11 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
     });
     if (asked) return;
   }
+  // What the formula came to is what's checked against the owner's prices. A price change they
+  // set for now goes on after that, as exact math.
+  const own = drafted;
+  const change = drafted.decision === 'quote' ? await currentPriceChange(businessId) : null;
+  if (change) drafted = changedDraft(drafted, change.percent);
   const totalCents = quoteTotal(drafted);
   // A job that comes to less than the owner takes on is turned down, not quoted.
   const rules = await turnDownRules(businessId);
@@ -1139,8 +1293,8 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
   const checks = await checkDraft(
     business,
     chat,
-    drafted,
-    totalCents,
+    own,
+    quoteTotal(own),
     estimate,
     learned,
     priceStyle(progress, settings),
@@ -1200,13 +1354,20 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
       issuedAt: new Date().toISOString(),
       // What the price is for, and what an unsettled condition or extra would change it by.
       assumes: jobFacts(spec),
-      ...(unsettled?.ifs.length ? { ifs: unsettled.ifs } : {}),
+      ...(unsettled?.ifs.length
+        ? {
+            ifs: unsettled.ifs.map((item) => ({
+              ...item,
+              cents: change ? changedCents(item.cents, change.percent) : item.cents,
+            })),
+          }
+        : {}),
     };
     let status: 'sent' | 'review' = held.length ? 'review' : 'sent';
     let reason = failed.map((check) => check.detail).join(' ');
     const quoteId = randomUUID();
     await mutate(
-      'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,engine_json,review_reason,total_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO live_quotes (id,business_id,chat_id,number,status,quote_json,draft_json,checks_json,engine_json,review_reason,total_cents,price_change_percent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [
         quoteId,
         businessId,
@@ -1219,6 +1380,7 @@ export async function prepareLiveQuote(req: Asker, businessId: string, chatId: s
         engine ? JSON.stringify(engine) : null,
         reason.slice(0, 600),
         totalCents,
+        change?.percent ?? null,
       ],
       connection,
     );
@@ -1337,7 +1499,16 @@ export async function markSent(
       chatId: String(quote.chat_id),
       sender: 'assistant',
       kind: 'status',
-      text: `Here’s your quote${first ? `, ${first}` : ''}.${chat.customer_email ? ' A copy is on its way to your inbox.' : ''}`,
+      text: [
+        say(
+          chatLanguage(business, chat),
+          first ? 'Here’s your quote, {first}.' : 'Here’s your quote.',
+          { first },
+        ),
+        ...(chat.customer_email
+          ? [say(chatLanguage(business, chat), 'A copy is on its way to your inbox.')]
+          : []),
+      ].join(' '),
     });
   if (input.test || !hasContact(chat)) return;
   await notifyCustomerQuote(
@@ -1358,7 +1529,7 @@ async function notifyCustomerQuote(
 ) {
   const [chat] = await rows('SELECT * FROM lead_chats WHERE id=?', [chatId], connection);
   const [business] = await rows(
-    'SELECT slug,currency FROM businesses WHERE id=?',
+    'SELECT slug,currency,language FROM businesses WHERE id=?',
     [businessId],
     connection,
   );
@@ -1370,6 +1541,7 @@ async function notifyCustomerQuote(
   if (!chat.customer_email) return;
   const { link } = await chatEmailLink(connection, String(business.slug), chatId);
   const first = String(chat.customer_name).trim().split(/\s+/)[0];
+  const language = chatLanguage(business, chat);
   await queueEmail(
     {
       businessId,
@@ -1377,8 +1549,23 @@ async function notifyCustomerQuote(
       to: String(chat.customer_email),
       replyTo: await ownerReplyTo(businessId, connection),
       fromName: businessName,
-      subject: `Your quote from ${businessName}`,
-      text: `Hi${first ? ` ${first}` : ''},\n\nHere’s your quote from ${businessName} for ${priceText(json<Quote | null>(quote.quote_json, null), Number(quote.total_cents), currencyOf(business.currency))}. See what’s included and accept it here:\n${link}\n\nThe link works for ${EMAIL_LINK_DAYS} days. Keep it to yourself, since anyone with it can see your quote.`,
+      subject: say(language, 'Your quote from {business}', { business: businessName }),
+      text: `${first ? say(language, 'Hi {first},', { first }) : say(language, 'Hi,')}\n\n${say(
+        language,
+        'Here’s your quote from {business} for {price}. See what’s included and accept it here:',
+        {
+          business: businessName,
+          price: priceText(
+            json<Quote | null>(quote.quote_json, null),
+            Number(quote.total_cents),
+            currencyOf(business.currency),
+          ),
+        },
+      )}\n${link}\n\n${say(
+        language,
+        'The link works for {days} days. Keep it to yourself, since anyone with it can see your quote.',
+        { days: EMAIL_LINK_DAYS },
+      )}`,
     },
     connection,
   );
@@ -1579,15 +1766,18 @@ export async function decide(
     const owner = chat.channel_account_id
       ? await contactAt(business)
       : (await contactName(business)) || String(business.name);
+    const language = chatLanguage(business, chat);
     await addMessage(connection, {
       businessId: String(business.id),
       chatId: String(chat.id),
       sender: 'customer',
       kind: 'status',
       text: {
-        accept: 'Said yes to the quote.',
-        visit: 'Asked for a site visit before going ahead.',
-        decline: `Isn’t going ahead: ${lossReasonPhrase(why.reason)}.`,
+        accept: say(language, 'Said yes to the quote.'),
+        visit: say(language, 'Asked for a site visit before going ahead.'),
+        decline: say(language, 'Isn’t going ahead: {reason}.', {
+          reason: say(language, lossReasonPhrase(why.reason)),
+        }),
       }[decision],
     });
     await addMessage(connection, {
@@ -1604,10 +1794,11 @@ export async function decide(
               json<Quote | null>(quote.quote_json, null)?.style === 'range',
               undefined,
               owner,
+              language,
             )
           : decision === 'visit'
-            ? await visitMessage(business, undefined, owner)
-            : `Thanks for letting ${owner} know.`,
+            ? await visitMessage(business, undefined, owner, language)
+            : say(language, 'Thanks for letting {owner} know.', { owner }),
     });
     // WhatsApp has no form, so the address is asked for in the chat once they've said yes. Their
     // next message that reads like one is kept as the address (takeAddress).
@@ -1622,7 +1813,13 @@ export async function decide(
         chatId: String(chat.id),
         sender: 'assistant',
         kind: 'status',
-        text: `What’s the street address for the job? ${owner} needs it to come out.`,
+        text: say(
+          language,
+          'What’s the street address for the job? {owner} needs it to come out.',
+          {
+            owner,
+          },
+        ),
         reply: 2,
       });
       await mutate(
@@ -1668,14 +1865,14 @@ export async function takeAddress(chatId: string, text: string, { quiet = false 
       chatId,
       sender: 'customer',
       kind: 'status',
-      text: 'Sent the job address.',
+      text: say(chatLanguage(business, chat), 'Sent the job address.'),
     });
     await addMessage(connection, {
       businessId: String(business.id),
       chatId,
       sender: 'assistant',
       kind: 'status',
-      text: `Thanks, ${owner} has it now.`,
+      text: say(chatLanguage(business, chat), 'Thanks, {owner} has it now.', { owner }),
       reply: true,
     });
     if (chat.source !== 'test')

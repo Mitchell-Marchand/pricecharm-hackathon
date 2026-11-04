@@ -180,13 +180,8 @@ test('a trade that isn’t listed is picked straight from the search', async ({ 
   // Its card takes them on too, as a listed trade's does.
   await page.getByRole('radio', { name: 'Pet sitting', exact: true }).click();
   await expect(page).toHaveURL(/\/start\/services$/);
-  // A typed-in trade has no customer made ahead, so its first one starts from here.
-  const prepared = page.waitForRequest((request) =>
-    request.url().endsWith('/api/v1/onboarding/practice/prepare'),
-  );
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page).toHaveURL(/\/start\/about$/);
-  expect((await prepared).postDataJSON()).toEqual({ first: true });
 });
 
 test('the public pages render without sideways scrolling on a phone', async ({ page }) => {

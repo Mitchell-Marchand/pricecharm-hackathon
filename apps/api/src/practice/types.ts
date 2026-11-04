@@ -13,7 +13,28 @@ export type Fact = {
   visible?: boolean;
 };
 
-export type PracticePhoto = { scene: string; photoId: string | null };
+export type PracticePhoto = {
+  scene: string;
+  photoId: string | null;
+  /** Which of the project's places it's of, the first when left out. */
+  place?: number;
+};
+
+/** The photos a customer opens with, chosen by the server so the mix stays real. */
+export type PhotoSet = 'overview' | 'overview_detail' | 'two_parts';
+
+/** The job a practice customer has in mind. They arrive with it and it never changes. */
+export type Project = {
+  /** What they want done, in one sentence. */
+  summary: string;
+  /** What this job is here to teach about the owner's prices. */
+  teaches: string;
+  /** What the photos have to make plain for the owner to price it. */
+  shows: string[];
+  /** Where the work is, almost always one place. Each photo of a place looks like that place. */
+  places: { name: string; look: string }[];
+  photoSet: PhotoSet;
+};
 
 /** How far the job is from the business: miles for US dollar businesses, km otherwise. */
 export type Distance = {
@@ -32,7 +53,12 @@ export type PracticeScenario = {
   opener: string;
   facts: Fact[];
   photos: PracticePhoto[];
+  /** Held back until asked for. New customers have none: the photo asked for is made then. */
   extraPhoto: PracticePhoto & { text: string };
+  /** What they came for. Older customers and the demo's don't have one. */
+  project?: Project;
+  /** What kind of job they were picked for (src/pricing/next-job.ts), so it isn't asked again. */
+  pick?: string;
   suggestions: string[];
   siteVisitLikely: boolean;
   siteVisitCue: string;
