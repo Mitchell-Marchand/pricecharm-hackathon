@@ -73,8 +73,10 @@ export function Meter({
 }: {
   score: number;
   mark: number;
-  size?: 'sm' | 'md';
+  /** `line` runs edge to edge under a header. */
+  size?: 'line' | 'sm' | 'md';
 }) {
+  const line = size === 'line';
   return (
     <div
       role="meter"
@@ -82,15 +84,26 @@ export function Meter({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={score}
-      className={cx('relative rounded-full bg-line', size === 'sm' ? 'h-1.5' : 'h-2')}
+      className={cx(
+        'relative bg-line',
+        line ? 'h-[3px]' : 'rounded-full',
+        size === 'sm' && 'h-1.5',
+        size === 'md' && 'h-2',
+      )}
     >
       <span
-        className="block h-full rounded-full bg-go transition-[width] duration-500"
+        className={cx(
+          'block h-full bg-go transition-[width] duration-500',
+          line ? 'rounded-r-full' : 'rounded-full',
+        )}
         style={{ width: `${score}%` }}
       />
       {mark < 100 && (
         <span
-          className="absolute -top-1 -bottom-1 w-0.5 rounded-full bg-ink/40"
+          className={cx(
+            'absolute -top-1 w-0.5 rounded-full bg-ink/40',
+            line ? 'bottom-0' : '-bottom-1',
+          )}
           style={{ left: `${mark}%` }}
           aria-hidden
         />

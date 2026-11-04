@@ -31,7 +31,8 @@ async function practiceDraft(page: Page) {
     size: '600 sq ft',
   });
   await page.goto('/start/practice');
-  await expect(page.getByText('Dana R. · Eastgate · 6 mi away')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: 'Dana R.' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Practice · Eastgate · 6 mi away')).toBeVisible();
 }
 
 async function database<T>(task: (db: mysql.Connection) => Promise<T>) {
@@ -115,7 +116,11 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expect(saw).toContainText('[Demo] A concrete patio with a flagstone section');
   await expect(saw).toContainText('Patio, about 500–600 sq ft');
   await expect(saw).toContainText('About 3 planters');
-  await expect(saw).toContainText('This is how it reads a customer’s photos.');
+  // One line until they open it, so the chat keeps the screen.
+  const reads = saw.getByText('This is how it reads a customer’s photos.');
+  await expect(reads).toBeHidden();
+  await saw.getByRole('button', { name: /Your Charm saw/ }).click();
+  await expect(reads).toBeVisible();
   await expectNoSideways(page);
 
   // The photos open full screen, zoom with a pinch and swipe to the next one.
@@ -186,7 +191,7 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expectNoSideways(page);
 
   // Once it's quoted, what it saw stays, without a Fix.
-  await page.getByRole('button', { name: 'I have enough to quote' }).click();
+  await page.getByRole('button', { name: 'Send quote' }).click();
   const builder = page.getByRole('dialog', { name: /^Quote for / });
   await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill('Patio wash, 800 sq ft');
   await builder.getByRole('textbox', { name: 'Price for item 1' }).fill('360');
@@ -197,6 +202,35 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expect(saw.getByRole('button', { name: 'Fix' })).toHaveCount(0);
   await expect(saw).toContainText('It goes on your fix for this job.');
   await expectNoSideways(page);
+});
+
+test('on a phone, the chat gets the screen', async ({ page }) => {
+  // What Safari leaves of an 844 pt phone with its bars showing.
+  await page.setViewportSize({ width: 390, height: 664 });
+  await practiceDraft(page);
+  const header = (await page.getByRole('meter').boundingBox())!;
+  const buttons = (await page.getByRole('button', { name: 'Send quote' }).boundingBox())!;
+  const headerBottom = header.y + header.height;
+  // Over 55% of the whole phone is chat, and it starts right under the header.
+  expect(buttons.y - headerBottom).toBeGreaterThan(844 * 0.55);
+  const photo = (await page.getByRole('button', { name: /^Open photo 1 of 2/ }).boundingBox())!;
+  expect(photo.y - headerBottom).toBeLessThan(160);
+  await expectNoSideways(page);
+
+  // The way out is behind the menu.
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Finish later' }).click();
+  await expect(page.getByRole('dialog', { name: 'Save your Charm' })).toBeVisible();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+
+  // The keyboard needs the room, so the buttons step aside while typing. Once it's sent they're
+  // back, with the keyboard still up, so quoting never means closing it first.
+  const reply = page.getByLabel('Reply to Dana');
+  await reply.fill('How big is it?');
+  await expect(page.getByRole('button', { name: 'Send quote' })).toBeHidden();
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Send quote' })).toBeVisible();
 });
 
 test('while the Charm reads the photos, the chat shows it and waits, then goes on', async ({
@@ -224,7 +258,7 @@ test('while the Charm reads the photos, the chat shows it and waits, then goes o
   await expect(status).toBeVisible({ timeout: 15_000 });
   await expect(status).toContainText('Counting the planters');
   await expect(status).toContainText('A patio by a door.');
-  await expect(page.getByRole('button', { name: 'I have enough to quote' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Send quote' })).toBeDisabled();
   const reply = page.getByLabel('Reply to Dana');
   await expect(reply).toHaveAttribute('placeholder', 'Your Charm is looking at the photos…');
   // Sending while it looks is never a dead tap: the reply waits, and goes once it's done.

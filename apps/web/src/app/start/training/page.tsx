@@ -36,7 +36,8 @@ export default function TrainingStep() {
             Thanks! Is it one story or two?
           </p>
           <span className="inline-flex h-9 items-center gap-1.5 self-start rounded-sm bg-canary px-2.5 text-[13px] font-semibold whitespace-nowrap text-on-canary">
-            <Receipt className="size-4" /> I have enough to quote
+            <Receipt className="size-4" /> <span className="sm:hidden">Send quote</span>
+            <span className="max-sm:hidden">I have enough to quote</span>
           </span>
         </div>
 

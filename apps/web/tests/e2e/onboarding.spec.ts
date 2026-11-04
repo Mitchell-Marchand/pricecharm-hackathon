@@ -134,9 +134,20 @@ test('setup asks one thing a screen and saves each as you go', async ({ page }) 
   await expect(page).toHaveURL(/\/start\/training$/);
   await expect(page.getByRole('heading', { name: 'Ready to start training?' })).toBeVisible();
   await expect(page.getByText('By starting, you agree to our', { exact: false })).toBeVisible();
-  // The fact and training screens aren't bookmarks: setup picks up at practice.
+  // The fact and training screens aren't bookmarks: setup picks up at practice, once they say so.
   await page.goto('/start');
+  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  await expect(page.getByText('your window cleaning Charm', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Keep going' }).click();
   await expect(page).toHaveURL(/\/start\/practice$/, { timeout: 15_000 });
+  // Starting over is a new setup, with nothing carried over.
+  await page.goto('/start');
+  await page.getByRole('button', { name: 'Start over' }).click();
+  await expect(page).toHaveURL(/\/start\/trade$/);
+  await expect(page.getByRole('radio', { name: 'Window cleaning' })).toHaveAttribute(
+    'aria-checked',
+    'false',
+  );
 });
 
 test('a trade that isn’t listed is picked straight from the search', async ({ page }) => {

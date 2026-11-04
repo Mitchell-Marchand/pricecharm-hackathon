@@ -54,6 +54,8 @@ interface OnboardingValue {
    */
   goTo: (step: Step, path?: string) => Promise<void>;
   flush: () => Promise<boolean>;
+  /** A new setup in place of the one this browser has. */
+  startOver: () => Promise<Onboarding>;
 }
 
 const OnboardingContext = createContext<OnboardingValue | null>(null);
@@ -162,6 +164,18 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     [flush, router],
   );
 
+  const startOver = useCallback(async () => {
+    const next = await api<Onboarding>('/onboarding/restart', {
+      method: 'POST',
+      headers: await humanHeaders(),
+      ...json({ currency: guessCurrency() }),
+    });
+    window.clearTimeout(timer.current);
+    pending.current = {};
+    setState(next);
+    return next;
+  }, [humanHeaders]);
+
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (Object.keys(pending.current).length) event.preventDefault();
@@ -173,8 +187,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   // Every amount in setup is in the business's currency.
   if (state) setCurrency(state.business.currency);
   const value = useMemo(
-    () => ({ state, loadError, save, reload: load, updateBusiness, goTo, flush }),
-    [state, loadError, save, load, updateBusiness, goTo, flush],
+    () => ({ state, loadError, save, reload: load, updateBusiness, goTo, flush, startOver }),
+    [state, loadError, save, load, updateBusiness, goTo, flush, startOver],
   );
   return (
     <OnboardingContext.Provider value={value}>

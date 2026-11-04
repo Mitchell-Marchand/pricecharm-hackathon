@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { useCharm } from '@/components/Charm';
 import { useOwner } from '@/components/owner/OwnerShell';
+import { PracticeBar } from '@/components/practice/PracticeBar';
 import { PracticeSession } from '@/components/practice/PracticeSession';
 import { useToast } from '@/components/Toast';
 import { Button } from '@/components/ui';
@@ -68,9 +70,15 @@ export function MorePractice({
   const run = practice?.runs.find((item) => item.id === runId) ?? null;
   const fresh = (run?.messages.length ?? 0) <= 1;
   const finished = practice?.finished ?? 0;
+  const [charm] = useCharm(finished);
 
   return (
-    <div className="-mb-24 flex min-h-[calc(100dvh-8.75rem)] flex-col sm:min-h-[calc(100dvh-6.5rem)]">
+    <div className="-mb-24 flex min-h-dvh flex-col sm:min-h-[calc(100dvh-6.5rem)]">
+      <PracticeBar
+        run={run}
+        charm={charm}
+        menu={[{ label: 'Back to Train', href: '/app/train' }]}
+      />
       <PracticeSession
         key={run?.id ?? 'loading'}
         business={me.business.name || 'Your business'}
@@ -79,18 +87,18 @@ export function MorePractice({
         onState={setPractice}
         closePercent={practice?.closePercent}
         as="div"
-        gutter={false}
-        className="pb-10"
+        gutter="phone"
+        className="pb-10 max-sm:pt-3 max-sm:pb-4"
         intro={
-          <div className="mb-8">
+          <div className="mb-8 max-sm:mb-0">
             <Link
               href="/app/train"
-              className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+              className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink max-sm:hidden"
             >
               <ArrowLeft className="size-4" aria-hidden /> Train
             </Link>
             {fresh && (
-              <>
+              <div className="max-sm:hidden">
                 <h1 className="t-h1 mt-4">
                   {run?.focus
                     ? `Practice ${article(run.focus)} ${run.focus} job`
@@ -100,7 +108,7 @@ export function MorePractice({
                   Same as in setup. Answer like it&apos;s a real lead, then quote it or ask to see
                   it first. Your Charm picks up how you handle it.
                 </p>
-              </>
+              </div>
             )}
             {error && (
               <p className="mt-4 text-stop" role="alert">
