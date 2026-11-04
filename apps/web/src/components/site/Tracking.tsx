@@ -378,6 +378,8 @@ export function Tracking() {
           session_recording: {
             maskAllInputs: true,
             maskTextSelector: '[data-private], [data-private] *',
+            // Masking only covers text, so photos and videos have to be left out altogether.
+            blockSelector: '[data-private] img, [data-private] video',
           },
           // Addresses lose anything after a #, where one-time links keep their tokens.
           before_send: (event) => {
