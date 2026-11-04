@@ -150,7 +150,7 @@ function JobCard({
         <img
           src={job.photos[0].url}
           alt=""
-          className="size-18 shrink-0 rounded-sm object-cover sm:size-20"
+          className="ph-no-capture size-18 shrink-0 rounded-sm object-cover sm:size-20"
         />
       ) : (
         <span className="inline-flex size-18 shrink-0 flex-col items-center justify-center gap-1 rounded-sm bg-surface-2 text-muted sm:size-20">
@@ -590,7 +590,7 @@ export function JobSheet({
                 <img
                   src={photo.url}
                   alt={`Job photo ${index + 1}`}
-                  className="aspect-square w-full max-w-full rounded-sm object-cover"
+                  className="ph-no-capture aspect-square w-full max-w-full rounded-sm object-cover"
                 />
                 <button
                   type="button"
