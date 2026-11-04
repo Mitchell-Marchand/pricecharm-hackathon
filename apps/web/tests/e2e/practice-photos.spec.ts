@@ -107,21 +107,11 @@ async function swipe(stage: Locator, dx: number) {
   }, dx);
 }
 
-test('on a phone, the owner sees what their Charm saw, fixes it, asks for a photo and zooms in', async ({
+test('on a phone, the owner looks over the photos, asks for more and zooms in', async ({
   page,
 }) => {
   await practiceDraft(page);
-
-  const saw = page.getByRole('region', { name: 'What your Charm saw' });
-  await expect(saw).toContainText('[Demo] A concrete patio with a flagstone section');
-  await expect(saw).toContainText('Patio, about 500–600 sq ft');
-  await expect(saw).toContainText('About 3 planters');
-  // One line until they open it, so the chat keeps the screen.
-  const reads = saw.getByText('This is how it reads a customer’s photos.');
-  await expect(reads).toBeHidden();
-  await saw.getByRole('button', { name: /Your Charm saw/ }).click();
-  await expect(reads).toBeVisible();
-  await expectNoSideways(page);
+  await expect(page.getByText('What your Charm saw')).toHaveCount(0);
 
   // The photos open full screen, zoom with a pinch and swipe to the next one.
   await page.getByRole('button', { name: 'Open photo 1 of 2 from Dana R.' }).click();
@@ -158,18 +148,6 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await viewer.getByRole('button', { name: 'Close photo' }).click();
   await expect(viewer).toBeHidden();
 
-  // The owner's fix changes what it saw, and what its guess goes on.
-  await saw.getByRole('button', { name: 'Fix' }).click();
-  await saw.getByLabel('Patio, in sq ft').fill('800');
-  await saw
-    .getByLabel('Anything else it got wrong or missed?')
-    .fill('Two of the planters are huge');
-  await saw.getByRole('button', { name: 'Save fix' }).click();
-  await expect(saw).toContainText('Patio, 800 sq ft');
-  await expect(saw).toContainText('You added: Two of the planters are huge');
-  await expect(saw).toContainText('It goes on your fix for this job.');
-  await page.screenshot({ path: test.info().outputPath('fixed.png'), fullPage: true });
-
   // The prepared photo comes at once. The next is taken for what was asked.
   const reply = page.getByLabel('Reply to Dana');
   await reply.fill('Can you send a closer photo by the door?');
@@ -190,7 +168,6 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expect(viewer).toBeHidden();
   await expectNoSideways(page);
 
-  // Once it's quoted, what it saw stays, without a Fix.
   await page.getByRole('button', { name: 'Send quote' }).click();
   const builder = page.getByRole('dialog', { name: /^Quote for / });
   await builder.getByRole('textbox', { name: 'Item 1', exact: true }).fill('Patio wash, 800 sq ft');
@@ -199,8 +176,6 @@ test('on a phone, the owner sees what their Charm saw, fixes it, asks for a phot
   await expect(
     page.getByRole('heading', { name: /Here.s what your Charm picked up/ }),
   ).toBeVisible();
-  await expect(saw.getByRole('button', { name: 'Fix' })).toHaveCount(0);
-  await expect(saw).toContainText('It goes on your fix for this job.');
   await expectNoSideways(page);
 });
 
@@ -233,11 +208,37 @@ test('on a phone, the chat gets the screen', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Send quote' })).toBeVisible();
 });
 
-test('while the Charm reads the photos, the chat shows it and waits, then goes on', async ({
-  page,
-}) => {
+test('on a phone, a customer on the way says so above the reply box', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 664 });
   await practiceDraft(page);
-  await expect(page.getByRole('region', { name: 'What your Charm saw' })).toBeVisible();
+  const runId = (await (await page.request.get('/api/v1/onboarding/practice')).json()).data.runs[0]
+    .id as string;
+  // As if this customer were still being written.
+  await database((db) =>
+    db.query(
+      "UPDATE practice_runs SET status='preparing',prepare_until=DATE_ADD(UTC_TIMESTAMP(3),INTERVAL 60 SECOND) WHERE id=?",
+      [runId],
+    ),
+  );
+  await page.reload();
+  const note = page.getByRole('status').filter({ hasText: 'Your customer is on the way' });
+  await expect(note).toBeVisible({ timeout: 10_000 });
+  const line = (await note.boundingBox())!;
+  const reply = (await page.getByRole('textbox').boundingBox())!;
+  expect(line.y + line.height).toBeLessThanOrEqual(reply.y);
+  expect(line.y + line.height).toBeLessThanOrEqual(664);
+
+  await database((db) =>
+    db.query("UPDATE practice_runs SET status='ready',prepare_until=NULL WHERE id=?", [runId]),
+  );
+  await expect(page.getByRole('button', { name: /^Open photo 1 of 2/ })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(note).toHaveCount(0);
+});
+
+test('the chat never waits on the photos being read', async ({ page }) => {
+  await practiceDraft(page);
   const runId = (await (await page.request.get('/api/v1/onboarding/practice')).json()).data.runs[0]
     .id as string;
   // As if a reading were still running: it holds the photos, partway through counting.
@@ -252,34 +253,11 @@ test('while the Charm reads the photos, the chat shows it and waits, then goes o
     ),
   );
   await page.reload();
-  const status = page
-    .getByRole('status')
-    .filter({ hasText: 'Your Charm is looking at the photos' });
-  await expect(status).toBeVisible({ timeout: 15_000 });
-  await expect(status).toContainText('Counting the planters');
-  await expect(status).toContainText('A patio by a door.');
-  await expect(page.getByRole('button', { name: 'Send quote' })).toBeDisabled();
-  const reply = page.getByLabel('Reply to Dana');
-  await expect(reply).toHaveAttribute('placeholder', 'Your Charm is looking at the photos…');
-  // Sending while it looks is never a dead tap: the reply waits, and goes once it's done.
-  await reply.fill('How big is it?');
-  await page.getByRole('button', { name: 'Send' }).click();
-  await expect(
-    page.getByText('It goes as soon as your Charm has looked at the photos.'),
-  ).toBeVisible();
-  await status.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: test.info().outputPath('reading.png') });
-
-  // The lease runs out, as after a restart: it's read again, and the chat goes on.
-  await database((db) =>
-    db.query(
-      'UPDATE practice_runs SET photo_read_until=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 1 SECOND) WHERE id=?',
-      [runId],
-    ),
-  );
-  await expect(page.getByRole('region', { name: 'What your Charm saw' })).toBeVisible({
-    timeout: 15_000,
-  });
-  await expect(status).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Dana R.' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Your Charm is looking at the photos')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Send quote' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Turn down' })).toBeEnabled();
+  await page.getByLabel('Reply to Dana').fill('How big is it?');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText(/Maybe 550 sq ft in total/)).toBeVisible();
 });

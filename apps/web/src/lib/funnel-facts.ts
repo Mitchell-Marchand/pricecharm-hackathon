@@ -1,4 +1,11 @@
 /**
+ * Whether setup shows how customers shop (/start/why) between services and About. Off for now: an
+ * owner who clicked an ad and picked their trade shouldn't have another screen to get past. Set
+ * it to true to bring the screen back, in the flow and in the progress bar.
+ */
+export const SHOW_SHOPPING_FACTS = false;
+
+/**
  * How customers shop for a service, for the screens between setup's questions. These are about
  * customers in general, from homeowner and contractor surveys, never a claim about this owner's
  * business, which setup knows nothing about yet. 67–78% want
