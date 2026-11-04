@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { buttonClass } from '@/components/button-class';
 import { PastJobsEditor } from '@/components/jobs/PastJobs';
 import { CharmCard, useCharm } from '@/components/Charm';
+import { TellCharm } from '@/components/owner/TellCharm';
 import { api, errorMessage } from '@/lib/api';
 import { loadKnows, type Knows } from '@/lib/knows';
 import type { Profile } from '@/lib/account';
@@ -78,6 +79,8 @@ export default function TrainPage() {
           {error}
         </p>
       )}
+
+      <TellCharm className="mt-10 max-w-3xl" />
 
       {charm && (
         <CharmCard

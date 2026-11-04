@@ -8,7 +8,9 @@ import { lossReasons } from './outcomes.js';
 import { kickVideos, saveVideo, videoFile, videoUpload } from './videos.js';
 import { photosLeftUnread } from './photo-readings.js';
 import { previewFile } from './previews.js';
-import { rows } from '../db.js';
+import { mutate, rows } from '../db.js';
+import { LANGUAGE_CODES } from '../languages.js';
+import { wordsFor } from '../words.js';
 import {
   afterPhoto,
   businessBySlug,
@@ -20,6 +22,7 @@ import {
   leaveContact,
   publicProfile,
   readPhotosThenAnswer,
+  servicesIn,
   startChat,
 } from './chat.js';
 import { recordEvent, recordRequestEvent, type EventProps } from '../metrics.js';
@@ -44,7 +47,27 @@ function fromWebServer(req: Request) {
 }
 
 chatRouter.get('/chat/:slug', async (req, res) => {
-  res.json(ok(await publicProfile(await businessBySlug(req.params.slug))));
+  const business = await businessBySlug(req.params.slug);
+  const profile = await publicProfile(business);
+  // A chat that opens in another language has its words before it first shows.
+  res.json(
+    ok(
+      profile.language === 'en'
+        ? profile
+        : {
+            ...profile,
+            words: wordsFor(profile.language),
+            services: await servicesIn(business, profile.language),
+          },
+    ),
+  );
+});
+
+/** What the chat shows in a language a customer picks: its fixed lines and the services. */
+chatRouter.get('/chat/:slug/words/:language', async (req, res) => {
+  const business = await businessBySlug(req.params.slug);
+  const language = z.enum(LANGUAGE_CODES).parse(req.params.language);
+  res.json(ok({ words: wordsFor(language), services: await servicesIn(business, language) }));
 });
 
 /**
@@ -75,8 +98,11 @@ async function customerEvent(req: Request, name: string, props: EventProps = {})
  */
 chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => {
   const business = await businessBySlug(req.params.slug);
-  const { source } = z
-    .object({ source: z.enum(['link', 'widget']).default('link') })
+  const { source, language } = z
+    .object({
+      source: z.enum(['link', 'widget']).default('link'),
+      language: z.enum(LANGUAGE_CODES).optional(),
+    })
     .strict()
     .parse(req.body ?? {});
   const viewer = await workspaceFromRequest(req);
@@ -88,7 +114,7 @@ chatRouter.post('/chat/:slug/start', rateLimit(20, 60_000), async (req, res) => 
       `${business.name} isn’t taking quote requests here right now.`,
     );
   if (!test) await verifyHuman(req, 'quote_chat');
-  const { token, chatId } = await startChat(business, test ? 'test' : source);
+  const { token, chatId } = await startChat(business, test ? 'test' : source, undefined, language);
   // The owner trying their own link shows up in their setup's trail.
   if (test)
     await recordRequestEvent(req, String(business.id), 'owner_test_chat', {}, { ref: chatId });
@@ -105,6 +131,17 @@ chatRouter.get('/chat/:slug/:chatId', async (req, res) => {
   await kickVideos(String(chat.id));
   if (await photosLeftUnread(chat)) readPhotosThenAnswer(req, String(chat.id));
   res.json(ok(await chatView(business, chat)));
+});
+
+/** The customer picks a language with a chat under way. The next thing it says is in that. */
+chatRouter.post('/chat/:slug/:chatId/language', rateLimit(20, 60_000), async (req, res) => {
+  const { language } = z
+    .object({ language: z.enum(LANGUAGE_CODES) })
+    .strict()
+    .parse(req.body);
+  const { business, chat } = await chatAccess(req);
+  await mutate('UPDATE lead_chats SET language=? WHERE id=?', [language, chat.id]);
+  res.json(ok(await chatView(business, { ...chat, language })));
 });
 
 chatRouter.post('/chat/:slug/:chatId/messages', rateLimit(20, 60_000), async (req, res) => {

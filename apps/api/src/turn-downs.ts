@@ -8,6 +8,7 @@ import { recordRequestEvent } from './metrics.js';
 import { currencyOf, money, type Currency } from './money.js';
 import type { Row } from './models.js';
 import type { JobSpec } from './pricing/spec.js';
+import { say } from './words.js';
 import { canonicalUnit, formatNumber, formatQuantity } from './pricing/units.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
@@ -121,20 +122,41 @@ export function ruleLine(rule: TurnDownRule, currency: Currency, locations: stri
 }
 
 /** What the customer reads when a rule turns their request down. Plain, and it says why. */
-export function customerLine(rule: TurnDownRule, businessName: string): string {
+export function customerLine(rule: TurnDownRule, business: string, language = 'en'): string {
   switch (rule.kind) {
     case 'too_small':
-      return `Sorry, ${businessName} doesn’t take on jobs this small. Thanks for asking.`;
+      return say(
+        language,
+        'Sorry, {business} doesn’t take on jobs this small. Thanks for asking.',
+        {
+          business,
+        },
+      );
     case 'too_big':
-      return `Sorry, this is bigger than the jobs ${businessName} takes on. Thanks for asking.`;
+      return say(
+        language,
+        'Sorry, this is bigger than the jobs {business} takes on. Thanks for asking.',
+        { business },
+      );
     case 'not_offered':
-      return `Sorry, ${businessName} doesn’t do ${lowerFirst(rule.text)}. Thanks for asking.`;
+      return say(language, 'Sorry, {business} doesn’t do {what}. Thanks for asking.', {
+        business,
+        what: lowerFirst(rule.text),
+      });
     case 'too_far':
-      return `Sorry, that’s farther than ${businessName} travels. Thanks for asking.`;
+      return say(language, 'Sorry, that’s farther than {business} travels. Thanks for asking.', {
+        business,
+      });
     case 'lead_time':
-      return `Sorry, ${businessName} can’t fit it in that soon. They book at least ${days(rule.days ?? 0)} out.`;
+      return say(
+        language,
+        'Sorry, {business} can’t fit it in that soon. They book at least {days} out.',
+        { business, days: days(rule.days ?? 0) },
+      );
     case 'other':
-      return `Sorry, ${businessName} can’t take this one on. Thanks for asking.`;
+      return say(language, 'Sorry, {business} can’t take this one on. Thanks for asking.', {
+        business,
+      });
   }
 }
 

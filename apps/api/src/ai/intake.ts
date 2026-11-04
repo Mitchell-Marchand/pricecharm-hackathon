@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { cleanSpec, specFromText, specSchema, type JobSpec } from '../pricing/spec.js';
 import { TURN_DOWN_KINDS, type TurnDownKind } from '../turn-downs.js';
+import { LANGUAGES } from '../languages.js';
+import { say } from '../words.js';
 import { aiMode, requestJson, type AiImage } from './index.js';
 
 export type IntakeTurn = {
@@ -18,6 +20,8 @@ export type IntakeTurn = {
   turnDown: TurnDownKind | '';
   /** The job as fields, from everything the customer has said and shown so far. */
   spec: JobSpec;
+  /** The code of the language the customer writes in, or empty when it can't be told. */
+  language: string;
 };
 
 export type IntakeInput = {
@@ -61,6 +65,10 @@ export type IntakeInput = {
   shortChat?: boolean;
   /** The customer is asked where to send the quote before it's drafted, instead of seeing it now. */
   contactFirst?: boolean;
+  /** What the chat is in so far, by name. It follows what the customer writes. */
+  language?: string;
+  /** What the owner reads, by name. */
+  ownerLanguage?: string;
   /**
    * The customer wrote first, as on WhatsApp, so no greeting came before: the first reply says who
    * it is. Their first name, when Meta passes it on, goes in the hello.
@@ -68,11 +76,17 @@ export type IntakeInput = {
   customerStarted?: { firstName: string };
 };
 
+const codeOf = (name?: string) =>
+  LANGUAGES.find((language) => language.name === name)?.code ?? 'en';
+
 /** The last word before the quote, when the assistant's own doesn't fit. */
-export const readyLine = (contactFirst = false) =>
-  contactFirst
-    ? 'Thanks, that’s everything I need for your quote.'
-    : 'Thanks, that’s everything I need. Putting your quote together now.';
+export const readyLine = (contactFirst = false, language = 'en') =>
+  say(
+    language,
+    contactFirst
+      ? 'Thanks, that’s everything I need for your quote.'
+      : 'Thanks, that’s everything I need. Putting your quote together now.',
+  );
 
 const LATER =
   /\b(?:be in touch|get back to|reach out|follow up|contact you|call you|text you|email you|shortly|soon)\b/i;
@@ -86,7 +100,7 @@ export const plainDashes = (text: string) =>
     /\d$/.test(text.slice(0, offset)) && /^\d/.test(text.slice(offset + dash.length)) ? dash : ', ',
   );
 
-export const fitsReady = (reply: string) => !reply.trim().endsWith('?') && !LATER.test(reply);
+export const fitsReady = (reply: string) => !/[?؟？]$/.test(reply.trim()) && !LATER.test(reply);
 
 const intakeJson = {
   type: 'object',
@@ -99,6 +113,7 @@ const intakeJson = {
     summary: { type: 'string' },
     outOfScope: { type: 'string' },
     turnDown: { type: 'string', enum: ['', ...TURN_DOWN_KINDS] },
+    language: { type: 'string' },
     spec: {
       type: 'object',
       properties: {
@@ -123,6 +138,7 @@ const intakeJson = {
     'summary',
     'outOfScope',
     'turnDown',
+    'language',
     'spec',
   ],
   additionalProperties: false,
@@ -143,6 +159,7 @@ const intakeSchema = z.object({
   summary: z.string().trim().max(600),
   outOfScope: z.string().trim().max(300),
   turnDown: turnDownCode,
+  language: z.string().trim().toLowerCase().max(8).default(''),
   spec: specSchema,
 });
 
@@ -190,6 +207,8 @@ ${
         ? '\n- videoNotes say what was measured in the customer\'s walk-around video. Treat those counts and sizes as known, use them exactly as given, and never ask for photos. In your next reply, say in a few words what you found (like "I counted 19 windows in your video") and ask them once to confirm or correct it. Use their correction if they give one. Don\'t ask about anything else the video already answers, like the condition or how easy it is to get to. If something matters for the price and the video only partly shows it, ask about just that part, in terms of what you saw.'
         : ''
     }
+- Write reply and chips in the language the customer writes in, whatever it is, including a mix like Hinglish or a dialect like Pidgin, and put the business's services and anything else from the input into that language when you mention them. Until they've written enough to tell, use ${input.language ?? 'English'}. A number or a word or two doesn't change the language.
+- language: the customer's language as one of these codes, or empty if none fits or you can't tell yet: ${LANGUAGES.map((language) => language.code).join(', ')}.
 - chips: up to four short answers the customer could tap, when the question has obvious ones (like "Concrete", "Pavers", "Not sure"). Otherwise none.
 - serviceName: the business's service this is for, exactly as listed, once it's clear. Otherwise empty.
 - Never mention a price, a range, a rate or a discount, even if asked. Say you'll put the quote together once you have the details.
@@ -203,8 +222,8 @@ ${
         : ''
     }
 - outOfScope: a few plain words when it's clearly a service this business doesn't offer at all and no turnDown covers it; otherwise empty. Stay polite and still set ready.
-- summary: one or two sentences describing the job so far, for the owner.
-- spec: the job so far as fields, from the messages and photos. quantity is the main size or count as a number and unit what it's counted in, like 600 and "sq ft", 24 and "windows" or 3 and "bedrooms"; null and "" until the customer says. condition: what state it's in, in a few words, like "heavy moss". access: anything about getting to it, like "second story" or "steep driveway". extras: add-ons they asked for. timing: when they want it done. location: the ZIP or postcode, town or neighborhood, never a street or house number. Leave anything unknown empty; never guess.`,
+- summary: one or two sentences describing the job so far, for the owner, in ${input.ownerLanguage ?? 'English'}.
+- spec: the job so far as fields, from the messages and photos, always in English, whatever language the chat is in. quantity is the main size or count as a number and unit what it's counted in, like 600 and "sq ft", 24 and "windows" or 3 and "bedrooms"; null and "" until the customer says. condition: what state it's in, in a few words, like "heavy moss". access: anything about getting to it, like "second story" or "steep driveway". extras: add-ons they asked for. timing: when they want it done. location: the ZIP or postcode, town or neighborhood, never a street or house number. Leave anything unknown empty; never guess.`,
     input,
     intakeJson,
     intakeSchema,
@@ -217,7 +236,7 @@ ${
   // A job they don't do keeps its own polite words.
   const reply =
     result.ready && !result.outOfScope && !result.turnDown && !fitsReady(result.reply)
-      ? readyLine(input.contactFirst)
+      ? readyLine(input.contactFirst, codeOf(input.language))
       : plainDashes(result.reply);
   return { ...result, reply, serviceName, spec: cleanSpec(result.spec) };
 }
@@ -271,7 +290,15 @@ function demoIntake(input: IntakeInput): IntakeTurn {
       customerText.toLowerCase().includes(name.toLowerCase()),
     ) ||
     '';
-  const turn = { chips: [], askPhoto: false, serviceName, summary, outOfScope: '', spec };
+  const turn = {
+    chips: [],
+    askPhoto: false,
+    serviceName,
+    summary,
+    outOfScope: '',
+    spec,
+    language: '',
+  };
   const turnDown = demoTurnDown(input.turnDowns ?? [], customerText);
   if (turnDown)
     return { ...turn, reply: '[Demo] Sorry, we can’t take this one on.', ready: true, turnDown };

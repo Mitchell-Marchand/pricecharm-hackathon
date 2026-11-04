@@ -89,17 +89,19 @@ export function lowerFirst(text: string): string {
 }
 
 /** Empty for no date yet. */
-export function addDays(iso: string, days: number): string {
+const dateLocale = (language: string) => (language === 'en' ? 'en-US' : language);
+
+export function addDays(iso: string, days: number, language = 'en'): string {
   if (!iso) return '';
   const date = new Date(iso);
   date.setDate(date.getDate() + days);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(dateLocale(language), { month: 'short', day: 'numeric' });
 }
 
 /** Empty for no date yet. */
-export function shortDate(iso: string): string {
+export function shortDate(iso: string, language = 'en'): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('en-US', {
+  return new Date(iso).toLocaleDateString(dateLocale(language), {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

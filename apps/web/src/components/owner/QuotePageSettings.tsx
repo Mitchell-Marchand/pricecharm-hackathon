@@ -5,7 +5,7 @@ import { Check } from 'lucide-react';
 import { BusinessMark } from '@/components/Chat';
 import { PaperButton } from '@/components/QuoteForm';
 import { useToast } from '@/components/Toast';
-import { Button, Chip, Field, Segmented, TextArea, TextInput } from '@/components/ui';
+import { Button, Chip, Field, Segmented, SelectInput, TextArea, TextInput } from '@/components/ui';
 import { ApiError, errorMessage } from '@/lib/api';
 import {
   loadQuotePage,
@@ -84,6 +84,8 @@ export function QuotePageSettings({ business }: { business: string }) {
       contactFirst?: boolean;
       afterPreview?: boolean;
       askAddress?: boolean;
+      language?: string;
+      languages?: string[];
     },
     saved: (next: QuotePage) => string,
   ) =>
@@ -292,6 +294,72 @@ export function QuotePageSettings({ business }: { business: string }) {
           </div>
         )}
       </Field>
+
+      {page.languageOptions && (
+        <>
+          <Field
+            label="Language"
+            htmlFor="page-language"
+            hint="Your Charm opens in this language. If a customer writes in another one, it answers in theirs."
+          >
+            <SelectInput
+              id="page-language"
+              value={page.language}
+              onChange={(event) => {
+                const language = event.target.value;
+                save(
+                  {
+                    language,
+                    languages: (page.languages ?? []).filter((code) => code !== language),
+                  },
+                  () =>
+                    `Saved. Your Charm opens in ${page.languageOptions?.find((item) => item.code === language)?.name}.`,
+                );
+              }}
+            >
+              {page.languageOptions.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name}
+                </option>
+              ))}
+            </SelectInput>
+          </Field>
+          <Field
+            label="Other languages customers can pick"
+            htmlFor="page-languages"
+            hint="They show in a menu at the top of the chat. Your quotes and what you read here stay in your language."
+          >
+            <div id="page-languages" className="flex flex-wrap gap-2">
+              {page.languageOptions
+                .filter((item) => item.code !== page.language)
+                .map((item) => {
+                  const on = page.languages?.includes(item.code) ?? false;
+                  return (
+                    <Chip
+                      key={item.code}
+                      selected={on}
+                      onClick={() =>
+                        save(
+                          {
+                            languages: on
+                              ? page.languages?.filter((code) => code !== item.code)
+                              : [...(page.languages ?? []), item.code],
+                          },
+                          () =>
+                            on
+                              ? `Saved. ${item.name} is off.`
+                              : `Saved. Customers can pick ${item.name}.`,
+                        )
+                      }
+                    >
+                      {item.native}
+                    </Chip>
+                  );
+                })}
+            </div>
+          </Field>
+        </>
+      )}
 
       <Field
         label="When customers see the price"

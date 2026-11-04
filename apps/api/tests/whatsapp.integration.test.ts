@@ -131,7 +131,7 @@ test(
     for (const position of [0, 1]) {
       const lines = [{ id: 'a', label: 'Driveway wash', amountCents: 27500 }];
       await mutate(
-        `INSERT INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,shadow_json,finished_at)
+        `REPLACE INTO practice_runs (id,business_id,position,status,scenario_json,outcome,quote_json,shadow_json,finished_at)
          VALUES (?,?,?,'finished',?,'quote',?,?,UTC_TIMESTAMP(3))`,
         [
           randomUUID(),

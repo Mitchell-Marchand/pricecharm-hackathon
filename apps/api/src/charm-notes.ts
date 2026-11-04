@@ -11,6 +11,7 @@ import { minimumFor } from './pricing/formula.js';
 import { currentFormula, refreshFormula } from './pricing/formula-draft.js';
 import { loadPricingData } from './pricing/history.js';
 import { fitRates, rateWords, type PricePoint } from './pricing/rates.js';
+import { changeWords, currentPriceChange } from './price-change.js';
 import { requireWorkspace, workspace } from './workspace.js';
 
 /**
@@ -198,6 +199,9 @@ export async function charmKnows(businessId: string) {
     questions: await questionList(businessId),
     rates: await serviceRates(businessId),
     notes: await priceNotes(businessId),
+    priceChange: await currentPriceChange(businessId).then(
+      (change) => change && { ...change, words: changeWords(change) },
+    ),
   };
 }
 

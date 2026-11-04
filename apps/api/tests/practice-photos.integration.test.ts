@@ -403,6 +403,34 @@ test(
         ]);
         assert.equal(parse<{ libraryId?: string }>(json.scenario_json).libraryId, undefined);
       }
+
+      // Its customers work in feet and miles, so an owner in km gets their own.
+      const abroad = await setup(
+        {
+          tradeId: 'pressure-washing',
+          services: ['Patios & pavers'],
+          name: 'Metric Washers',
+          currency: 'GBP',
+        },
+        false,
+      );
+      const local = await abroad.settled(0);
+      const [localJson] = await rows('SELECT scenario_json FROM practice_runs WHERE id=?', [
+        local.id,
+      ]);
+      assert.equal(parse<{ libraryId?: string }>(localJson.scenario_json).libraryId, undefined);
+
+      // An export carries the library to another server, photos and all.
+      const { exportLibrary, importLibrary } = await import('../src/practice/library.js');
+      const { deletePhoto, getPhoto } = await import('../src/storage.js');
+      const file = path.join(os.tmpdir(), `library-${randomUUID()}.json`);
+      await exportLibrary(file);
+      await mutate("DELETE FROM practice_library WHERE trade_id='pressure-washing'");
+      await deletePhoto(shared[0]);
+      assert.equal(await importLibrary(file), 3);
+      assert.ok((await getPhoto(shared[0])).length > 0);
+      assert.equal(await importLibrary(file), 0, 'A filled slot is left alone');
+      await fs.rm(file);
     } finally {
       await mutate("DELETE FROM practice_library WHERE trade_id='pressure-washing'");
     }

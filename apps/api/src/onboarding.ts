@@ -7,11 +7,13 @@ import { devTokensAllowed, isDeployed } from './config.js';
 import { mutate, rows, transaction, type Sql } from './db.js';
 import { isDisposableEmail } from './email-domains.js';
 import { changeCurrency } from './billing.js';
+import { reportError } from './error-reporting.js';
 import { ApiError, ok, rateLimit } from './http.js';
 import { CURRENCIES, currencyOf } from './money.js';
 import { businessLocations, MAX_LOCATIONS } from './locations.js';
 import { verifyHuman } from './human-check.js';
 import { mailProvider, queueEmail } from './integrations/email.js';
+import { dropCustomersOfOldServices, startFirstCustomer } from './practice/engine.js';
 import { draftIpBudgetKey } from './usage.js';
 import {
   recordEvent,
@@ -45,6 +47,7 @@ export const ONBOARDING_STEPS = [
   'live',
 ] as const;
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+const BEFORE_PRACTICE = new Set<OnboardingStep>(['trade', 'services', 'about']);
 /** Steps saved before setup changed order, and where each picks up now. */
 const OLD_STEPS: Record<string, OnboardingStep> = {
   business: 'trade',
@@ -104,6 +107,7 @@ export async function onboardingState(businessId: string, draft: boolean, connec
   const locations = await businessLocations(businessId, connection);
   return {
     draft,
+    email: draft ? String(business.draft_email ?? '') : '',
     step: stepOf(business.onboarding_step),
     business: {
       tradeId: business.trade_id ?? null,
@@ -272,6 +276,13 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
       const template = new Set(
         (tradeId ? TRADES_BY_ID[tradeId]?.services : [])?.map((name) => name.toLowerCase()),
       );
+      const offered = await rows(
+        'SELECT name FROM offerings WHERE business_id=?',
+        [current.businessId],
+        connection,
+      );
+      if (offered.some((row) => !input.services?.includes(String(row.name))))
+        await dropCustomersOfOldServices(current.businessId, input.services, connection);
       await mutate(
         `DELETE FROM offerings WHERE business_id=?${input.services.length ? ` AND name NOT IN (${input.services.map(() => '?').join(',')})` : ''}`,
         [current.businessId, ...input.services],
@@ -289,7 +300,13 @@ onboardingRouter.patch('/onboarding/business', requireWorkspace, async (req, res
     fields: Object.keys(input).join(','),
     ...(await setupFacts(current.businessId)),
   });
-  res.json(ok(await onboardingState(current.businessId, current.draft)));
+  // Their trade and services are enough to make the first customer, so it's made while they finish.
+  const state = await onboardingState(current.businessId, current.draft);
+  if (input.services?.length && BEFORE_PRACTICE.has(state.step))
+    void startFirstCustomer(current.businessId).catch((error) =>
+      reportError(error, { event: 'practice_prepare' }),
+    );
+  res.json(ok(state));
 });
 
 onboardingRouter.patch('/onboarding/step', requireWorkspace, async (req, res) => {

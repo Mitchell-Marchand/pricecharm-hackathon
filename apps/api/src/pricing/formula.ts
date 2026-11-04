@@ -358,7 +358,8 @@ export function priceJob(formula: PriceFormula, parts: JobParts): FormulaQuote |
   const subtotal = lines.reduce((sum, line) => sum + line.amountCents, 0);
   if (minimum && subtotal < minimum) lines[0].amountCents += minimum - subtotal;
   const discount: Discount | null =
-    parts.otherServices.length && formula.bundlePercent
+    // Two places for the same service aren't two services, so the owner's bundle doesn't apply.
+    parts.otherServices.some((other) => !same(other.name, parts.service)) && formula.bundlePercent
       ? {
           kind: 'percent',
           value: Math.min(100, Math.round(formula.bundlePercent)),

@@ -7,7 +7,10 @@ import type { Row } from '../models.js';
 import { recordRequestEvent } from '../metrics.js';
 import { getPhoto } from '../storage.js';
 import { logoUpload, removeLogo, saveLogo, uploadSlot } from '../uploads.js';
+import { LANGUAGE_CODES, LANGUAGES, offeredLanguages } from '../languages.js';
+import { say } from '../words.js';
 import { ACCEPT_WORDINGS } from './accept-wording.js';
+import { servicesIn } from './chat.js';
 
 /**
  * What customers see on the quote link and the website widget that the owner can change: their
@@ -47,12 +50,16 @@ export async function contactAt(business: Row, connection?: Sql) {
 }
 
 /** What the chat says after a customer accepts, unless the owner wrote their own. */
-export const defaultAcceptedMessage = (who: string, range = false) =>
-  range
-    ? `You’re all set. ${who} will confirm the exact price and be in touch to schedule.`
-    : `You’re all set. ${who} will be in touch to schedule.`;
-export const defaultVisitMessage = (who: string) =>
-  `Got it. ${who} will get in touch to set up a visit.`;
+export const defaultAcceptedMessage = (who: string, range = false, language = 'en') =>
+  say(
+    language,
+    range
+      ? 'You’re all set. {who} will confirm the exact price and be in touch to schedule.'
+      : 'You’re all set. {who} will be in touch to schedule.',
+    { who },
+  );
+export const defaultVisitMessage = (who: string, language = 'en') =>
+  say(language, 'Got it. {who} will get in touch to set up a visit.', { who });
 
 /** `who` names the person, when the chat says it another way than the owner's name alone. */
 export async function acceptedMessage(
@@ -60,6 +67,7 @@ export async function acceptedMessage(
   range: boolean,
   connection?: Sql,
   who?: string,
+  language = 'en',
 ) {
   const own = String(business.accepted_message ?? '').trim();
   return (
@@ -67,15 +75,19 @@ export async function acceptedMessage(
     defaultAcceptedMessage(
       who ?? ((await contactName(business, connection)) || String(business.name)),
       range,
+      language,
     )
   );
 }
 
-export async function visitMessage(business: Row, connection?: Sql, who?: string) {
+export async function visitMessage(business: Row, connection?: Sql, who?: string, language = 'en') {
   const own = String(business.visit_message ?? '').trim();
   return (
     own ||
-    defaultVisitMessage(who ?? ((await contactName(business, connection)) || String(business.name)))
+    defaultVisitMessage(
+      who ?? ((await contactName(business, connection)) || String(business.name)),
+      language,
+    )
   );
 }
 
@@ -120,6 +132,10 @@ async function quotePage(businessId: string) {
     afterPreview: Boolean(business.after_preview),
     /** The contact form asks for the job's street address at the yes. On by default. */
     askAddress: Boolean(business.ask_job_address ?? true),
+    /** What the Charm talks to customers in, and any others they can pick. */
+    language: offeredLanguages(business)[0],
+    languages: offeredLanguages(business).slice(1),
+    languageOptions: LANGUAGES,
   };
 }
 
@@ -140,6 +156,8 @@ const quotePageInput = z
     contactFirst: z.boolean(),
     afterPreview: z.boolean(),
     askAddress: z.boolean(),
+    language: z.enum(LANGUAGE_CODES),
+    languages: z.array(z.enum(LANGUAGE_CODES)).max(LANGUAGE_CODES.length),
   })
   .partial()
   .strict();
@@ -161,7 +179,7 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
   const [business] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
   const who = (await contactName(business)) || String(business.name);
   // A message that reads like the default is saved as the default, so it follows a new name.
-  const changes: [string, string | boolean][] = [];
+  const changes: [string, string | boolean | null][] = [];
   if (input.acceptedMessage !== undefined)
     changes.push([
       'accepted_message',
@@ -180,11 +198,20 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
   if (input.contactFirst !== undefined) changes.push(['contact_first', input.contactFirst]);
   if (input.afterPreview !== undefined) changes.push(['after_preview', input.afterPreview]);
   if (input.askAddress !== undefined) changes.push(['ask_job_address', input.askAddress]);
+  if (input.language !== undefined) changes.push(['language', input.language]);
+  if (input.languages !== undefined)
+    changes.push(['languages_json', JSON.stringify([...new Set(input.languages)])]);
   if (changes.length)
     await mutate(
       `UPDATE businesses SET ${changes.map(([column]) => `${column}=?`).join(',')} WHERE id=?`,
       [...changes.map(([, value]) => value), businessId],
     );
+  // So a customer who picks one of these doesn't wait for the services to be translated.
+  if (input.language !== undefined || input.languages !== undefined) {
+    const [changed] = await rows('SELECT * FROM businesses WHERE id=?', [businessId]);
+    for (const language of offeredLanguages(changed))
+      void servicesIn(changed, language).catch(() => {});
+  }
   const saved = Object.fromEntries(changes);
   // The button's words are a label, like a service name. The messages are only measured.
   await recordRequestEvent(req, businessId, 'quote_page_changed', {
@@ -196,6 +223,8 @@ quotePageRouter.patch('/app/quote-page', async (req, res) => {
     contact_first: input.contactFirst,
     after_preview: input.afterPreview,
     ask_address: input.askAddress,
+    language: input.language,
+    languages: input.languages?.length,
   });
   res.json(ok(await quotePage(businessId)));
 });

@@ -1,3 +1,4 @@
+import { unchangedCents } from '../price-change.js';
 import { tradeName } from '@pricecharm/trades';
 import type { PricingHistory } from '../ai/quote-engine.js';
 import { rows, type Sql } from '../db.js';
@@ -122,6 +123,16 @@ function liveOutcome(status: string, reason: string) {
 }
 
 /** Real quotes worth learning from. A quote the AI sent alone teaches nothing until it's answered. */
+/** A draft as it was before a price change the owner set, to go with the quote it's compared to. */
+const ownDraft = (draft: DraftedQuote | null, change: number) =>
+  draft && {
+    ...draft,
+    lines: draft.lines?.map((line) => ({
+      ...line,
+      amountCents: unchangedCents(line.amountCents, change),
+    })),
+  };
+
 function teaches(row: Row) {
   if (row.sent_by === 'owner' || row.status === 'declined') return true;
   return row.status === 'accepted' || row.status === 'lost';
@@ -212,7 +223,7 @@ export async function loadPricingData(
 
   const live = (
     await rows(
-      `SELECT q.id,q.status,q.sent_by,q.quote_json,q.draft_json,q.outcome_reason,q.sent_at,q.created_at,
+      `SELECT q.id,q.status,q.sent_by,q.quote_json,q.draft_json,q.outcome_reason,q.sent_at,q.created_at,q.price_change_percent,
         c.service_name,c.summary,c.spec_json
        FROM live_quotes q JOIN lead_chats c ON c.id=q.chat_id
        WHERE q.business_id=? AND c.source<>'test' AND q.status IN ${LEARNING_STATUSES}${before ? ' AND q.created_at<?' : ''}
@@ -223,7 +234,16 @@ export async function loadPricingData(
     .filter((row) => row.id !== options.excludeQuoteId && teaches(row))
     .reverse();
   const liveQuotes: PricingHistory['liveQuotes'] = live.map((row) => {
-    const sent = json<Quote>(row.quote_json, {} as Quote);
+    const change = row.price_change_percent ? Number(row.price_change_percent) : 0;
+    // A price change the owner set for now isn't their price, so it isn't what's learned.
+    const shown = json<Quote>(row.quote_json, {} as Quote);
+    const sent = {
+      ...shown,
+      lines: shown.lines?.map((line) => ({
+        ...line,
+        amountCents: unchangedCents(line.amountCents, change),
+      })),
+    };
     const spec = json<JobSpec | null>(row.spec_json, null);
     const declined = row.status === 'declined';
     // Only prices a person chose or a customer took count toward the rate.
@@ -247,7 +267,11 @@ export async function loadPricingData(
       discount: declined ? null : (sent.discount ?? null),
       ownerChange:
         row.sent_by === 'owner'
-          ? ownerChange(json<DraftedQuote | null>(row.draft_json, null), sent, context.currency)
+          ? ownerChange(
+              ownDraft(json<DraftedQuote | null>(row.draft_json, null), change),
+              sent,
+              context.currency,
+            )
           : '',
       when: monthYear(row.sent_at ?? row.created_at),
     };

@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { aiMode, aiProvider } from '../ai/index.js';
+import { transcribeVoiceNote, voiceNotesAvailable } from '../ai/voice.js';
 import { mutate, rows, transaction } from '../db.js';
 import { reportError } from '../error-reporting.js';
 import { ApiError } from '../http.js';
 import { recordActivity } from '../metrics.js';
+import { chatLanguage } from '../languages.js';
 import { json, type Row } from '../models.js';
 import type { Quote } from '../practice/types.js';
 import { openSecret } from '../integrations/email.js';
@@ -22,6 +24,7 @@ import {
   looksLikeAddress,
   MAX_MESSAGES,
   notifyOwner,
+  quoteForChat,
   startChat,
   takeAddress,
   type Asker,
@@ -54,6 +57,7 @@ import {
   type Outbound,
 } from './whatsapp.js';
 import { currencyOf } from '../money.js';
+import { say } from '../words.js';
 
 /**
  * Customers' WhatsApp chats with a business's Charm. Each message is kept in the inbox, then the
@@ -70,8 +74,13 @@ const QUOTE_INTRO_MS = 2000;
 const MAX_PHOTO_BYTES = 16 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 /** Under the before-and-after: what the right side is, and that AI made it. */
-const previewCaption = (from: 'photo' | 'video') =>
-  `Now, and what it could look like when it’s done. The after side was made with AI from your ${from}, so the real result can look different.`;
+const previewCaption = (from: 'photo' | 'video', language: string) =>
+  say(
+    language,
+    from === 'video'
+      ? 'Now, and what it could look like when it’s done. The after side was made with AI from your video, so the real result can look different.'
+      : 'Now, and what it could look like when it’s done. The after side was made with AI from your photo, so the real result can look different.',
+  );
 
 /**
  * A business's own number sends with the key it gave PriceCharm through Meta's sign-up. Our own
@@ -227,7 +236,11 @@ async function answerWaiting(accountId: string, sender: string) {
       chatId,
       sender: 'assistant',
       kind: 'status',
-      text: `Sorry, I can’t answer that right now. ${owner} will get back to you here.`,
+      text: say(
+        chatLanguage(business, chat),
+        'Sorry, I can’t answer that right now. {owner} will get back to you here.',
+        { owner },
+      ),
     });
     await notifyOwner(String(business.id), chatId, 'message');
   }
@@ -292,7 +305,8 @@ async function take(
   owner: string,
 ): Promise<'charm' | 'owner' | null> {
   const businessId = String(business.id),
-    chatId = String(chat.id);
+    chatId = String(chat.id),
+    language = chatLanguage(business, chat);
   const says = async (text: string) => {
     await addMessage(undefined, { businessId, chatId, sender: 'customer', text });
     return nextFor(chat);
@@ -314,7 +328,7 @@ async function take(
           return null;
         }
         if (!chat.job_address) await takeAddress(chatId, place, { quiet: true });
-        return await says('Shared a location pin.');
+        return await says(say(language, 'Shared a location pin.'));
       }
       case 'choice':
         return await chose(line, business, chat, message, owner, says);
@@ -335,22 +349,29 @@ async function take(
       }
       case 'video':
         return await video(line, business, chat, message, asker);
-      case 'voice':
+      case 'voice': {
         await addMessage(undefined, {
           businessId,
           chatId,
           sender: 'customer',
           kind: 'status',
-          text: 'Sent a voice note.',
+          text: say(language, 'Sent a voice note.'),
         });
+        const heard = await listenTo(line, message);
+        if (heard) return await says(heard.slice(0, 2000));
         await note(
           business,
           chatId,
-          'I can’t listen to voice notes yet. Could you type that instead?',
+          say(language, 'I couldn’t make out that voice note. Could you type it instead?'),
         );
         return null;
+      }
       case 'file':
-        await note(business, chatId, 'I can read messages, photos and videos here, but not files.');
+        await note(
+          business,
+          chatId,
+          say(language, 'I can read messages, photos and videos here, but not files.'),
+        );
         return null;
       default:
         return null;
@@ -365,9 +386,21 @@ async function take(
       chatId,
       error instanceof ApiError
         ? error.message
-        : 'That didn’t come through. Could you send it again?',
+        : say(language, 'That didn’t come through. Could you send it again?'),
     );
     return null;
+  }
+}
+
+/** What's said in a voice note, or nothing if it can't be heard. The chat then asks to type it. */
+async function listenTo(line: Line, message: Inbound) {
+  if (!message.mediaId || !voiceNotesAvailable()) return '';
+  try {
+    const { bytes } = await download(line, message.mediaId, MAX_PHOTO_BYTES);
+    return await transcribeVoiceNote(bytes);
+  } catch (error) {
+    reportError(error, { event: 'whatsapp_voice_note' });
+    return '';
   }
 }
 
@@ -397,11 +430,21 @@ async function chose(
   }
   if (choice === QUOTE.decline) {
     // Like the chat page, the reasons are asked for but aren't part of the chat.
-    await send(line, addressee(chat), reasonsMessage(owner));
+    await send(line, addressee(chat), reasonsMessage(owner, chatLanguage(business, chat)));
     return null;
   }
   if (choice === QUOTE.question) {
-    await note(business, chatId, `Sure, what would you like to know? I’ll pass it on to ${owner}.`);
+    await note(
+      business,
+      chatId,
+      say(
+        chatLanguage(business, chat),
+        'Sure, what would you like to know? I’ll pass it on to {owner}.',
+        {
+          owner,
+        },
+      ),
+    );
     return null;
   }
   return message.text.trim() ? says(message.text.trim()) : null;
@@ -454,7 +497,7 @@ async function video(line: Line, business: Row, chat: Row, message: Inbound, ask
       chatId,
       sender: 'customer',
       kind: 'status',
-      text: 'Sent a video.',
+      text: say(chatLanguage(business, chat), 'Sent a video.'),
     });
     return nextFor(chat);
   }
@@ -462,23 +505,37 @@ async function video(line: Line, business: Row, chat: Row, message: Inbound, ask
     await note(
       business,
       chatId,
-      'I can’t watch videos here yet. Could you send a photo or two instead?',
+      say(
+        chatLanguage(business, chat),
+        'I can’t watch videos here yet. Could you send a photo or two instead?',
+      ),
     );
     return null;
   }
   const { bytes } = await download(line, message.mediaId, MAX_VIDEO_BYTES);
   const { durationMs, stills } = await stillsFrom(bytes);
   await storeVideo(business, chat, { bytes, durationMs, stills, requester: String(asker.ip) });
-  await note(business, chatId, 'Thanks! I’m watching your video now. This takes a minute or two.');
+  await note(
+    business,
+    chatId,
+    say(
+      chatLanguage(business, chat),
+      'Thanks! I’m watching your video now. This takes a minute or two.',
+    ),
+  );
   await kickVideos(chatId);
   return null;
 }
 
 /** Messages after the quote go to the owner, and the customer hears that once. */
 async function passToOwner(business: Row, chatId: string, owner: string) {
-  const [chat] = await rows('SELECT source FROM lead_chats WHERE id=?', [chatId]);
+  const [chat] = await rows('SELECT source,language FROM lead_chats WHERE id=?', [chatId]);
   if (chat?.source !== 'test') await notifyOwner(String(business.id), chatId, 'message');
-  const text = `I’ve passed that on to ${owner}. They’ll reply to you here.`;
+  const text = say(
+    chatLanguage(business, chat),
+    'I’ve passed that on to {owner}. They’ll reply to you here.',
+    { owner },
+  );
   const [last] = await rows(
     "SELECT text FROM lead_messages WHERE chat_id=? AND sender IN ('assistant','owner') ORDER BY created_at DESC,id DESC LIMIT 1",
     [chatId],
@@ -504,11 +561,11 @@ async function attempt(line: Line, to: Addressee, message: Outbound) {
 }
 
 /** What the owner writes goes out under their name, so the customer can tell it's them. */
-function outboundFor(message: Row, owner: string): Outbound | null {
+function outboundFor(message: Row, owner: string, language: string): Outbound | null {
   const text = String(message.text).trim();
   if (!text) return null;
   if (message.sender === 'owner') return { kind: 'text', text: `*${owner}*\n${text}` };
-  return withChoices(text, json<string[]>(message.chips_json, []));
+  return withChoices(text, json<string[]>(message.chips_json, []), language);
 }
 
 /**
@@ -528,6 +585,7 @@ async function deliver(chatId: string): Promise<void> {
   const line = lineFor(chat);
   const to = addressee(chat);
   const owner = await contactAt(business);
+  const language = chatLanguage(business, chat);
   const messages = await rows(
     "SELECT * FROM lead_messages WHERE chat_id=? AND sender IN ('assistant','owner') AND channel_sent_at IS NULL AND channel_status IS NULL ORDER BY created_at,id",
     [chatId],
@@ -551,6 +609,7 @@ async function deliver(chatId: string): Promise<void> {
   const sendQuote = async () => {
     const card = json<Quote | null>(quote.quote_json, null);
     if (!card) return true;
+    const shown = await quoteForChat(business, chat, card);
     const { link } = await chatEmailLink(undefined, String(business.slug), chatId);
     const [media] = await rows(
       `SELECT (SELECT COUNT(*) FROM attachments WHERE conversation_id=?) AS photos,
@@ -564,14 +623,15 @@ async function deliver(chatId: string): Promise<void> {
             line,
             to,
             quoteMessage({
-              quote: card,
+              quote: shown,
               totalCents: Number(quote.total_cents),
               business: String(business.name),
               owner,
               sent: { photos: Number(media.photos) > 0, video: Number(media.videos) > 0 },
-              acceptLabel: String(quote.accept_label || DEFAULT_ACCEPT_LABEL),
+              acceptLabel: say(language, String(quote.accept_label || DEFAULT_ACCEPT_LABEL)),
               link,
               currency: currencyOf(business.currency),
+              language,
             }),
           );
     // The 24 hours ran out between the owner sending it and now.
@@ -593,7 +653,7 @@ async function deliver(chatId: string): Promise<void> {
       if (!(await sendQuote())) return;
       quoteDone = true;
     }
-    const outbound = outboundFor(message, owner);
+    const outbound = outboundFor(message, owner, language);
     const result = outbound ? await attempt(line, to, outbound) : { id: null, refused: 'empty' };
     if (!result) return;
     await mutate(
@@ -602,11 +662,17 @@ async function deliver(chatId: string): Promise<void> {
     );
   }
   if (!quoteDone && !(await sendQuote())) return;
-  await sendPreview(line, to, business, chatId);
+  await sendPreview(line, to, business, chatId, language);
 }
 
 /** The after picture follows the quote once Muse Image has drawn it. */
-async function sendPreview(line: Line, to: Addressee, business: Row, chatId: string) {
+async function sendPreview(
+  line: Line,
+  to: Addressee,
+  business: Row,
+  chatId: string,
+  language: string,
+) {
   if (!business.after_preview) return;
   const [quote] = await rows(
     "SELECT * FROM live_quotes WHERE chat_id=? AND channel_sent_at IS NOT NULL AND channel_preview_sent_at IS NULL AND preview_status='ready'",
@@ -626,7 +692,7 @@ async function sendPreview(line: Line, to: Addressee, business: Row, chatId: str
     ? await attempt(line, to, {
         kind: 'image',
         mediaId,
-        caption: previewCaption(quote.preview_from === 'video' ? 'video' : 'photo'),
+        caption: previewCaption(quote.preview_from === 'video' ? 'video' : 'photo', language),
       })
     : { id: null, refused: 'failed' };
   if (!result) return;

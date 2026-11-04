@@ -161,6 +161,8 @@ export async function draftForBusiness(input: {
   formula?: boolean;
   /** Also find what the price depends on that the customer hasn't settled. Live quotes only. */
   drivers?: boolean;
+  /** Use the owner's formula even if it's from before their newest notes. Practice guesses only. */
+  anyNotes?: boolean;
 }): Promise<DraftResult> {
   const { businessId, serviceName, spec } = input;
   const data = await loadPricingData(businessId, input.history);
@@ -178,7 +180,9 @@ export async function draftForBusiness(input: {
   // The owner's formula prices it when it fits their quotes and covers the job. A replay of an old
   // quote, or another model, goes the usual way, since the formula is today's.
   if (aiMode !== 'demo' && input.formula !== false && !input.model && !input.history?.before) {
-    const learned = await currentFormula(businessId, data).catch((error: unknown) => {
+    const learned = await currentFormula(businessId, data, {
+      anyNotes: input.anyNotes,
+    }).catch((error: unknown) => {
       reportError(error, { event: 'formula_draft' });
       return null;
     });

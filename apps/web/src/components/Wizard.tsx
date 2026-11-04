@@ -60,7 +60,7 @@ export function WizardHeader({
   charm?: unknown;
   children?: ReactNode;
 }) {
-  const { state, save, flush } = useOnboarding();
+  const { state, save, flush, goTo } = useOnboarding();
   const [saveOpen, setSaveOpen] = useState(false);
   // Before signup there's nothing to sign out of, and "Finish later" emails a link back instead.
   const signedIn = state ? !state.draft : false;
@@ -129,7 +129,11 @@ export function WizardHeader({
       )}
       {children}
       <SetupProgress screen={screen} />
-      <SaveLater open={saveOpen} onClose={() => setSaveOpen(false)} />
+      <SaveLater
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        onward={screen === 'practice' ? () => goTo('ready') : undefined}
+      />
     </header>
   );
 }
@@ -140,14 +144,17 @@ export function SaveLater({
   onClose,
   title = 'Finish later',
   subtitle = 'Your answers are saved. We’ll email you a link to pick up where you left off, on this device or another one.',
+  onward,
 }: {
   open: boolean;
   onClose: () => void;
   title?: string;
   subtitle?: string;
+  /** Where setup goes on to once the link is sent, for a step they don't have to stay on. */
+  onward?: () => Promise<void>;
 }) {
   const notify = useToast();
-  const { flush } = useOnboarding();
+  const { flush, reload } = useOnboarding();
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -160,6 +167,11 @@ export function SaveLater({
       await api('/onboarding/resume-link', { method: 'POST', ...json({ email: email.trim() }) });
       notify(`Sent. Check ${email.trim()} for your link.`);
       onClose();
+      if (onward) {
+        // The account form starts with this address.
+        await reload();
+        await onward();
+      }
     } catch (sendError) {
       setError(errorMessage(sendError));
     } finally {
@@ -178,7 +190,7 @@ export function SaveLater({
             Cancel
           </Button>
           <Button disabled={!valid || sending} onClick={() => void send()}>
-            {sending ? 'Sending…' : 'Email me a link'}
+            {sending ? 'Sending…' : onward ? 'Continue' : 'Email me a link'}
           </Button>
         </div>
       }

@@ -1,6 +1,7 @@
 import { api, json, upload, whileBusy } from './api';
 import type { Quote } from './quote';
 import type { Currency } from './currency';
+import type { Say, Words } from './words';
 
 /** A business's logo, trimmed and at most 512 px on its longer side. */
 export interface Logo {
@@ -27,6 +28,12 @@ export interface BusinessProfile {
   videos?: boolean;
   /** The form at a yes, a visit or a question asks for the job's street address. Missing from older APIs. */
   asksAddress?: boolean;
+  /** What the chat opens in. Missing from older APIs, which only speak English. */
+  language?: string;
+  /** What customers can switch it to, with the default first. */
+  languages?: { code: string; native: string }[];
+  /** The fixed lines in that language, when it isn't English. */
+  words?: Words;
 }
 
 export interface ChatMessage {
@@ -38,6 +45,8 @@ export interface ChatMessage {
   /** A walk-around video, and what was counted in it once it's measured. Missing from older APIs. */
   video?: { id: string; status: 'measuring' | 'measured' | 'failed'; found: string[] } | null;
   chips: string[];
+  /** This asks for a photo. Missing from older APIs. */
+  asksPhoto?: boolean;
   createdAt: string;
 }
 
@@ -46,6 +55,8 @@ export interface ChatView {
   status: 'chatting' | 'contact' | 'quoting' | 'review' | 'sent' | 'accepted' | 'visit' | 'closed';
   test: boolean;
   serviceName: string;
+  /** What the chat is in now, which follows what the customer writes. Missing from older APIs. */
+  language?: string;
   messages: ChatMessage[];
   /** phone is missing from older APIs. */
   contact: { name: string; email: string | null; phone?: string | null };
@@ -88,8 +99,16 @@ export type ChatAccess = { chatId: string; token: string };
 
 /** Shown before the chat starts. The API opens every chat with the same words. */
 /** The first hello, naming the person behind the business when there is one, since later lines do. */
-export const greeting = (businessName: string, ownerName?: string) =>
-  `Hi! I'm the quote assistant for ${businessName}. I can put a price together for you in a couple of minutes${ownerName ? `, then ${ownerName} takes it from there` : ''}. What do you need done?`;
+export const greeting = (t: Say, business: string, owner?: string) =>
+  owner
+    ? t(
+        "Hi! I'm the quote assistant for {business}. I can put a price together for you in a couple of minutes, then {owner} takes it from there. What do you need done?",
+        { business, owner },
+      )
+    : t(
+        "Hi! I'm the quote assistant for {business}. I can put a price together for you in a couple of minutes. What do you need done?",
+        { business },
+      );
 
 const storageKey = (slug: string) => `pricecharm:chat:${slug}`;
 
@@ -131,12 +150,24 @@ export const loadViewer = (slug: string) => api<{ owner: boolean }>(`/chat/${slu
 export const startChat = (
   slug: string,
   source: 'link' | 'widget',
+  language: string,
   headers: Record<string, string>,
 ) =>
   api<{ token: string; chat: ChatView }>(`/chat/${slug}/start`, {
     method: 'POST',
     headers,
-    ...json({ source }),
+    ...json({ source, language }),
+  });
+
+/** A language's fixed lines and the business's services in it. */
+export const loadWords = (slug: string, language: string) =>
+  api<{ words: Words; services: string[] }>(`/chat/${slug}/words/${language}`);
+
+export const chooseLanguage = (slug: string, access: ChatAccess, language: string) =>
+  api<ChatView>(`${base(slug, access)}/language`, {
+    method: 'POST',
+    headers: auth(access),
+    ...json({ language }),
   });
 
 export const loadChat = (slug: string, access: ChatAccess) =>

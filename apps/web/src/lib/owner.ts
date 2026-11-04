@@ -128,6 +128,8 @@ export interface QuoteDetail extends QuoteListItem {
   /** The words on the customer's accept button. Missing from older APIs. */
   acceptLabel?: string | null;
   card: Quote;
+  /** A price change the owner set that's in this total. Missing from older APIs. */
+  priceChangePercent?: number | null;
   reasoning: string;
   confidence: string;
   checks: QuoteCheck[];
@@ -175,6 +177,11 @@ export interface QuotePage {
   afterPreview?: boolean;
   /** The contact form asks for the job's street address at the yes. Missing from older APIs. */
   askAddress?: boolean;
+  /** What the Charm talks to customers in. These three are missing from older APIs. */
+  language?: string;
+  /** The others customers can pick at the top of the chat. */
+  languages?: string[];
+  languageOptions?: { code: string; name: string; native: string }[];
 }
 export type QuotePageText = Pick<
   QuotePage,
@@ -186,6 +193,8 @@ export const saveQuotePage = (
     contactFirst?: boolean;
     afterPreview?: boolean;
     askAddress?: boolean;
+    language?: string;
+    languages?: string[];
   },
 ) => api<QuotePage>('/app/quote-page', { method: 'PATCH', ...json(patch) });
 export function uploadLogo(file: File) {

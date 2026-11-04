@@ -163,6 +163,8 @@ async function quoteDetail(businessId: string, quoteId: string) {
     /** The words on the customer's accept button, once it went out. */
     acceptLabel: quote.accept_label ? String(quote.accept_label) : null,
     card: json<Quote>(quote.quote_json, {} as Quote),
+    /** A price change the owner set that's in this quote's total. */
+    priceChangePercent: quote.price_change_percent ? Number(quote.price_change_percent) : null,
     reasoning: draft.reasoning ?? '',
     confidence: draft.confidence ?? '',
     checks: json<{ id: string; passed: boolean; detail: string }[]>(quote.checks_json, []),

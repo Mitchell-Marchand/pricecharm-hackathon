@@ -6,6 +6,7 @@ import { BusinessMark } from '@/components/Chat';
 import { Avatar } from '@/components/ui';
 import type { BusinessProfile, ReadingProgress } from '@/lib/chat';
 import { cx } from '@/lib/util';
+import { useWords, type Say } from '@/lib/words';
 
 type Step = ReadingProgress['step'];
 /**
@@ -26,21 +27,20 @@ const PHOTOS: Plan = [
   { step: 'replying', done: 100, seconds: 6 },
 ];
 
-const list = (items: string[]) =>
-  items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : (items[0] ?? '');
-
-function label(step: Step, progress: ReadingProgress | null, photos: boolean) {
+function label(step: Step, progress: ReadingProgress | null, photos: boolean, t: Say) {
   const counting = progress?.counting ?? [];
-  if (step === 'preparing') return 'Getting your video ready';
-  if (step === 'watching') return photos ? 'Looking over your photos' : 'Watching your video';
+  if (step === 'preparing') return t('Getting your video ready');
+  if (step === 'watching') return photos ? t('Looking over your photos') : t('Watching your video');
   if (step === 'counting')
-    return counting.length ? `Counting the ${list(counting)}` : 'Counting what sets the price';
+    return counting.length
+      ? t('Counting the {things}', { things: counting.join(', ') })
+      : t('Counting what sets the price');
   // Once it has watched and found nothing to count, there's nothing to look at one by one.
   if (step === 'checking')
     return progress?.seen !== undefined && !counting.length
-      ? 'Checking the details'
-      : 'Looking at each one up close';
-  return 'Writing back';
+      ? t('Checking the details')
+      : t('Looking at each one up close');
+  return t('Writing back');
 }
 
 /**
@@ -57,6 +57,7 @@ export function ReadingSteps({
   photos: boolean;
   progress: ReadingProgress | null;
 }) {
+  const { t } = useWords();
   const plan = photos ? PHOTOS : VIDEO;
   // Photos are looked at up close while they're counted, so their "checking" is still counting.
   const step = photos && progress?.step === 'checking' ? 'counting' : progress?.step;
@@ -108,7 +109,7 @@ export function ReadingSteps({
                 )}
               </span>
               <span>
-                {label(item.step, progress, photos)}
+                {label(item.step, progress, photos, t)}
                 {index < at && <span className="sr-only"> (done)</span>}
               </span>
             </li>
@@ -129,7 +130,7 @@ export function ReadingSteps({
             {seen && (
               <p className="fade-up">
                 <span className="font-medium text-ink">
-                  {photos ? 'In your photos:' : 'In your video:'}
+                  {photos ? t('In your photos:') : t('In your video:')}
                 </span>{' '}
                 {seen}
               </p>
@@ -139,8 +140,8 @@ export function ReadingSteps({
 
         <p className="mt-3 text-xs text-muted">
           {photos
-            ? 'This usually takes under half a minute.'
-            : 'This usually takes about a minute.'}
+            ? t('This usually takes under half a minute.')
+            : t('This usually takes about a minute.')}
         </p>
       </div>
     </div>

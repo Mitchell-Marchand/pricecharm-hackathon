@@ -37,13 +37,9 @@ const runId = z.uuid();
  * `first`, only the first one starts, for a setup that hasn't reached practice yet.
  */
 practiceRouter.post('/onboarding/practice/prepare', requireWorkspace, async (req, res) => {
-  const { first } = z
-    .object({ first: z.boolean().optional() })
-    .strict()
-    .parse(req.body ?? {});
   const { businessId } = workspace(req);
   await ensurePracticeRuns(businessId);
-  await kickPreparation(businessId, first ? 1 : undefined);
+  await kickPreparation(businessId);
   await recordRequestEvent(req, businessId, 'practice_prepared', await setupFacts(businessId));
   res.json(ok(await practiceState(businessId)));
 });

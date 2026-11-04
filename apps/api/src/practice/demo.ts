@@ -345,6 +345,7 @@ type DemoReply = {
   sendPhoto: boolean;
   /** A new photo to take, as a bundled photo's name. Empty sends the prepared one. */
   photoScene: string;
+  photoPlace: number;
   photoText: string;
   mentionsPrice: boolean;
   visitAsk: boolean;
@@ -363,6 +364,7 @@ export function demoReply(
     askedKeys: [],
     sendPhoto: false,
     photoScene: '',
+    photoPlace: 0,
     photoText: '',
     mentionsPrice: false,
     visitAsk: false,
