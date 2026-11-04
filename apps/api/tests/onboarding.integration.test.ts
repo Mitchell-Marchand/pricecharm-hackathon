@@ -158,6 +158,78 @@ test(
   },
 );
 
+test(
+  'starting over gives the browser a new setup and leaves the old one',
+  { skip: !enabled },
+  async () => {
+    process.env.TRUST_PROXY = '1';
+    const app = createApp();
+    // From addresses of their own, so they don't use up the setup limits the other tests share.
+    const browser = request.agent(app).set('X-Forwarded-For', '203.0.113.60');
+    const nothing = await browser.post('/api/v1/onboarding/restart').set('Origin', origin).send({});
+    assert.equal(nothing.status, 401, 'There has to be a setup to start over from');
+
+    await browser.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
+    const name = `Old Setup ${randomUUID()}`;
+    await browser
+      .patch('/api/v1/onboarding/business')
+      .set('Origin', origin)
+      .send({ tradeId: 'roofing', services: ['Repairs'], name, area: 'Austin, TX' })
+      .expect(200);
+    await browser
+      .patch('/api/v1/onboarding/step')
+      .set('Origin', origin)
+      .send({ step: 'practice' })
+      .expect(200);
+
+    const fresh = await browser
+      .post('/api/v1/onboarding/restart')
+      .set('Origin', origin)
+      .send({ currency: 'CAD' });
+    assert.equal(fresh.status, 201, JSON.stringify(fresh.body));
+    assert.equal(fresh.body.data.draft, true);
+    assert.equal(fresh.body.data.step, 'trade');
+    assert.equal(fresh.body.data.business.tradeId, null);
+    assert.equal(fresh.body.data.business.name, '');
+    assert.equal(fresh.body.data.business.currency, 'CAD');
+    const now = await browser.get('/api/v1/onboarding');
+    assert.equal(now.body.data.step, 'trade', 'The browser is on the new setup');
+    const [old] = await rows('SELECT status FROM businesses WHERE name=?', [name]);
+    assert.equal(old.status, 'draft', 'The old setup is left to expire');
+
+    await browser
+      .patch('/api/v1/onboarding/business')
+      .set('Origin', origin)
+      .send({ name: 'New Setup', area: 'Austin, TX' })
+      .expect(200);
+    await browser
+      .post('/api/v1/auth/register')
+      .set('Origin', origin)
+      .send({
+        firstName: 'Sam',
+        lastName: 'Kim',
+        email: `qa-restart-${randomUUID()}@example.test`,
+        password: 'test password strong123',
+      })
+      .expect(201);
+    const finished = await browser
+      .post('/api/v1/onboarding/restart')
+      .set('Origin', origin)
+      .send({});
+    assert.equal(finished.status, 409, 'An account never starts over');
+    assert.equal(finished.body.error.code, 'SETUP_FINISHED');
+
+    // Each new one counts against the day's allowance, so it can't be used to farm setups.
+    const repeat = request.agent(app).set('X-Forwarded-For', '203.0.113.61');
+    await repeat.post('/api/v1/onboarding/start').set('Origin', origin).send({}).expect(201);
+    for (let made = 1; made < 10; made++)
+      await repeat.post('/api/v1/onboarding/restart').set('Origin', origin).send({}).expect(201);
+    const over = await repeat.post('/api/v1/onboarding/restart').set('Origin', origin).send({});
+    assert.equal(over.status, 429);
+    assert.equal(over.body.error.code, 'SETUP_LIMIT');
+  },
+);
+
 test('signup without a draft still needs a business name', { skip: !enabled }, async () => {
   const response = await request(createApp())
     .post('/api/v1/auth/register')

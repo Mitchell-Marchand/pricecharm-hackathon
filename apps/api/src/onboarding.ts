@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { TRADES_BY_ID, tradeName } from '@pricecharm/trades';
 import { hashToken, newToken } from './auth.js';
@@ -124,6 +124,36 @@ export async function onboardingState(businessId: string, draft: boolean, connec
   };
 }
 
+/** A new setup for this browser, out of the day's allowance for its address. */
+async function startDraft(req: Request, res: Response) {
+  const day = new Date().toISOString().slice(0, 10);
+  return transaction(async (connection) => {
+    try {
+      await consumeAuthRateLimit(
+        draftIpBudgetKey(req.ip || req.socket.remoteAddress || 'unknown', day),
+        draftsPerAddress(),
+        24 * 60 * 60_000,
+        connection,
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
+        throw new ApiError(
+          429,
+          'SETUP_LIMIT',
+          'Too many setups were started from this connection today. Please try again tomorrow.',
+        );
+      throw error;
+    }
+    // The browser's guess at the owner's currency, from their time zone. They can change it.
+    return createDraft(
+      res,
+      connection,
+      requestSession(req),
+      currencyOf(String(req.body?.currency ?? '')),
+    );
+  });
+}
+
 /** Starts setup for a new visitor, or returns the setup this browser already has. */
 onboardingRouter.post(
   '/onboarding/start',
@@ -135,32 +165,25 @@ onboardingRouter.post(
       return;
     }
     await verifyHuman(req, 'onboarding');
-    const day = new Date().toISOString().slice(0, 10);
-    const businessId = await transaction(async (connection) => {
-      try {
-        await consumeAuthRateLimit(
-          draftIpBudgetKey(req.ip || req.socket.remoteAddress || 'unknown', day),
-          draftsPerAddress(),
-          24 * 60 * 60_000,
-          connection,
-        );
-      } catch (error) {
-        if (error instanceof ApiError && error.code === 'IDENTITY_RATE_LIMIT')
-          throw new ApiError(
-            429,
-            'SETUP_LIMIT',
-            'Too many setups were started from this connection today. Please try again tomorrow.',
-          );
-        throw error;
-      }
-      // The browser's guess at the owner's currency, from their time zone. They can change it.
-      return createDraft(
-        res,
-        connection,
-        requestSession(req),
-        currencyOf(String(req.body?.currency ?? '')),
-      );
-    });
+    const businessId = await startDraft(req, res);
+    res.status(201).json(ok(await onboardingState(businessId, true)));
+  },
+);
+
+/**
+ * Starts over: a new setup takes this browser's cookie. The old one isn't touched. It goes when it
+ * expires, and a resume link it already emailed still opens it. Only unfinished setups can do this,
+ * and each new one counts against the same daily allowance as any other.
+ */
+onboardingRouter.post(
+  '/onboarding/restart',
+  rateLimit(Math.max(10, draftsPerAddress()), 15 * 60_000),
+  requireWorkspace,
+  async (req, res) => {
+    if (!workspace(req).draft)
+      throw new ApiError(409, 'SETUP_FINISHED', 'This account already has a business.');
+    await verifyHuman(req, 'onboarding');
+    const businessId = await startDraft(req, res);
     res.status(201).json(ok(await onboardingState(businessId, true)));
   },
 );
